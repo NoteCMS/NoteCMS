@@ -37,6 +37,11 @@ type DataTableProps<TData, TValue> = {
   headerContent?: React.ReactNode;
   isLoading?: boolean;
   emptyMessage?: string;
+  showColumnToggle?: boolean;
+  /** Navigate or open detail when the row (outside ignored columns) is clicked */
+  onRowClick?: (row: TData) => void;
+  /** Column ids whose cells stop row click propagation (e.g. actions with menus) */
+  rowClickIgnoreColumnIds?: string[];
 };
 
 export function DataTable<TData, TValue>({
@@ -45,8 +50,11 @@ export function DataTable<TData, TValue>({
   filterColumnId,
   filterPlaceholder,
   headerContent,
-  isLoading = false,
+   isLoading = false,
   emptyMessage = 'No results.',
+  showColumnToggle = true,
+  onRowClick,
+  rowClickIgnoreColumnIds,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = React.useState<SortingState>([]);
   const [columnFilters, setColumnFilters] = React.useState<ColumnFiltersState>([]);
@@ -83,29 +91,31 @@ export function DataTable<TData, TValue>({
 
         {headerContent}
 
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline" className="ml-auto">
-              Columns
-              <ChevronDown className="ml-2 h-4 w-4" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {table
-              .getAllColumns()
-              .filter((column) => column.getCanHide())
-              .map((column) => (
-                <DropdownMenuCheckboxItem
-                  key={column.id}
-                  className="capitalize"
-                  checked={column.getIsVisible()}
-                  onCheckedChange={(value) => column.toggleVisibility(!!value)}
-                >
-                  {column.id}
-                </DropdownMenuCheckboxItem>
-              ))}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        {showColumnToggle ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="ml-auto">
+                Columns
+                <ChevronDown className="ml-2 h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {table
+                .getAllColumns()
+                .filter((column) => column.getCanHide())
+                .map((column) => (
+                  <DropdownMenuCheckboxItem
+                    key={column.id}
+                    className="capitalize"
+                    checked={column.getIsVisible()}
+                    onCheckedChange={(value) => column.toggleVisibility(!!value)}
+                  >
+                    {column.id}
+                  </DropdownMenuCheckboxItem>
+                ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : null}
       </div>
 
       <div className="overflow-hidden rounded-md border">
@@ -130,10 +140,23 @@ export function DataTable<TData, TValue>({
               </TableRow>
             ) : table.getRowModel().rows.length ? (
               table.getRowModel().rows.map((row) => (
-                <TableRow key={row.id} data-state={row.getIsSelected() && 'selected'}>
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
-                  ))}
+                <TableRow
+                  key={row.id}
+                  data-state={row.getIsSelected() && 'selected'}
+                  className={onRowClick ? 'cursor-pointer' : undefined}
+                  onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                >
+                  {row.getVisibleCells().map((cell) => {
+                    const stopRowClick = rowClickIgnoreColumnIds?.includes(cell.column.id) ?? false;
+                    return (
+                      <TableCell
+                        key={cell.id}
+                        onClick={stopRowClick ? (event) => event.stopPropagation() : undefined}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    );
+                  })}
                 </TableRow>
               ))
             ) : (

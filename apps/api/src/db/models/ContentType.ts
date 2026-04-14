@@ -17,6 +17,7 @@ const contentTypeSchema = new Schema(
     name: { type: String, required: true },
     slug: { type: String, required: true },
     fields: { type: [fieldSchema], default: [] },
+    options: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: true },
 );

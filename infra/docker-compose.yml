@@ -22,9 +22,12 @@ services:
     environment:
       MONGO_URI: mongodb://mongo:27017/notecms
       API_PORT: 4000
+      ASSET_LOCAL_ROOT: /data/assets
     depends_on:
       mongo:
         condition: service_healthy
+    volumes:
+      - api_assets:/data/assets
     ports:
       - "4000:4000"
     healthcheck:
@@ -56,3 +59,4 @@ services:
 
 volumes:
   mongodb_data:
+  api_assets:

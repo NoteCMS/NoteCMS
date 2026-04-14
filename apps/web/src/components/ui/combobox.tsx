@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Check, ChevronsUpDown } from 'lucide-react';
+import { ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import {
@@ -65,6 +65,7 @@ export function Combobox({
                 <CommandItem
                   key={option.value}
                   value={option.label}
+                  data-checked={value === option.value}
                   onSelect={() => {
                     if (disabled) return;
                     onValueChange(option.value);
@@ -72,7 +73,6 @@ export function Combobox({
                   }}
                 >
                   {option.label}
-                  <Check className={cn('ml-auto', value === option.value ? 'opacity-100' : 'opacity-0')} />
                 </CommandItem>
               ))}
             </CommandGroup>

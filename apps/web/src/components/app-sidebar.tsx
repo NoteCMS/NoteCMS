@@ -1,4 +1,4 @@
-import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut } from 'lucide-react';
+import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -20,12 +20,16 @@ import {
 } from '@/components/ui/sidebar';
 import type { Site } from '@/types/app';
 
-const items = [
+const workspaceItems = [
   { path: '/dashboard', title: 'Dashboard', icon: Home },
-  { path: '/sites', title: 'Sites', icon: Globe },
   { path: '/content-types', title: 'Content Types', icon: Shapes },
   { path: '/entries', title: 'Entries', icon: FileText },
+  { path: '/assets', title: 'Assets', icon: Image },
   { path: '/users', title: 'Users', icon: Users },
+];
+
+const adminItems = [
+  { path: '/sites', title: 'Sites', icon: Globe },
   { path: '/settings', title: 'Settings', icon: Settings },
 ];
 
@@ -38,6 +42,7 @@ type AppSidebarProps = {
   onLogout: () => void;
   activePath: string;
   onNavigate: (path: string) => void;
+  contentTypeMenuItems?: Array<{ path: string; title: string }>;
 };
 
 export function AppSidebar({
@@ -49,11 +54,12 @@ export function AppSidebar({
   onLogout,
   activePath,
   onNavigate,
+  contentTypeMenuItems = [],
 }: AppSidebarProps) {
   const activeSite = sites.find((site) => site.id === activeSiteId);
 
   return (
-    <Sidebar>
+    <Sidebar variant='floating'>
       <SidebarHeader>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -77,10 +83,34 @@ export function AppSidebar({
 
       <SidebarContent>
         <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {items.map((item) => (
+              {workspaceItems.map((item) => (
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton isActive={activePath === item.path} onClick={() => onNavigate(item.path)}>
+                    <item.icon />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+              {contentTypeMenuItems.map((item) => (
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton isActive={activePath === item.path} onClick={() => onNavigate(item.path)}>
+                    <FileText />
+                    <span>{item.title}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>Admin</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {adminItems.map((item) => (
                 <SidebarMenuItem key={item.path}>
                   <SidebarMenuButton isActive={activePath === item.path} onClick={() => onNavigate(item.path)}>
                     <item.icon />

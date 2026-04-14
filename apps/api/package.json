@@ -19,14 +19,15 @@
     "graphql-scalars": "^1.25.0",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^9.0.1",
+    "sharp": "^0.34.5",
     "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^24.5.0",
-    "typescript": "^5.9.3",
     "tsx": "^4.20.5",
+    "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   }
 }
