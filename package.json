@@ -1,0 +1,25 @@
+{
+  "name": "note-cms",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "dev": "concurrently -n api,web -c magenta,cyan \"npm run dev -w @note/api\" \"npm run dev -w @note/web\"",
+    "build": "npm run build --workspaces --if-present",
+    "dev:db": "docker compose -f infra/docker-compose.yml up -d mongo",
+    "dev:full": "npm run dev:db && npm run dev"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
