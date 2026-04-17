@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { TagInput, type Tag } from 'emblor-maintained';
-import { ChevronDown, Copy, Ellipsis, GripVertical, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, Ellipsis, GripVertical, Plus, Settings2, Trash2 } from 'lucide-react';
 import {
   closestCenter,
   DndContext,
@@ -25,11 +25,36 @@ import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Combobox } from '@/components/ui/combobox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+  FieldTitle,
+} from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Item } from '@/components/ui/item';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import type {
   ConditionOperator,
   ContentField,
@@ -57,6 +82,8 @@ type ContentTypeEditorPageProps = {
 const fieldTypeOptions: { value: FieldType; label: string }[] = [
   { value: 'text', label: 'text' },
   { value: 'textarea', label: 'textarea' },
+  { value: 'wysiwyg', label: 'wysiwyg' },
+  { value: 'url', label: 'url' },
   { value: 'number', label: 'number' },
   { value: 'boolean', label: 'boolean' },
   { value: 'date', label: 'date' },
@@ -66,8 +93,8 @@ const fieldTypeOptions: { value: FieldType; label: string }[] = [
 ];
 
 const relationOptions = [
-  { value: 'all', label: 'All rules (AND)' },
-  { value: 'any', label: 'Any rule (OR)' },
+  { value: 'all', label: 'AND' },
+  { value: 'any', label: 'OR' },
 ] as const;
 
 const operatorOptions: { value: ConditionOperator; label: string }[] = [
@@ -85,6 +112,22 @@ function makeId() {
   return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function slugifyContentTypeName(value: string): string {
+  const s = value
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return s || 'type';
+}
+
+function uniqueContentTypeSlug(base: string, taken: Set<string>): string {
+  if (!taken.has(base)) return base;
+  let n = 2;
+  while (taken.has(`${base}-${n}`)) n += 1;
+  return `${base}-${n}`;
 }
 
 function createEmptyField(): ContentField {
@@ -150,6 +193,125 @@ function removeFieldAtPath(fields: ContentField[], path: number[]): ContentField
   });
 }
 
+function getFieldAtPath(fields: ContentField[], path: number[]): ContentField | undefined {
+  const [i, ...rest] = path;
+  if (i === undefined || i < 0) return undefined;
+  const f = fields[i];
+  if (!rest.length) return f;
+  return getFieldAtPath(f.config?.fields ?? [], rest);
+}
+
+function insertFieldAfterPath(fields: ContentField[], path: number[], newField: ContentField): ContentField[] {
+  const parentPath = path.slice(0, -1);
+  const idx = path[path.length - 1];
+  if (parentPath.length === 0) {
+    const next = [...fields];
+    next.splice(idx + 1, 0, newField);
+    return next;
+  }
+  return updateFieldAtPath(fields, parentPath, (parent) => {
+    const nested = parent.config?.fields ?? [];
+    const nextNested = [...nested];
+    nextNested.splice(idx + 1, 0, newField);
+    return { ...parent, config: { ...parent.config, fields: nextNested } };
+  });
+}
+
+/** Replace the fields array at root (`parentPath` empty) or under the repeater at `parentPath`. */
+function updateFieldsArrayAtPath(
+  fields: ContentField[],
+  parentPath: number[],
+  update: (children: ContentField[]) => ContentField[],
+): ContentField[] {
+  if (parentPath.length === 0) {
+    return update(fields);
+  }
+  return updateFieldAtPath(fields, parentPath, (parent) => ({
+    ...parent,
+    config: {
+      ...parent.config,
+      fields: update(parent.config?.fields ?? []),
+    },
+  }));
+}
+
+function createFieldMetaVersion(map: Map<string, { type: FieldType; options?: string[] }>): string {
+  let out = '';
+  for (const [key, meta] of map) {
+    const options = meta.options?.join('\u001f') ?? '';
+    out += `${key}\u001e${meta.type}\u001d${options}\u001c`;
+  }
+  return out;
+}
+
+type BufferedInputProps = Omit<React.ComponentProps<typeof Input>, 'value' | 'onChange'> & {
+  value: string;
+  onCommit: (nextValue: string) => void;
+};
+
+function BufferedInput({ value, onCommit, onBlur, onKeyDown, ...props }: BufferedInputProps) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  const commit = useCallback(() => {
+    if (draft !== value) onCommit(draft);
+  }, [draft, value, onCommit]);
+
+  return (
+    <Input
+      {...props}
+      value={draft}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={(event) => {
+        commit();
+        onBlur?.(event);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') {
+          commit();
+          event.currentTarget.blur();
+        }
+        onKeyDown?.(event);
+      }}
+    />
+  );
+}
+
+type RelationToggleProps = {
+  value: 'all' | 'any';
+  onChange: (next: 'all' | 'any') => void;
+  ariaLabel: string;
+};
+
+function RelationToggle({ value, onChange, ariaLabel }: RelationToggleProps) {
+  return (
+    <ToggleGroup
+      type="single"
+      variant="outline"
+      size="sm"
+      value={value}
+      onValueChange={(nextValue) => {
+        if (nextValue === 'all' || nextValue === 'any') onChange(nextValue);
+      }}
+      aria-label={ariaLabel}
+    >
+      {relationOptions.map((option) => {
+        return (
+          <ToggleGroupItem
+            key={option.value}
+            value={option.value}
+          >
+            {option.label}
+          </ToggleGroupItem>
+        );
+      })}
+    </ToggleGroup>
+  );
+}
+
 function flattenFieldKeys(
   fields: ContentField[],
   contentTypeFieldMap?: Map<string, ContentField[]>,
@@ -200,10 +362,13 @@ function flattenFieldMeta(
 }
 
 type FieldBuilderProps = {
+  pathPrefixStr: string;
   fields: ContentField[];
-  onChange: (next: ContentField[]) => void;
+  setRootFields: React.Dispatch<React.SetStateAction<ContentField[]>>;
   availableKeys: string[];
+  availableKeysVersion: string;
   fieldMetaMap: Map<string, { type: FieldType; options?: string[] }>;
+  fieldMetaVersion: string;
   contentTypeOptions: { value: string; label: string }[];
   contentTypeFieldMap: Map<string, ContentField[]>;
   depth?: number;
@@ -212,27 +377,50 @@ type FieldBuilderProps = {
 type SortableFieldItemProps = {
   field: ContentField;
   index: number;
+  pathPrefixStr: string;
   depth: number;
-  fields: ContentField[];
-  onChange: (next: ContentField[]) => void;
+  setRootFields: React.Dispatch<React.SetStateAction<ContentField[]>>;
   availableKeys: string[];
+  availableKeysVersion: string;
   fieldMetaMap: Map<string, { type: FieldType; options?: string[] }>;
+  fieldMetaVersion: string;
   contentTypeOptions: { value: string; label: string }[];
   contentTypeFieldMap: Map<string, ContentField[]>;
 };
 
-function SortableFieldItem({
+function sortableFieldItemPropsEqual(prev: SortableFieldItemProps, next: SortableFieldItemProps): boolean {
+  return (
+    prev.field === next.field &&
+    prev.index === next.index &&
+    prev.pathPrefixStr === next.pathPrefixStr &&
+    prev.depth === next.depth &&
+    prev.setRootFields === next.setRootFields &&
+    prev.contentTypeOptions === next.contentTypeOptions &&
+    prev.contentTypeFieldMap === next.contentTypeFieldMap &&
+    prev.availableKeysVersion === next.availableKeysVersion &&
+    prev.fieldMetaVersion === next.fieldMetaVersion
+  );
+}
+
+const SortableFieldItem = memo(function SortableFieldItem({
   field,
   index,
+  pathPrefixStr,
   depth,
-  fields,
-  onChange,
+  setRootFields,
   availableKeys,
+  availableKeysVersion,
   fieldMetaMap,
+  fieldMetaVersion,
   contentTypeOptions,
   contentTypeFieldMap,
 }: SortableFieldItemProps) {
-  const sortableId = `${depth}-${index}`;
+  const fieldPath = useMemo(() => {
+    if (!pathPrefixStr) return [index];
+    return [...pathPrefixStr.split('-').map(Number), index];
+  }, [pathPrefixStr, index]);
+
+  const sortableId = pathPrefixStr ? `${pathPrefixStr}-${index}` : String(index);
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId });
 
   const style = {
@@ -242,24 +430,34 @@ function SortableFieldItem({
   };
 
   const fieldTitle = field.label || field.key || `Field ${index + 1}`;
-  const tagOptions: Tag[] = (field.config?.options ?? []).map((option, optionIndex) => ({
-    id: `${field.key || 'option'}-${optionIndex}`,
-    text: option,
-  }));
+  const tagOptions: Tag[] = useMemo(
+    () =>
+      (field.config?.options ?? []).map((option, optionIndex) => ({
+        id: `${field.key || 'option'}-${optionIndex}`,
+        text: option,
+      })),
+    [field.config?.options, field.key],
+  );
   const [activeTagIndex, setActiveTagIndex] = useState<number | null>(null);
   const repeaterSource = field.config && 'contentTypeId' in field.config ? 'contentType' : 'custom';
   const nestedFields = repeaterSource === 'contentType'
     ? (contentTypeFieldMap.get(field.config?.contentTypeId ?? '') ?? [])
     : (field.config?.fields ?? []);
   const visibility = field.config?.visibility;
-  const [open, setOpen] = useState(true);
-  const ruleFieldOptions = availableKeys
-    .filter((key) => key && key !== field.key)
-    .map((key) => ({ value: key, label: key }));
+  /** Collapsed by default so heavy controls stay unmounted; first top-level row starts open for discoverability. */
+  const [open, setOpen] = useState(depth === 0 && index === 0);
+  const ruleFieldOptions = useMemo(
+    () =>
+      availableKeys
+        .filter((key) => key && key !== field.key)
+        .map((key) => ({ value: key, label: key })),
+    [availableKeys, field.key],
+  );
+  const comboboxRowClass = 'w-full';
 
   const setVisibility = (next: VisibilityConfig | undefined) =>
-    onChange(
-      updateFieldAtPath(fields, [index], (current) => ({
+    setRootFields((prev) =>
+      updateFieldAtPath(prev, fieldPath, (current) => ({
         ...current,
         config: {
           ...(current.config ?? {}),
@@ -277,8 +475,12 @@ function SortableFieldItem({
   }
 
   return (
-    <div ref={setNodeRef} style={style} className="space-y-4 rounded-md border p-3">
-      <Collapsible open={open} onOpenChange={setOpen} className="space-y-4">
+    <div
+      ref={setNodeRef}
+      style={style}
+      className="flex flex-col gap-4 rounded-lg border border-border bg-background p-4 shadow-sm"
+    >
+      <Collapsible open={open} onOpenChange={setOpen} className="flex flex-col gap-4">
         <div className="flex min-w-0 items-center gap-2">
           <button
             type="button"
@@ -289,178 +491,240 @@ function SortableFieldItem({
           >
             <GripVertical className="h-4 w-4" />
           </button>
-          <span className="truncate text-sm font-medium">{fieldTitle}</span>
-          <Badge variant="secondary">{field.type}</Badge>
-          {field.required ? <Badge>required</Badge> : null}
-          <CollapsibleTrigger asChild>
-            <Button type="button" variant="ghost" size="sm" className="ml-auto h-7 w-7 p-0" aria-label="Toggle field settings">
-              <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-            </Button>
-          </CollapsibleTrigger>
-        </div>
-
-        <CollapsibleContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
-        <div className="space-y-2">
-          <Label>Key</Label>
-          <Input
-            value={field.key}
-            onChange={(event) =>
-              onChange(updateFieldAtPath(fields, [index], (current) => ({ ...current, key: event.target.value })))
-            }
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Label</Label>
-          <Input
-            value={field.label}
-            onChange={(event) =>
-              onChange(updateFieldAtPath(fields, [index], (current) => ({ ...current, label: event.target.value })))
-            }
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Type</Label>
-          <Combobox
-            value={field.type}
-            onValueChange={(value) =>
-              onChange(
-                updateFieldAtPath(fields, [index], (current) => ({
-                  ...current,
-                  type: value as FieldType,
-                  config:
-                    value === 'select'
-                      ? { ...(current.config ?? {}), options: current.config?.options ?? [] }
-                      : value === 'repeater'
-                        ? { ...(current.config ?? {}), fields: current.config?.fields ?? [] }
-                        : current.config,
-                })),
-              )
-            }
-            options={fieldTypeOptions}
-            placeholder="Type"
-            searchPlaceholder="Search type..."
-            className="w-full"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Required</Label>
-          <Button
-            type="button"
-            variant={field.required ? 'default' : 'outline'}
-            className="w-full"
-            onClick={() =>
-              onChange(updateFieldAtPath(fields, [index], (current) => ({ ...current, required: !current.required })))
-            }
-          >
-            {field.required ? 'Yes' : 'No'}
-          </Button>
-        </div>
+          <span className="min-w-0 flex-1 truncate text-sm font-medium">{fieldTitle}</span>
+          {!open ? (
+            <>
+              <Badge variant="secondary" className="shrink-0">
+                {field.type}
+              </Badge>
+              {field.required ? <Badge className="shrink-0">required</Badge> : null}
+            </>
+          ) : null}
+          <div className="ml-auto flex shrink-0 items-center gap-0.5">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Field actions">
+                  <Ellipsis className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuGroup>
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setRootFields((prev) => {
+                        const target = getFieldAtPath(prev, fieldPath);
+                        if (!target) return prev;
+                        return insertFieldAfterPath(prev, fieldPath, cloneField(target));
+                      });
+                    }}
+                  >
+                    <Copy />
+                    Duplicate
+                  </DropdownMenuItem>
+                  <DropdownMenuItem variant="destructive" onClick={() => setRootFields((prev) => removeFieldAtPath(prev, fieldPath))}>
+                    <Trash2 />
+                    Remove
+                  </DropdownMenuItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Toggle field settings">
+                <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+              </Button>
+            </CollapsibleTrigger>
           </div>
+        </div>
 
-          <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const next = [...fields];
-                next.splice(index + 1, 0, cloneField(field));
-                onChange(next);
-              }}
-            >
-              <Copy className="mr-2 h-4 w-4" />
-              Duplicate
-            </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => onChange(removeFieldAtPath(fields, [index]))}>
-              <Trash2 className="mr-2 h-4 w-4" />
-              Remove
-            </Button>
+        {open ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4">
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field className="min-w-0">
+                <FieldLabel htmlFor={`field-key-${sortableId}`}>Key</FieldLabel>
+                <FieldContent>
+                  <BufferedInput
+                    id={`field-key-${sortableId}`}
+                    value={field.key}
+                    onCommit={(nextValue) =>
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({ ...current, key: nextValue })),
+                      )
+                    }
+                  />
+                </FieldContent>
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel htmlFor={`field-label-${sortableId}`}>Label</FieldLabel>
+                <FieldContent>
+                  <BufferedInput
+                    id={`field-label-${sortableId}`}
+                    value={field.label}
+                    onCommit={(nextValue) =>
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({ ...current, label: nextValue })),
+                      )
+                    }
+                  />
+                </FieldContent>
+              </Field>
+            </div>
+            <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field className="min-w-0">
+                <FieldLabel htmlFor={`field-type-${sortableId}`}>Type</FieldLabel>
+                <FieldContent>
+                  <Combobox
+                    id={`field-type-${sortableId}`}
+                    value={field.type}
+                    onValueChange={(value) =>
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({
+                          ...current,
+                          type: value as FieldType,
+                          config:
+                            value === 'select'
+                              ? { ...(current.config ?? {}), options: current.config?.options ?? [] }
+                              : value === 'repeater'
+                                ? { ...(current.config ?? {}), fields: current.config?.fields ?? [] }
+                                : current.config,
+                        })),
+                      )
+                    }
+                    options={fieldTypeOptions}
+                    placeholder="Type"
+                    searchPlaceholder="Search type..."
+                    className={comboboxRowClass}
+                  />
+                </FieldContent>
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel htmlFor={`field-required-${sortableId}`}>Required</FieldLabel>
+                <FieldContent>
+                  <div className="flex items-start gap-3">
+                    <Checkbox
+                      id={`field-required-${sortableId}`}
+                      className="mt-0.5 shrink-0"
+                      checked={field.required}
+                      onCheckedChange={(checked) =>
+                        setRootFields((prev) =>
+                          updateFieldAtPath(prev, fieldPath, (current) => ({ ...current, required: checked === true })),
+                        )
+                      }
+                    />
+                    <FieldDescription className="min-w-0 flex-1">
+                      Entries must provide a value for this field.
+                    </FieldDescription>
+                  </div>
+                </FieldContent>
+              </Field>
+            </div>
           </div>
 
           {field.type === 'select' ? (
-            <div className="space-y-2">
-              <Label>Select options</Label>
-              <TagInput
-            placeholder="Add option"
-            tags={tagOptions}
-            setTags={(nextTags) => {
-              const resolvedTags = typeof nextTags === 'function' ? nextTags(tagOptions) : nextTags;
-              onChange(
-                updateFieldAtPath(fields, [index], (current) => ({
-                  ...current,
-                  config: {
-                    ...(current.config ?? {}),
-                    options: resolvedTags
-                      .map((tag) => tag.text.trim())
-                      .filter(Boolean),
-                  },
-                })),
-              );
-            }}
-            activeTagIndex={activeTagIndex}
-            setActiveTagIndex={setActiveTagIndex}
-            inlineTags
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-            styleClasses={{
-              inlineTagsContainer:
-                'flex min-h-10 w-full flex-wrap items-center gap-2 rounded-md border border-input bg-transparent px-2 py-2 focus-within:ring-1 focus-within:ring-ring',
-              tag: {
-                body: 'inline-flex items-center gap-1 rounded-md border bg-muted pl-2 pr-1 py-1 text-xs text-foreground',
-                closeButton: 'ml-0 rounded-sm p-0.5 hover:bg-accent',
-              },
-              input: 'h-8 min-w-24 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0',
-            }}
-              />
-            </div>
+            <Field>
+              <FieldLabel>Select options</FieldLabel>
+              <FieldContent>
+                <TagInput
+                  placeholder="Add option"
+                  tags={tagOptions}
+                  setTags={(nextTags) => {
+                    const resolvedTags = typeof nextTags === 'function' ? nextTags(tagOptions) : nextTags;
+                    setRootFields((prev) =>
+                      updateFieldAtPath(prev, fieldPath, (current) => ({
+                        ...current,
+                        config: {
+                          ...(current.config ?? {}),
+                          options: resolvedTags
+                            .map((tag) => tag.text.trim())
+                            .filter(Boolean),
+                        },
+                      })),
+                    );
+                  }}
+                  activeTagIndex={activeTagIndex}
+                  setActiveTagIndex={setActiveTagIndex}
+                  inlineTags
+                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  styleClasses={{
+                    inlineTagsContainer:
+                      'flex min-h-10 w-full flex-wrap items-center gap-2 rounded-md border border-input bg-transparent px-2 py-2 focus-within:ring-1 focus-within:ring-ring',
+                    tag: {
+                      body: 'inline-flex items-center gap-1 rounded-md border bg-muted pl-2 pr-1 py-1 text-xs text-foreground',
+                      closeButton: 'ml-0 rounded-sm p-0.5 hover:bg-accent',
+                    },
+                    input: 'h-8 min-w-24 border-0 bg-transparent px-1 shadow-none focus-visible:ring-0',
+                  }}
+                />
+              </FieldContent>
+              <FieldDescription>Allowed values when this field is used as a select.</FieldDescription>
+            </Field>
           ) : null}
 
-          <div className="space-y-3 rounded-md border p-3">
-            <div className="flex items-center justify-between">
-              <Label>Conditional visibility</Label>
-              <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              setVisibility(
-                visibility
-                  ? undefined
-                  : {
-                      relation: 'all',
-                      groups: [createDefaultGroup()],
-                    },
-              )
-            }
-          >
-            {visibility ? 'Disable logic' : 'Enable logic'}
-              </Button>
+          <Sheet>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-3">
+              <div className="min-w-0">
+                <FieldTitle>Conditional visibility</FieldTitle>
+                <FieldDescription className="text-xs">
+                  {visibility
+                    ? `${visibility.groups.length} group${visibility.groups.length === 1 ? '' : 's'} configured`
+                    : 'This field is always visible.'}
+                </FieldDescription>
+              </div>
+              <SheetTrigger asChild>
+                <Button type="button" variant="outline" size="sm">
+                  {visibility ? 'Edit logic' : 'Set logic'}
+                </Button>
+              </SheetTrigger>
             </div>
 
-            {visibility ? (
-              <div className="space-y-3">
-            <div className="space-y-2">
-              <Label>How groups are combined</Label>
-              <Combobox
+            <SheetContent side="right" className="w-full p-0 sm:max-w-2xl">
+              <SheetHeader className="border-b">
+                <SheetTitle>Conditional Visibility Rules</SheetTitle>
+                <SheetDescription>
+                  Control when this field appears based on other field values.
+                </SheetDescription>
+              </SheetHeader>
+              <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <FieldTitle>Conditional visibility</FieldTitle>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setVisibility(
+                        visibility
+                          ? undefined
+                          : {
+                              relation: 'all',
+                              groups: [createDefaultGroup()],
+                            },
+                      )
+                    }
+                  >
+                    {visibility ? 'Disable logic' : 'Enable logic'}
+                  </Button>
+                </div>
+
+                {visibility ? (
+                  <div className="flex flex-col gap-3">
+            <Field orientation="horizontal" className="items-center justify-between gap-3">
+              <FieldLabel>How groups are combined</FieldLabel>
+              <RelationToggle
                 value={visibility.relation}
-                onValueChange={(value) => setVisibility({ ...visibility, relation: value as 'all' | 'any' })}
-                options={[...relationOptions]}
-                placeholder="Select relation"
-                className="w-full"
+                onChange={(value) => setVisibility({ ...visibility, relation: value })}
+                ariaLabel="How groups are combined"
               />
-            </div>
+            </Field>
 
             {visibility.groups.map((group) => (
-              <div key={group.id} className="space-y-3 rounded-md border p-3">
-                <div className="flex items-center justify-between">
-                  <div className="w-full space-y-2">
-                    <Label>Rules in this group</Label>
-                    <Combobox
+              <Item key={group.id} variant="muted" className="w-full flex-col flex-nowrap items-stretch gap-3 p-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <RelationToggle
                       value={group.relation}
-                      onValueChange={(value) => updateGroup(group.id, (current) => ({ ...current, relation: value as 'all' | 'any' }))}
-                      options={[...relationOptions]}
-                      placeholder="Select relation"
-                      className="w-full"
+                      onChange={(value) => updateGroup(group.id, (current) => ({ ...current, relation: value }))}
+                      ariaLabel="Rules in this group"
                     />
                   </div>
                   <Button
@@ -481,88 +745,107 @@ function SortableFieldItem({
                 </div>
 
                 {group.rules.map((rule) => (
-                  <div key={rule.id} className="grid gap-2 md:grid-cols-4">
-                    <Combobox
-                      value={rule.fieldKey}
-                      onValueChange={(value) =>
-                        updateGroup(group.id, (current) => ({
-                          ...current,
-                          rules: current.rules.map((item) => (item.id === rule.id ? { ...item, fieldKey: value } : item)),
-                        }))
-                      }
-                      options={ruleFieldOptions}
-                      placeholder="Field"
-                      searchPlaceholder="Search field..."
-                      emptyText="No fields"
-                      className="w-full"
-                    />
-                    <Combobox
-                      value={rule.operator}
-                      onValueChange={(value) =>
-                        updateGroup(group.id, (current) => ({
-                          ...current,
-                          rules: current.rules.map((item) => (item.id === rule.id ? { ...item, operator: value as ConditionOperator } : item)),
-                        }))
-                      }
-                      options={operatorOptions}
-                      placeholder="Operator"
-                      className="w-full"
-                    />
-                    {(() => {
-                      const needsValue = rule.operator !== 'is_empty' && rule.operator !== 'is_not_empty';
-                      const referencedField = fieldMetaMap.get(rule.fieldKey);
-                      const setRuleValue = (nextValue: string) =>
-                        updateGroup(group.id, (current) => ({
-                          ...current,
-                          rules: current.rules.map((item) => (item.id === rule.id ? { ...item, value: nextValue } : item)),
-                        }));
-
-                      if (!needsValue) {
-                        return <Input value="" placeholder="No value needed" disabled />;
-                      }
-
-                      if (referencedField?.type === 'select') {
-                        return (
-                          <Combobox
-                            value={rule.value ?? ''}
-                            onValueChange={setRuleValue}
-                            options={(referencedField.options ?? []).map((option) => ({ value: option, label: option }))}
-                            placeholder="Select value"
-                            searchPlaceholder="Search value..."
-                            emptyText="No options"
-                            className="w-full"
-                          />
-                        );
-                      }
-
-                      if (referencedField?.type === 'boolean') {
-                        return (
-                          <Combobox
-                            value={rule.value ?? ''}
-                            onValueChange={setRuleValue}
-                            options={[
-                              { value: 'true', label: 'true' },
-                              { value: 'false', label: 'false' },
-                            ]}
-                            placeholder="Select value"
-                            className="w-full"
-                          />
-                        );
-                      }
-
-                      return (
-                        <Input
-                          value={rule.value ?? ''}
-                          onChange={(event) => setRuleValue(event.target.value)}
-                          placeholder="Value"
-                          type={referencedField?.type === 'number' ? 'number' : 'text'}
-                          inputMode={referencedField?.type === 'number' ? 'decimal' : undefined}
+                  <div key={rule.id} className="flex items-stretch gap-2">
+                    <div className="grid flex-1 overflow-hidden rounded-2xl border border-input bg-background md:grid-cols-3">
+                      <div className="border-b border-input md:border-r md:border-b-0">
+                        <Combobox
+                          value={rule.fieldKey}
+                          onValueChange={(value) =>
+                            updateGroup(group.id, (current) => ({
+                              ...current,
+                              rules: current.rules.map((item) => (item.id === rule.id ? { ...item, fieldKey: value } : item)),
+                            }))
+                          }
+                          options={ruleFieldOptions}
+                          placeholder="Field"
+                          searchPlaceholder="Search field..."
+                          emptyText="No fields"
+                          className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                         />
-                      );
-                    })()}
+                      </div>
+                      <div className="border-b border-input md:border-r md:border-b-0">
+                        <Combobox
+                          value={rule.operator}
+                          onValueChange={(value) =>
+                            updateGroup(group.id, (current) => ({
+                              ...current,
+                              rules: current.rules.map((item) => (item.id === rule.id ? { ...item, operator: value as ConditionOperator } : item)),
+                            }))
+                          }
+                          options={operatorOptions}
+                          placeholder="Operator"
+                          className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                        />
+                      </div>
+                      <div>
+                        {(() => {
+                          const needsValue = rule.operator !== 'is_empty' && rule.operator !== 'is_not_empty';
+                          const referencedField = fieldMetaMap.get(rule.fieldKey);
+                          const setRuleValue = (nextValue: string) =>
+                            updateGroup(group.id, (current) => ({
+                              ...current,
+                              rules: current.rules.map((item) => (item.id === rule.id ? { ...item, value: nextValue } : item)),
+                            }));
+
+                          if (!needsValue) {
+                            return (
+                              <Input
+                                value=""
+                                placeholder="No value needed"
+                                disabled
+                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                              />
+                            );
+                          }
+
+                          if (referencedField?.type === 'select') {
+                            return (
+                              <Combobox
+                                value={rule.value ?? ''}
+                                onValueChange={setRuleValue}
+                                options={(referencedField.options ?? []).map((option) => ({ value: option, label: option }))}
+                                placeholder="Select value"
+                                searchPlaceholder="Search value..."
+                                emptyText="No options"
+                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                              />
+                            );
+                          }
+
+                          if (referencedField?.type === 'boolean') {
+                            return (
+                              <Combobox
+                                value={rule.value ?? ''}
+                                onValueChange={setRuleValue}
+                                options={[
+                                  { value: 'true', label: 'true' },
+                                  { value: 'false', label: 'false' },
+                                ]}
+                                placeholder="Select value"
+                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                              />
+                            );
+                          }
+
+                          return (
+                            <Input
+                              value={rule.value ?? ''}
+                              onChange={(event) => setRuleValue(event.target.value)}
+                              placeholder="Value"
+                              type={referencedField?.type === 'number' ? 'number' : 'text'}
+                              inputMode={referencedField?.type === 'number' ? 'decimal' : undefined}
+                              className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                            />
+                          );
+                        })()}
+                      </div>
+                    </div>
                     <Button
                       type="button"
-                      variant="outline"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Remove rule"
+                      className="h-9 w-9 shrink-0"
                       onClick={() =>
                         updateGroup(group.id, (current) => ({
                           ...current,
@@ -571,15 +854,16 @@ function SortableFieldItem({
                       }
                       disabled={group.rules.length <= 1}
                     >
-                      Remove rule
+                      <Trash2 className="h-4 w-4" />
                     </Button>
                   </div>
                 ))}
 
                 <Button
                   type="button"
-                  variant="outline"
+                  variant="ghost"
                   size="sm"
+                  className="self-start text-primary"
                   onClick={() =>
                     updateGroup(group.id, (current) => ({
                       ...current,
@@ -587,15 +871,17 @@ function SortableFieldItem({
                     }))
                   }
                 >
+                  <Plus className="h-4 w-4" />
                   Add rule
                 </Button>
-              </div>
+              </Item>
             ))}
 
             <Button
               type="button"
-              variant="outline"
+              variant="ghost"
               size="sm"
+              className="self-start text-primary"
               onClick={() =>
                 setVisibility({
                   ...visibility,
@@ -603,24 +889,29 @@ function SortableFieldItem({
                 })
               }
             >
+              <Plus className="h-4 w-4" />
               Add group
             </Button>
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground">This field is always visible.</p>
+                )}
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">This field is always visible.</p>
-            )}
-          </div>
+            </SheetContent>
+          </Sheet>
 
           {field.type === 'repeater' ? (
-            <div className="space-y-3 rounded-md border border-dashed p-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Repeater Source</Label>
+            <div className="flex flex-col gap-3 rounded-md border border-dashed p-3">
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor={`repeater-source-${sortableId}`}>Repeater source</FieldLabel>
+                  <FieldContent>
                   <Combobox
+                    id={`repeater-source-${sortableId}`}
                     value={repeaterSource}
                     onValueChange={(next) =>
-                      onChange(
-                        updateFieldAtPath(fields, [index], (current) => ({
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({
                           ...current,
                           config:
                             next === 'contentType'
@@ -634,17 +925,20 @@ function SortableFieldItem({
                       { value: 'contentType', label: 'Reference content type' },
                     ]}
                     placeholder="Select source"
-                    className="w-full"
+                    className={comboboxRowClass}
                   />
-                </div>
+                  </FieldContent>
+                </Field>
                 {repeaterSource === 'contentType' ? (
-                  <div className="space-y-2">
-                    <Label>Referenced Content Type</Label>
+                  <Field>
+                    <FieldLabel htmlFor={`repeater-ref-ct-${sortableId}`}>Referenced content type</FieldLabel>
+                    <FieldContent>
                     <Combobox
+                      id={`repeater-ref-ct-${sortableId}`}
                       value={field.config?.contentTypeId ?? ''}
                       onValueChange={(next) =>
-                        onChange(
-                          updateFieldAtPath(fields, [index], (current) => ({
+                        setRootFields((prev) =>
+                          updateFieldAtPath(prev, fieldPath, (current) => ({
                             ...current,
                             config: { ...(current.config ?? {}), contentTypeId: next, fields: undefined },
                           })),
@@ -654,23 +948,24 @@ function SortableFieldItem({
                       placeholder="Select content type"
                       searchPlaceholder="Search content types..."
                       emptyText="No content types"
-                      className="w-full"
+                      className={comboboxRowClass}
                     />
-                  </div>
+                    </FieldContent>
+                  </Field>
                 ) : null}
               </div>
 
               {repeaterSource === 'custom' ? (
                 <>
-                  <div className="flex items-center justify-between">
-                    <Label>Repeater nested fields</Label>
+                  <div className="flex flex-wrap items-end justify-between gap-2">
+                    <FieldTitle>Repeater nested fields</FieldTitle>
                     <Button
                       type="button"
                       variant="outline"
                       size="sm"
                       onClick={() =>
-                        onChange(
-                          updateFieldAtPath(fields, [index], (current) => ({
+                        setRootFields((prev) =>
+                          updateFieldAtPath(prev, fieldPath, (current) => ({
                             ...current,
                             config: {
                               ...(current.config ?? {}),
@@ -685,17 +980,13 @@ function SortableFieldItem({
                     </Button>
                   </div>
                   <FieldBuilder
+                    pathPrefixStr={fieldPath.join('-')}
                     fields={nestedFields}
-                    onChange={(nextNested) =>
-                      onChange(
-                        updateFieldAtPath(fields, [index], (current) => ({
-                          ...current,
-                          config: { ...(current.config ?? {}), fields: nextNested, contentTypeId: undefined },
-                        })),
-                      )
-                    }
+                    setRootFields={setRootFields}
                     availableKeys={availableKeys}
+                    availableKeysVersion={availableKeysVersion}
                     fieldMetaMap={fieldMetaMap}
+                    fieldMetaVersion={fieldMetaVersion}
                     contentTypeOptions={contentTypeOptions}
                     contentTypeFieldMap={contentTypeFieldMap}
                     depth={depth + 1}
@@ -708,13 +999,32 @@ function SortableFieldItem({
               )}
             </div>
           ) : null}
-        </CollapsibleContent>
+        </div>
+        ) : null}
       </Collapsible>
     </div>
   );
-}
+}, sortableFieldItemPropsEqual);
 
-function FieldBuilder({ fields, onChange, availableKeys, fieldMetaMap, contentTypeOptions, contentTypeFieldMap, depth = 0 }: FieldBuilderProps) {
+function FieldBuilder({
+  pathPrefixStr,
+  fields,
+  setRootFields,
+  availableKeys,
+  availableKeysVersion,
+  fieldMetaMap,
+  fieldMetaVersion,
+  contentTypeOptions,
+  contentTypeFieldMap,
+  depth = 0,
+}: FieldBuilderProps) {
+  const parentPath = useMemo(
+    () => (pathPrefixStr ? pathPrefixStr.split('-').map((part) => Number(part)) : []),
+    [pathPrefixStr],
+  );
+
+  const itemId = useCallback((i: number) => (pathPrefixStr ? `${pathPrefixStr}-${i}` : String(i)), [pathPrefixStr]);
+
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -724,28 +1034,32 @@ function FieldBuilder({ fields, onChange, availableKeys, fieldMetaMap, contentTy
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = fields.findIndex((_, index) => `${depth}-${index}` === String(active.id));
-    const newIndex = fields.findIndex((_, index) => `${depth}-${index}` === String(over.id));
+    const oldIndex = fields.findIndex((_, index) => itemId(index) === String(active.id));
+    const newIndex = fields.findIndex((_, index) => itemId(index) === String(over.id));
     if (oldIndex < 0 || newIndex < 0) return;
 
-    onChange(arrayMove(fields, oldIndex, newIndex));
+    setRootFields((prev) =>
+      updateFieldsArrayAtPath(prev, parentPath, (children) => arrayMove(children, oldIndex, newIndex)),
+    );
   }
 
   return (
     <div className="space-y-3">
       <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-        <SortableContext items={fields.map((_, index) => `${depth}-${index}`)} strategy={verticalListSortingStrategy}>
+        <SortableContext items={fields.map((_, index) => itemId(index))} strategy={verticalListSortingStrategy}>
           <div className="w-full space-y-3">
             {fields.map((field, index) => (
               <SortableFieldItem
-                key={`${depth}-${index}`}
+                key={itemId(index)}
                 field={field}
                 index={index}
+                pathPrefixStr={pathPrefixStr}
                 depth={depth}
-                fields={fields}
-                onChange={onChange}
+                setRootFields={setRootFields}
                 availableKeys={availableKeys}
+                availableKeysVersion={availableKeysVersion}
                 fieldMetaMap={fieldMetaMap}
+                fieldMetaVersion={fieldMetaVersion}
                 contentTypeOptions={contentTypeOptions}
                 contentTypeFieldMap={contentTypeFieldMap}
               />
@@ -940,6 +1254,154 @@ export function ContentTypesPage({ token, workspaceSiteId, sites: _sites }: Cont
   );
 }
 
+type ContentTypeSchemaBootstrap = {
+  fields: ContentField[];
+  hasSlug: boolean;
+  slugFieldKey: string;
+};
+
+export type ContentTypeSchemaHandle = {
+  getSnapshot: () => ContentTypeSchemaBootstrap;
+};
+
+type ContentTypeSchemaBlockProps = {
+  bootstrap: ContentTypeSchemaBootstrap;
+  contentTypeOptions: { value: string; label: string }[];
+  contentTypeFieldMap: Map<string, ContentField[]>;
+};
+
+function contentTypeSchemaBlockPropsEqual(prev: ContentTypeSchemaBlockProps, next: ContentTypeSchemaBlockProps): boolean {
+  return (
+    prev.bootstrap === next.bootstrap &&
+    prev.contentTypeOptions === next.contentTypeOptions &&
+    prev.contentTypeFieldMap === next.contentTypeFieldMap
+  );
+}
+
+/** Holds fields + entry-slug settings so typing in the schema does not re-render the rest of the editor page. */
+const ContentTypeSchemaBlock = memo(
+  forwardRef<ContentTypeSchemaHandle, ContentTypeSchemaBlockProps>(function ContentTypeSchemaBlock(
+    { bootstrap, contentTypeOptions, contentTypeFieldMap },
+    ref,
+  ) {
+    const [fields, setFields] = useState(bootstrap.fields);
+    const [hasSlug, setHasSlug] = useState(bootstrap.hasSlug);
+    const [slugFieldKey, setSlugFieldKey] = useState(bootstrap.slugFieldKey);
+
+    useEffect(() => {
+      setFields(bootstrap.fields);
+      setHasSlug(bootstrap.hasSlug);
+      setSlugFieldKey(bootstrap.slugFieldKey);
+    }, [bootstrap]);
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        getSnapshot: (): ContentTypeSchemaBootstrap => ({ fields, hasSlug, slugFieldKey }),
+      }),
+      [fields, hasSlug, slugFieldKey],
+    );
+
+    const deferredFields = useDeferredValue(fields);
+    const deferredAvailableKeys = useMemo(
+      () => flattenFieldKeys(deferredFields, contentTypeFieldMap),
+      [deferredFields, contentTypeFieldMap],
+    );
+    const deferredFieldMetaMap = useMemo(
+      () => flattenFieldMeta(deferredFields, new Map(), contentTypeFieldMap),
+      [deferredFields, contentTypeFieldMap],
+    );
+    const availableKeysVersion = useMemo(() => deferredAvailableKeys.join('\u001f'), [deferredAvailableKeys]);
+    const fieldMetaVersion = useMemo(() => createFieldMetaVersion(deferredFieldMetaMap), [deferredFieldMetaMap]);
+    const slugFieldComboboxOptions = useMemo(
+      () => deferredAvailableKeys.filter(Boolean).map((key) => ({ value: key, label: key })),
+      [deferredAvailableKeys],
+    );
+
+    return (
+      <>
+        <Item
+          variant="muted"
+          className="w-full flex-col flex-nowrap items-stretch"
+          role="group"
+          aria-label="Entry slug settings"
+        >
+          <FieldGroup className="w-full gap-4">
+            <Field orientation="horizontal" className="items-start gap-3">
+              <Checkbox
+                id="ct-entry-has-slug"
+                checked={hasSlug}
+                onCheckedChange={(value) => setHasSlug(value === true)}
+              />
+              <FieldContent>
+                <FieldLabel htmlFor="ct-entry-has-slug">Enable entry slugs</FieldLabel>
+                <FieldDescription>Optional URL segments for entries of this type.</FieldDescription>
+              </FieldContent>
+            </Field>
+            <Field
+              data-disabled={hasSlug ? undefined : 'true'}
+              aria-disabled={!hasSlug}
+              className={!hasSlug ? 'pointer-events-none' : undefined}
+            >
+              <FieldLabel htmlFor="ct-slug-source-field">Slug source field</FieldLabel>
+              <FieldContent>
+                <Combobox
+                  id="ct-slug-source-field"
+                  value={slugFieldKey}
+                  onValueChange={setSlugFieldKey}
+                  options={slugFieldComboboxOptions}
+                  placeholder={hasSlug ? 'Select source field' : 'Enable slugs first'}
+                  searchPlaceholder="Search fields..."
+                  emptyText="No fields"
+                  className="w-full"
+                  disabled={!hasSlug}
+                />
+              </FieldContent>
+              <FieldDescription>
+                Auto-generate the slug from this field until the editor changes it manually.
+              </FieldDescription>
+            </Field>
+          </FieldGroup>
+        </Item>
+
+        <Item
+          variant="muted"
+          className="w-full flex-col flex-nowrap items-stretch"
+          role="group"
+          aria-label="Content type fields"
+        >
+          <FieldGroup className="w-full gap-3">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <FieldTitle>Fields</FieldTitle>
+                <FieldDescription>
+                  Drag using the handle to reorder. Use conditional visibility for ACF-style rules.
+                </FieldDescription>
+              </div>
+              <Button type="button" variant="outline" onClick={() => setFields((prev) => [...prev, createEmptyField()])}>
+                <Plus data-icon="inline-start" />
+                Add field
+              </Button>
+            </div>
+            <FieldBuilder
+              pathPrefixStr=""
+              fields={fields}
+              setRootFields={setFields}
+              availableKeys={deferredAvailableKeys}
+              availableKeysVersion={availableKeysVersion}
+              fieldMetaMap={deferredFieldMetaMap}
+              fieldMetaVersion={fieldMetaVersion}
+              contentTypeOptions={contentTypeOptions}
+              contentTypeFieldMap={contentTypeFieldMap}
+            />
+          </FieldGroup>
+        </Item>
+      </>
+    );
+  }),
+  contentTypeSchemaBlockPropsEqual,
+);
+
 export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, contentTypeId }: ContentTypeEditorPageProps) {
   const navigate = useNavigate();
   const isNew = contentTypeId === 'new' || !contentTypeId;
@@ -948,17 +1410,20 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
   const [name, setName] = useState('');
-  const [slug, setSlug] = useState('');
-  const [fields, setFields] = useState<ContentField[]>([createEmptyField()]);
+  /** Immutable URL key after save; only used when editing an existing type */
+  const [committedSlug, setCommittedSlug] = useState('');
   const [allContentTypes, setAllContentTypes] = useState<ContentType[]>([]);
   const [showInSidebar, setShowInSidebar] = useState(false);
   const [sidebarLabel, setSidebarLabel] = useState('');
   const [sidebarOrder, setSidebarOrder] = useState(100);
-  const [hasSlug, setHasSlug] = useState(false);
-  const [slugFieldKey, setSlugFieldKey] = useState('');
+  const [schemaBootstrap, setSchemaBootstrap] = useState<ContentTypeSchemaBootstrap | null>(null);
+  const schemaRef = useRef<ContentTypeSchemaHandle | null>(null);
 
   useEffect(() => {
-    if (!workspaceSiteId) return;
+    if (!workspaceSiteId) {
+      setSchemaBootstrap(null);
+      return;
+    }
 
     let cancelled = false;
     const load = async () => {
@@ -974,31 +1439,38 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
         if (isNew) {
           if (!cancelled) {
             setName('');
-            setSlug('');
-            setFields([createEmptyField()]);
+            setCommittedSlug('');
             setShowInSidebar(false);
             setSidebarLabel('');
             setSidebarOrder(100);
-            setHasSlug(false);
-            setSlugFieldKey('');
             setError('');
+            setSchemaBootstrap({
+              fields: [createEmptyField()],
+              hasSlug: false,
+              slugFieldKey: '',
+            });
           }
           return;
         }
         const target = data.contentTypes.find((item) => item.id === contentTypeId);
         if (!target) {
-          if (!cancelled) setError('Content type not found in this workspace');
+          if (!cancelled) {
+            setError('Content type not found in this workspace');
+            setSchemaBootstrap(null);
+          }
           return;
         }
         if (!cancelled) {
           setName(target.name);
-          setSlug(target.slug);
-          setFields(target.fields?.length ? target.fields : [createEmptyField()]);
+          setCommittedSlug(target.slug);
           setShowInSidebar(Boolean(target.options?.showInSidebar));
           setSidebarLabel(target.options?.sidebarLabel ?? '');
           setSidebarOrder(target.options?.sidebarOrder ?? 100);
-          setHasSlug(Boolean(target.options?.hasSlug));
-          setSlugFieldKey(target.options?.slugFieldKey ?? '');
+          setSchemaBootstrap({
+            fields: target.fields?.length ? target.fields : [createEmptyField()],
+            hasSlug: Boolean(target.options?.hasSlug),
+            slugFieldKey: target.options?.slugFieldKey ?? '',
+          });
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : 'Failed to load content type');
@@ -1015,16 +1487,28 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
 
   async function handleSave() {
     if (!workspaceSiteId) return;
+    if (isNew && !name.trim()) {
+      setError('Name is required');
+      return;
+    }
+    const schema = schemaRef.current?.getSnapshot();
+    if (!schema) {
+      setError('Schema is not ready to save');
+      return;
+    }
+    const { fields, hasSlug, slugFieldKey } = schema;
     setIsSaving(true);
     setError('');
     try {
+      const taken = new Set(allContentTypes.map((c) => c.slug).filter(Boolean));
       if (isNew) {
+        const slug = uniqueContentTypeSlug(slugifyContentTypeName(name), taken);
         await gqlRequest(
           token,
           'mutation($siteId:ID!,$name:String!,$slug:String!,$fields:[FieldInput!]!,$options:JSON){ createContentType(siteId:$siteId,name:$name,slug:$slug,fields:$fields,options:$options){ id } }',
           {
             siteId: workspaceSiteId,
-            name,
+            name: name.trim(),
             slug,
             fields,
             options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: hasSlug ? slugFieldKey : '' },
@@ -1033,12 +1517,11 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
       } else {
         await gqlRequest(
           token,
-          'mutation($id:ID!,$siteId:ID!,$name:String,$slug:String,$fields:[FieldInput!],$options:JSON){ updateContentType(id:$id,siteId:$siteId,name:$name,slug:$slug,fields:$fields,options:$options){ id } }',
+          'mutation($id:ID!,$siteId:ID!,$name:String,$fields:[FieldInput!],$options:JSON){ updateContentType(id:$id,siteId:$siteId,name:$name,fields:$fields,options:$options){ id } }',
           {
             id: contentTypeId,
             siteId: workspaceSiteId,
-            name,
-            slug,
+            name: name.trim(),
             fields,
             options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: hasSlug ? slugFieldKey : '' },
           },
@@ -1060,128 +1543,145 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
     () => new Map(allContentTypes.map((item) => [item.id, item.fields ?? []] as const)),
     [allContentTypes],
   );
-  const availableKeys = useMemo(() => flattenFieldKeys(fields, contentTypeFieldMap), [fields, contentTypeFieldMap]);
-  const fieldMetaMap = useMemo(() => flattenFieldMeta(fields, new Map(), contentTypeFieldMap), [fields, contentTypeFieldMap]);
+
+  const takenSlugs = useMemo(
+    () => new Set(allContentTypes.map((c) => c.slug).filter(Boolean)),
+    [allContentTypes],
+  );
+  const derivedBaseSlug = useMemo(() => slugifyContentTypeName(name), [name]);
+  const displaySlug = useMemo(() => {
+    if (!isNew) return committedSlug;
+    return uniqueContentTypeSlug(derivedBaseSlug, takenSlugs);
+  }, [isNew, committedSlug, derivedBaseSlug, takenSlugs]);
 
   return (
     <div className="w-full space-y-4">
       <Card>
-        <CardHeader>
+        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
           <CardTitle>{isNew ? 'Create Content Type' : 'Edit Content Type'}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {!workspaceSiteId ? <p className="text-sm text-muted-foreground">Select a workspace from the sidebar first.</p> : null}
-          {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
-
-          {isLoading ? (
-            <p className="text-sm text-muted-foreground">Loading content type…</p>
-          ) : (
-            <>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Name</Label>
-                  <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Homepage blocks" />
-                </div>
-                <div className="space-y-2">
-                  <Label>Slug</Label>
-                  <Input value={slug} onChange={(event) => setSlug(event.target.value)} placeholder="homepage_blocks" />
-                </div>
-              </div>
-
-              <div className="space-y-3 rounded-md border p-3">
-                <Label>Admin Menu (ACF/CPT style)</Label>
-                <div className="grid gap-3 md:grid-cols-3">
-                  <div className="space-y-2">
-                    <Label>Show in Sidebar</Label>
-                    <Button
-                      type="button"
-                      variant={showInSidebar ? 'default' : 'outline'}
-                      className="w-full"
-                      onClick={() => setShowInSidebar((prev) => !prev)}
-                    >
-                      {showInSidebar ? 'Enabled' : 'Disabled'}
-                    </Button>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Sidebar Label</Label>
+          <Dialog>
+            <DialogTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="shrink-0"
+                aria-label="Admin menu settings"
+                disabled={!workspaceSiteId || isLoading}
+              >
+                <Settings2 />
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Admin menu</DialogTitle>
+                <DialogDescription>
+                  Control how this content type appears in the workspace sidebar (similar to WordPress custom post types).
+                </DialogDescription>
+              </DialogHeader>
+              <FieldGroup>
+                <Field orientation="horizontal" className="items-start gap-3">
+                  <Checkbox
+                    id="ct-admin-show-sidebar"
+                    checked={showInSidebar}
+                    onCheckedChange={(value) => setShowInSidebar(value === true)}
+                  />
+                  <FieldContent>
+                      <FieldLabel htmlFor="ct-admin-show-sidebar">Show in sidebar</FieldLabel>
+                    <FieldDescription>List this type in the CMS sidebar for quick access.</FieldDescription>
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="ct-admin-sidebar-label">Sidebar label</FieldLabel>
+                  <FieldContent>
                     <Input
+                      id="ct-admin-sidebar-label"
                       value={sidebarLabel}
                       onChange={(event) => setSidebarLabel(event.target.value)}
                       placeholder="Pages"
                       disabled={!showInSidebar}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Menu Order</Label>
+                  </FieldContent>
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="ct-admin-menu-order">Menu order</FieldLabel>
+                  <FieldContent>
                     <Input
+                      id="ct-admin-menu-order"
                       type="number"
                       value={sidebarOrder}
                       onChange={(event) => setSidebarOrder(Number(event.target.value) || 100)}
                       disabled={!showInSidebar}
                     />
-                  </div>
-                </div>
-              </div>
+                  </FieldContent>
+                  <FieldDescription>Lower numbers appear higher in the sidebar list.</FieldDescription>
+                </Field>
+              </FieldGroup>
+            </DialogContent>
+          </Dialog>
+        </CardHeader>
+        <CardContent>
+          {!workspaceSiteId ? <p className="text-sm text-muted-foreground">Select a workspace from the sidebar first.</p> : null}
+          {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
 
-              <div className="space-y-3 rounded-md border p-3">
-                <Label>Entry Slug</Label>
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Enable slug for entries</Label>
-                    <Button
-                      type="button"
-                      variant={hasSlug ? 'default' : 'outline'}
-                      className="w-full"
-                      onClick={() => setHasSlug((prev) => !prev)}
-                    >
-                      {hasSlug ? 'Enabled' : 'Disabled'}
-                    </Button>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Slug source field (optional)</Label>
-                    <Combobox
-                      value={slugFieldKey}
-                      onValueChange={setSlugFieldKey}
-                      options={availableKeys.filter(Boolean).map((key) => ({ value: key, label: key }))}
-                      placeholder={hasSlug ? 'Select source field' : 'Slug disabled'}
-                      searchPlaceholder="Search fields..."
-                      emptyText="No fields"
-                      className="w-full"
-                      disabled={!hasSlug}
+          {isLoading ? (
+            <p className="text-sm text-muted-foreground">Loading content type…</p>
+          ) : schemaBootstrap ? (
+            <FieldGroup>
+              <Item
+                variant="muted"
+                className="w-full flex-col flex-nowrap items-stretch"
+                role="group"
+                aria-label="Content type name and URL key"
+              >
+                <Field className="w-full">
+                  <FieldLabel htmlFor="ct-name">Name</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="ct-name"
+                      value={name}
+                      onChange={(event) => setName(event.target.value)}
+                      placeholder="Homepage blocks"
                     />
-                  </div>
-                </div>
-              </div>
+                  </FieldContent>
+                  <FieldDescription>
+                    URL key for routes and the API. {isNew ? 'It is generated from the name when you save.' : 'It cannot be changed after creation.'}
+                  </FieldDescription>
+                  {displaySlug ? (
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">URL key</span>
+                      <div
+                        className="rounded-md border border-border bg-muted/50 px-3 py-2 font-mono text-sm font-medium text-foreground tabular-nums tracking-tight"
+                        aria-live="polite"
+                        aria-label={`Content type URL key: ${displaySlug}`}
+                      >
+                        /{displaySlug}
+                      </div>
+                    </div>
+                  ) : null}
+                </Field>
+              </Item>
 
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <Label>Fields</Label>
-                  <Button type="button" variant="outline" onClick={() => setFields([...fields, createEmptyField()])}>
-                    <Plus className="mr-2 h-4 w-4" />
-                    Add field
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground">Drag using the handle to reorder fields. Use conditional visibility for advanced ACF-style logic.</p>
-                <FieldBuilder
-                  fields={fields}
-                  onChange={setFields}
-                  availableKeys={availableKeys}
-                  fieldMetaMap={fieldMetaMap}
-                  contentTypeOptions={contentTypeOptions}
-                  contentTypeFieldMap={contentTypeFieldMap}
-                />
-              </div>
+              <ContentTypeSchemaBlock
+                ref={schemaRef}
+                bootstrap={schemaBootstrap}
+                contentTypeOptions={contentTypeOptions}
+                contentTypeFieldMap={contentTypeFieldMap}
+              />
 
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => navigate('/content-types')}>
                   Cancel
                 </Button>
-                <Button onClick={() => void handleSave()} disabled={!workspaceSiteId || isSaving}>
+                <Button
+                  onClick={() => void handleSave()}
+                  disabled={!workspaceSiteId || isSaving || (isNew && !name.trim())}
+                >
                   {isSaving ? 'Saving…' : 'Save Content Type'}
                 </Button>
               </div>
-            </>
-          )}
+            </FieldGroup>
+          ) : null}
         </CardContent>
       </Card>
     </div>

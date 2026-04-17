@@ -1,6 +1,6 @@
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 export type Status = 'active' | 'disabled';
-export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'select' | 'repeater' | 'image';
+export type FieldType = 'text' | 'textarea' | 'wysiwyg' | 'url' | 'number' | 'boolean' | 'date' | 'select' | 'repeater' | 'image';
 export type ConditionOperator =
   | 'equals'
   | 'not_equals'

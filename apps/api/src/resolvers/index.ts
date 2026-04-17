@@ -420,8 +420,23 @@ export const resolvers = {
       await requireRole(ctx.userId, siteId, 'admin');
       const safeFields = validateFieldDefinitions(fields);
       await assertReferencedContentTypesExist(siteId, safeFields as FieldDef[]);
-      const ct = await ContentTypeModel.create({ siteId, name, slug, fields: safeFields, options });
-      return toId(ct.toObject());
+      const normalizedSlug = toSlug(String(slug ?? ''));
+      if (!normalizedSlug) throw new Error('Content type URL key could not be derived from the name');
+      try {
+        const ct = await ContentTypeModel.create({
+          siteId,
+          name,
+          slug: normalizedSlug,
+          fields: safeFields,
+          options,
+        });
+        return toId(ct.toObject());
+      } catch (error: unknown) {
+        if (error && typeof error === 'object' && 'code' in error && (error as { code: number }).code === 11000) {
+          throw new Error('A content type with this URL key already exists in this workspace.');
+        }
+        throw error;
+      }
     },
     updateContentType: async (_: unknown, { id, siteId, ...rest }: any, ctx: Ctx) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -430,9 +445,24 @@ export const resolvers = {
         rest.fields = validateFieldDefinitions(rest.fields);
         await assertReferencedContentTypesExist(siteId, rest.fields as FieldDef[], id);
       }
-      const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId }, rest, { new: true });
-      if (!ct) throw new Error('Content type not found');
-      return toId(ct.toObject());
+      if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
+        if (rest.slug == null || rest.slug === '') {
+          delete rest.slug;
+        } else {
+          rest.slug = toSlug(String(rest.slug));
+        }
+      }
+      try {
+        const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId }, rest, { new: true });
+        if (!ct) throw new Error('Content type not found');
+        return toId(ct.toObject());
+      } catch (error: unknown) {
+        if (error instanceof Error && error.message === 'Content type not found') throw error;
+        if (error && typeof error === 'object' && 'code' in error && (error as { code: number }).code === 11000) {
+          throw new Error('A content type with this URL key already exists in this workspace.');
+        }
+        throw error;
+      }
     },
     deleteContentType: async (_: unknown, { id, siteId }: any, ctx: Ctx) => {
       if (!ctx.userId) throw new Error('Unauthorized');

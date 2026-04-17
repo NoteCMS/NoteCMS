@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Copy, Ellipsis, Globe, Plus, Trash2 } from 'lucide-react';
+import { ChevronDown, Copy, Ellipsis, Globe, Plus, Trash2 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { DataTable } from '@/components/data-table';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Combobox } from '@/components/ui/combobox';
 import { Field, FieldContent, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -78,18 +80,38 @@ function shouldShowField(field: ContentField, data: Record<string, unknown>): bo
   return visibility.relation === 'all' ? groupResults.every(Boolean) : groupResults.some(Boolean);
 }
 
+function formatRowSummaryValue(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) return value.length ? `${value.length} item${value.length === 1 ? '' : 's'}` : '';
+  if (typeof value === 'object') return '';
+  return '';
+}
+
 type FieldListProps = {
   token: string;
   siteId: string;
   assets: Asset[];
   contentTypeFieldMap: Map<string, ContentField[]>;
+  internalUrlSuggestionGroups: Array<{ label: string; options: Array<{ value: string; label: string }> }>;
   onAssetsChanged: () => Promise<void>;
   fields: ContentField[];
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
 };
 
-function FieldList({ token, siteId, assets, contentTypeFieldMap, onAssetsChanged, fields, value, onChange }: FieldListProps) {
+function FieldList({
+  token,
+  siteId,
+  assets,
+  contentTypeFieldMap,
+  internalUrlSuggestionGroups,
+  onAssetsChanged,
+  fields,
+  value,
+  onChange,
+}: FieldListProps) {
   function cloneEntryValue<T>(input: T): T {
     return JSON.parse(JSON.stringify(input)) as T;
   }
@@ -145,58 +167,86 @@ function FieldList({ token, siteId, assets, contentTypeFieldMap, onAssetsChanged
                 {items.length ? (
                   <div className="space-y-3">
                     {items.map((item, itemIndex) => (
-                      <Item key={`${field.key}-${itemIndex}`} variant="outline" className="w-full bg-background">
-                        <ItemContent className="w-full">
-                          <div className="flex items-center justify-between">
-                            <p className="text-xs text-muted-foreground">Row {(itemIndex + 1).toString()}</p>
-                            <DropdownMenu>
-                              <DropdownMenuTrigger asChild>
-                                <Button type="button" variant="outline" size="icon-sm" aria-label="Row options">
-                                  <Ellipsis />
-                                </Button>
-                              </DropdownMenuTrigger>
-                              <DropdownMenuContent align="end">
-                                <DropdownMenuGroup>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      const next = [...items];
-                                      next.splice(itemIndex + 1, 0, cloneEntryValue(item));
-                                      onChange({ ...value, [field.key]: next });
-                                    }}
-                                  >
-                                    <Copy />
-                                    Duplicate row
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => {
-                                      const next = [...items];
-                                      next.splice(itemIndex, 1);
-                                      onChange({ ...value, [field.key]: next });
-                                    }}
-                                  >
-                                    <Trash2 />
-                                    Delete row
-                                  </DropdownMenuItem>
-                                </DropdownMenuGroup>
-                              </DropdownMenuContent>
-                            </DropdownMenu>
-                          </div>
-                          <FieldList
-                            token={token}
-                            siteId={siteId}
-                            assets={assets}
-                            contentTypeFieldMap={contentTypeFieldMap}
-                            onAssetsChanged={onAssetsChanged}
-                            fields={nestedFields}
-                            value={item}
-                            onChange={(nextItem) => {
-                              const next = [...items];
-                              next[itemIndex] = nextItem;
-                              onChange({ ...value, [field.key]: next });
-                            }}
-                          />
-                        </ItemContent>
-                      </Item>
+                      <Collapsible key={`${field.key}-${itemIndex}`} defaultOpen className="group/row w-full">
+                        <Item variant="outline" className="w-full bg-background">
+                          <ItemContent className="w-full">
+                            <div className="flex items-center justify-between">
+                              <div className="flex min-w-0 items-center gap-2">
+                                <p className="text-xs text-muted-foreground">Row {(itemIndex + 1).toString()}</p>
+                                {(() => {
+                                  const firstNestedField = nestedFields[0];
+                                  const summary = firstNestedField ? formatRowSummaryValue(item[firstNestedField.key]) : '';
+                                  if (!summary) return null;
+                                  return (
+                                    <Badge
+                                      variant="secondary"
+                                      className="max-w-[14rem] truncate group-data-[state=open]/row:hidden"
+                                      title={summary}
+                                    >
+                                      {summary}
+                                    </Badge>
+                                  );
+                                })()}
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <Button type="button" variant="outline" size="icon-sm" aria-label="Row options">
+                                      <Ellipsis />
+                                    </Button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end">
+                                    <DropdownMenuGroup>
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          const next = [...items];
+                                          next.splice(itemIndex + 1, 0, cloneEntryValue(item));
+                                          onChange({ ...value, [field.key]: next });
+                                        }}
+                                      >
+                                        <Copy />
+                                        Duplicate row
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem
+                                        onClick={() => {
+                                          const next = [...items];
+                                          next.splice(itemIndex, 1);
+                                          onChange({ ...value, [field.key]: next });
+                                        }}
+                                      >
+                                        <Trash2 />
+                                        Delete row
+                                      </DropdownMenuItem>
+                                    </DropdownMenuGroup>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                                <CollapsibleTrigger asChild>
+                                  <Button type="button" variant="ghost" size="icon-sm" aria-label="Toggle row">
+                                    <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/row:rotate-180" />
+                                  </Button>
+                                </CollapsibleTrigger>
+                              </div>
+                            </div>
+                            <CollapsibleContent className="pt-2">
+                              <FieldList
+                                token={token}
+                                siteId={siteId}
+                                assets={assets}
+                                contentTypeFieldMap={contentTypeFieldMap}
+                                internalUrlSuggestionGroups={internalUrlSuggestionGroups}
+                                onAssetsChanged={onAssetsChanged}
+                                fields={nestedFields}
+                                value={item}
+                                onChange={(nextItem) => {
+                                  const next = [...items];
+                                  next[itemIndex] = nextItem;
+                                  onChange({ ...value, [field.key]: next });
+                                }}
+                              />
+                            </CollapsibleContent>
+                          </ItemContent>
+                        </Item>
+                      </Collapsible>
                     ))}
                   </div>
                 ) : (
@@ -212,7 +262,7 @@ function FieldList({ token, siteId, assets, contentTypeFieldMap, onAssetsChanged
             <FieldLabel htmlFor={field.type === 'boolean' ? undefined : fieldId}>{field.label}</FieldLabel>
             <FieldContent>
 
-              {field.type === 'textarea' ? (
+              {field.type === 'textarea' || field.type === 'wysiwyg' ? (
                 <MarkdownEditor
                   markdown={String(fieldValue ?? '')}
                   onChange={(nextMarkdown) => onChange({ ...value, [field.key]: nextMarkdown })}
@@ -287,6 +337,17 @@ function FieldList({ token, siteId, assets, contentTypeFieldMap, onAssetsChanged
                     );
                   })()}
                 </div>
+              ) : field.type === 'url' ? (
+                <Combobox
+                  id={fieldId}
+                  value={String(fieldValue ?? '')}
+                  onValueChange={(next) => onChange({ ...value, [field.key]: next })}
+                  options={[]}
+                  groups={internalUrlSuggestionGroups}
+                  placeholder="https://example.com/page or /about"
+                  searchPlaceholder="Search URLs..."
+                  className="w-full"
+                />
               ) : (
                 <Input
                   id={fieldId}
@@ -314,6 +375,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [contentTypes, setContentTypes] = useState<ContentType[]>([]);
   const [selectedTypeId, setSelectedTypeId] = useState('');
   const [entries, setEntries] = useState<Entry[]>([]);
+  const [entriesByTypeId, setEntriesByTypeId] = useState<Record<string, Entry[]>>({});
   const [assets, setAssets] = useState<Asset[]>([]);
 
   const [isLoadingTypes, setIsLoadingTypes] = useState(false);
@@ -331,6 +393,33 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     () => new Map(contentTypes.map((contentType) => [contentType.id, contentType.fields ?? []] as const)),
     [contentTypes],
   );
+  const internalUrlSuggestionGroups = useMemo(() => {
+    const groups: Array<{ label: string; options: Array<{ value: string; label: string }> }> = [
+      {
+        label: 'General',
+        options: [{ value: '/', label: '/' }],
+      },
+    ];
+
+    for (const contentType of contentTypes) {
+      // Only suggest routes visitors can open: types with entry slugs at site root (e.g. pages).
+      // Skip collection slugs like /blocks and non-page types without hasSlug.
+      if (!contentType.options?.hasSlug) continue;
+
+      const entriesForType = entriesByTypeId[contentType.id] ?? [];
+      const urls = new Set<string>();
+      for (const entry of entriesForType) {
+        if (!entry.slug) continue;
+        urls.add(`/${entry.slug}`);
+      }
+      const options = [...urls].sort((a, b) => a.localeCompare(b)).map((url) => ({ value: url, label: url }));
+      if (options.length) {
+        groups.push({ label: contentType.name, options });
+      }
+    }
+
+    return groups;
+  }, [contentTypes, entriesByTypeId]);
 
   const basePath = forcedContentTypeSlug ? `/content/${forcedContentTypeSlug}` : '/entries';
   const isDetailView = Boolean(entryId);
@@ -357,6 +446,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         { siteId: workspaceSiteId },
       );
       setContentTypes(response.contentTypes);
+      await loadEntriesIndex(response.contentTypes);
       setSelectedTypeId((current) => {
         if (forcedContentTypeSlug) {
           const forced = response.contentTypes.find((item) => item.slug === forcedContentTypeSlug);
@@ -392,6 +482,30 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     } finally {
       setIsLoadingEntries(false);
     }
+  }
+
+  async function loadEntriesIndex(types: ContentType[]) {
+    if (!workspaceSiteId || !types.length) {
+      setEntriesByTypeId({});
+      return;
+    }
+
+    const pairs = await Promise.all(
+      types.map(async (contentType) => {
+        try {
+          const response = await gqlRequest<{ entries: Entry[] }>(
+            token,
+            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }',
+            { siteId: workspaceSiteId, contentTypeId: contentType.id },
+          );
+          return [contentType.id, response.entries] as const;
+        } catch {
+          return [contentType.id, []] as const;
+        }
+      }),
+    );
+
+    setEntriesByTypeId(Object.fromEntries(pairs));
   }
 
   useEffect(() => {
@@ -456,6 +570,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         navigate(`${basePath}/${response.createEntry.id}`, { replace: true });
       }
       await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save entry');
     } finally {
@@ -472,6 +587,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         siteId: workspaceSiteId,
       });
       await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
       navigate(basePath);
     } catch (deleteError) {
       setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete entry');
@@ -550,6 +666,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                   siteId={workspaceSiteId}
                   assets={assets}
                   contentTypeFieldMap={contentTypeFieldMap}
+                  internalUrlSuggestionGroups={internalUrlSuggestionGroups}
                   onAssetsChanged={loadAssets}
                   fields={selectedType.fields ?? []}
                   value={data}

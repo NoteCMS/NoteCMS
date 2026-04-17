@@ -1,4 +1,4 @@
-export type FieldType = 'text' | 'textarea' | 'number' | 'boolean' | 'date' | 'select' | 'repeater' | 'image';
+export type FieldType = 'text' | 'textarea' | 'wysiwyg' | 'url' | 'number' | 'boolean' | 'date' | 'select' | 'repeater' | 'image';
 
 export type FieldDefinition = {
   key: string;
