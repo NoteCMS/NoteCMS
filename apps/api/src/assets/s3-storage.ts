@@ -5,6 +5,10 @@ export class S3StorageAdapter implements StorageAdapter {
     throw new Error('S3 storage adapter is not implemented yet');
   }
 
+  async getBuffer(): Promise<Buffer> {
+    throw new Error('S3 storage adapter is not implemented yet');
+  }
+
   async delete(): Promise<void> {
     throw new Error('S3 storage adapter is not implemented yet');
   }

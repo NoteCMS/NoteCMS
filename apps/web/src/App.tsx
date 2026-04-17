@@ -16,6 +16,7 @@ import { AssetsPage } from '@/pages/assets-page';
 import { EntriesPage } from '@/pages/entries-page';
 import { LoginPage } from '@/pages/login-page';
 import { SitesPage } from '@/pages/sites-page';
+import { ApiKeysPage } from '@/pages/api-keys-page';
 import { UsersPage } from '@/pages/users-page';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -51,18 +52,21 @@ export function App() {
   }, [path, navigate]);
 
   useEffect(() => {
-    if (!sites.length) {
+    if (!token) {
       setActiveSiteId('');
       localStorage.removeItem('notecms_active_site_id');
       return;
     }
+    // Sites are empty while the session is loading — keep localStorage + selection intact.
+    if (!sites.length) return;
+
     const exists = sites.some((site) => site.id === activeSiteId);
     if (!exists) {
       const next = sites[0].id;
       setActiveSiteId(next);
       localStorage.setItem('notecms_active_site_id', next);
     }
-  }, [sites, activeSiteId]);
+  }, [token, sites, activeSiteId]);
 
   function handleSiteChange(siteId: string) {
     setActiveSiteId(siteId);
@@ -150,9 +154,13 @@ export function App() {
       '/assets': 'Assets',
       '/users': 'Users',
       '/settings': 'Settings',
+      '/api-keys': 'API keys',
     };
     return [{ label: singleMap[path] ?? 'Dashboard' }];
   })();
+  const activeWorkspaceSite = sites.find((site) => site.id === activeSiteId);
+  const showSiteAdminTools = activeWorkspaceSite?.role === 'owner' || activeWorkspaceSite?.role === 'admin';
+
   const contentTypeMenuItems = sidebarContentTypes
     .filter((contentType) => contentType.options?.showInSidebar)
     .sort((a, b) => (a.options?.sidebarOrder ?? 100) - (b.options?.sidebarOrder ?? 100))
@@ -176,10 +184,11 @@ export function App() {
         activePath={path}
         onNavigate={navigate}
         contentTypeMenuItems={contentTypeMenuItems}
+        showSiteAdminTools={showSiteAdminTools}
       />
       <SidebarInset className="bg-muted">
         <header className="flex h-14 shrink-0 items-center gap-2 px-4">
-          <SidebarTrigger />
+          <SidebarTrigger className="hover:bg-muted/90" />
           <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center" />
           <Breadcrumb>
             <BreadcrumbList>
@@ -201,7 +210,7 @@ export function App() {
           </Breadcrumb>
         </header>
 
-        <div className="flex flex-1 p-6">
+        <div className="flex flex-1 p-3 md:p-4">
           {path === '/users' ? (
             <UsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} />
           ) : path === '/sites' ? (
@@ -227,6 +236,8 @@ export function App() {
             />
           ) : path === '/assets' ? (
             <AssetsPage token={token} workspaceSiteId={activeSiteId} sites={sites} />
+          ) : path === '/api-keys' ? (
+            <ApiKeysPage token={token} workspaceSiteId={activeSiteId} sites={sites} canManage={showSiteAdminTools} />
           ) : (
             <div className="text-sm text-muted-foreground">Page under construction.</div>
           )}

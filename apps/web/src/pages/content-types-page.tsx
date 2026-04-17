@@ -24,7 +24,7 @@ import { gqlRequest } from '@/api/graphql';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Combobox } from '@/components/ui/combobox';
@@ -475,68 +475,77 @@ const SortableFieldItem = memo(function SortableFieldItem({
   }
 
   return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className="flex flex-col gap-4 rounded-lg border border-border bg-background p-4 shadow-sm"
-    >
-      <Collapsible open={open} onOpenChange={setOpen} className="flex flex-col gap-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <button
-            type="button"
-            className="rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Drag field"
-            {...attributes}
-            {...listeners}
-          >
-            <GripVertical className="h-4 w-4" />
-          </button>
-          <span className="min-w-0 flex-1 truncate text-sm font-medium">{fieldTitle}</span>
-          {!open ? (
-            <>
-              <Badge variant="secondary" className="shrink-0">
-                {field.type}
-              </Badge>
-              {field.required ? <Badge className="shrink-0">required</Badge> : null}
-            </>
-          ) : null}
-          <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Field actions">
-                  <Ellipsis className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-48">
-                <DropdownMenuGroup>
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setRootFields((prev) => {
-                        const target = getFieldAtPath(prev, fieldPath);
-                        if (!target) return prev;
-                        return insertFieldAfterPath(prev, fieldPath, cloneField(target));
-                      });
-                    }}
-                  >
-                    <Copy />
-                    Duplicate
-                  </DropdownMenuItem>
-                  <DropdownMenuItem variant="destructive" onClick={() => setRootFields((prev) => removeFieldAtPath(prev, fieldPath))}>
-                    <Trash2 />
-                    Remove
-                  </DropdownMenuItem>
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
+    <div ref={setNodeRef} style={style}>
+      <Collapsible open={open} onOpenChange={setOpen} className="block">
+        <Card className="gap-0 overflow-hidden border-border bg-background p-0 shadow-sm">
+          <CardHeader className="relative mb-0 space-y-0 border-b border-border px-4 py-3 sm:px-5">
             <CollapsibleTrigger asChild>
-              <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Toggle field settings">
-                <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
-              </Button>
+              <button
+                type="button"
+                className="absolute inset-0 z-0 rounded-t-xl hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                aria-label={`Toggle ${fieldTitle}`}
+              />
             </CollapsibleTrigger>
-          </div>
-        </div>
+            <div className="relative z-10 flex min-w-0 items-center gap-2 pointer-events-none">
+              <button
+                type="button"
+                className="relative z-20 shrink-0 rounded-sm p-1 text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring pointer-events-auto"
+                aria-label="Drag field"
+                {...attributes}
+                {...listeners}
+              >
+                <GripVertical className="h-4 w-4" />
+              </button>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2 pointer-events-none">
+                <CardTitle className="shrink-0 text-base font-semibold leading-snug tracking-tight">{fieldTitle}</CardTitle>
+                {!open ? (
+                  <>
+                    <Badge variant="secondary" className="shrink-0">
+                      {field.type}
+                    </Badge>
+                    {field.required ? <Badge className="shrink-0">required</Badge> : null}
+                  </>
+                ) : null}
+              </div>
+              <CardAction className="gap-0.5">
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Field actions">
+                      <Ellipsis className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-48">
+                    <DropdownMenuGroup>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          setRootFields((prev) => {
+                            const target = getFieldAtPath(prev, fieldPath);
+                            if (!target) return prev;
+                            return insertFieldAfterPath(prev, fieldPath, cloneField(target));
+                          });
+                        }}
+                      >
+                        <Copy />
+                        Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem variant="destructive" onClick={() => setRootFields((prev) => removeFieldAtPath(prev, fieldPath))}>
+                        <Trash2 />
+                        Remove
+                      </DropdownMenuItem>
+                    </DropdownMenuGroup>
+                  </DropdownMenuContent>
+                </DropdownMenu>
+                <CollapsibleTrigger asChild>
+                  <Button type="button" variant="ghost" size="sm" className="h-7 w-7 p-0" aria-label="Toggle field settings">
+                    <ChevronDown className={`h-4 w-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+                  </Button>
+                </CollapsibleTrigger>
+              </CardAction>
+            </div>
+          </CardHeader>
 
         {open ? (
+        <CardContent className="border-0 px-4 pb-4 pt-4 sm:px-5">
         <div className="flex flex-col gap-4">
           <div className="flex flex-col gap-4">
             <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2">
@@ -677,7 +686,16 @@ const SortableFieldItem = memo(function SortableFieldItem({
               </SheetTrigger>
             </div>
 
-            <SheetContent side="right" className="w-full p-0 sm:max-w-2xl">
+            <SheetContent
+              side="right"
+              className="w-full p-0 sm:max-w-2xl"
+              onInteractOutside={(event) => {
+                const target = event.target as HTMLElement | null;
+                if (target?.closest?.('[data-slot=combobox-content]')) {
+                  event.preventDefault();
+                }
+              }}
+            >
               <SheetHeader className="border-b">
                 <SheetTitle>Conditional Visibility Rules</SheetTitle>
                 <SheetDescription>
@@ -745,9 +763,9 @@ const SortableFieldItem = memo(function SortableFieldItem({
                 </div>
 
                 {group.rules.map((rule) => (
-                  <div key={rule.id} className="flex items-stretch gap-2">
-                    <div className="grid flex-1 overflow-hidden rounded-2xl border border-input bg-background md:grid-cols-3">
-                      <div className="border-b border-input md:border-r md:border-b-0">
+                  <div key={rule.id} className="flex min-w-0 items-stretch gap-2">
+                    <div className="grid min-w-0 flex-1 grid-cols-1 overflow-hidden rounded-2xl border border-input bg-background md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,1fr)]">
+                      <div className="min-w-0 border-b border-input md:border-r md:border-b-0">
                         <Combobox
                           value={rule.fieldKey}
                           onValueChange={(value) =>
@@ -760,10 +778,10 @@ const SortableFieldItem = memo(function SortableFieldItem({
                           placeholder="Field"
                           searchPlaceholder="Search field..."
                           emptyText="No fields"
-                          className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                          className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                         />
                       </div>
-                      <div className="border-b border-input md:border-r md:border-b-0">
+                      <div className="min-w-0 border-b border-input md:border-r md:border-b-0">
                         <Combobox
                           value={rule.operator}
                           onValueChange={(value) =>
@@ -774,10 +792,10 @@ const SortableFieldItem = memo(function SortableFieldItem({
                           }
                           options={operatorOptions}
                           placeholder="Operator"
-                          className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                          className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                         />
                       </div>
-                      <div>
+                      <div className="min-w-0">
                         {(() => {
                           const needsValue = rule.operator !== 'is_empty' && rule.operator !== 'is_not_empty';
                           const referencedField = fieldMetaMap.get(rule.fieldKey);
@@ -793,7 +811,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                                 value=""
                                 placeholder="No value needed"
                                 disabled
-                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                                className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                               />
                             );
                           }
@@ -807,7 +825,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                                 placeholder="Select value"
                                 searchPlaceholder="Search value..."
                                 emptyText="No options"
-                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                                className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                               />
                             );
                           }
@@ -822,7 +840,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                                   { value: 'false', label: 'false' },
                                 ]}
                                 placeholder="Select value"
-                                className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                                className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                               />
                             );
                           }
@@ -834,7 +852,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                               placeholder="Value"
                               type={referencedField?.type === 'number' ? 'number' : 'text'}
                               inputMode={referencedField?.type === 'number' ? 'decimal' : undefined}
-                              className="h-9 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
+                              className="h-9 min-w-0 w-full rounded-none border-0 bg-transparent shadow-none focus-visible:ring-0"
                             />
                           );
                         })()}
@@ -956,29 +974,8 @@ const SortableFieldItem = memo(function SortableFieldItem({
               </div>
 
               {repeaterSource === 'custom' ? (
-                <>
-                  <div className="flex flex-wrap items-end justify-between gap-2">
-                    <FieldTitle>Repeater nested fields</FieldTitle>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setRootFields((prev) =>
-                          updateFieldAtPath(prev, fieldPath, (current) => ({
-                            ...current,
-                            config: {
-                              ...(current.config ?? {}),
-                              fields: [...(current.config?.fields ?? []), createEmptyField()],
-                            },
-                          })),
-                        )
-                      }
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      Add nested field
-                    </Button>
-                  </div>
+                <div className="flex flex-col gap-3">
+                  <FieldTitle>Repeater nested fields</FieldTitle>
                   <FieldBuilder
                     pathPrefixStr={fieldPath.join('-')}
                     fields={nestedFields}
@@ -991,7 +988,27 @@ const SortableFieldItem = memo(function SortableFieldItem({
                     contentTypeFieldMap={contentTypeFieldMap}
                     depth={depth + 1}
                   />
-                </>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="self-start text-primary"
+                    onClick={() =>
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({
+                          ...current,
+                          config: {
+                            ...(current.config ?? {}),
+                            fields: [...(current.config?.fields ?? []), createEmptyField()],
+                          },
+                        })),
+                      )
+                    }
+                  >
+                    <Plus className="h-4 w-4" />
+                    Add nested field
+                  </Button>
+                </div>
               ) : (
                 <p className="text-xs text-muted-foreground">
                   Repeater rows will use fields from the selected content type.
@@ -1000,7 +1017,9 @@ const SortableFieldItem = memo(function SortableFieldItem({
             </div>
           ) : null}
         </div>
+        </CardContent>
         ) : null}
+        </Card>
       </Collapsible>
     </div>
   );
@@ -1186,6 +1205,7 @@ export function ContentTypesPage({ token, workspaceSiteId, sites: _sites }: Cont
       },
       {
         id: 'actions',
+        meta: { compact: true },
         header: '',
         cell: ({ row }) => (
           <div className="flex justify-end">
@@ -1257,7 +1277,6 @@ export function ContentTypesPage({ token, workspaceSiteId, sites: _sites }: Cont
 type ContentTypeSchemaBootstrap = {
   fields: ContentField[];
   hasSlug: boolean;
-  slugFieldKey: string;
 };
 
 export type ContentTypeSchemaHandle = {
@@ -1286,20 +1305,18 @@ const ContentTypeSchemaBlock = memo(
   ) {
     const [fields, setFields] = useState(bootstrap.fields);
     const [hasSlug, setHasSlug] = useState(bootstrap.hasSlug);
-    const [slugFieldKey, setSlugFieldKey] = useState(bootstrap.slugFieldKey);
 
     useEffect(() => {
       setFields(bootstrap.fields);
       setHasSlug(bootstrap.hasSlug);
-      setSlugFieldKey(bootstrap.slugFieldKey);
     }, [bootstrap]);
 
     useImperativeHandle(
       ref,
       () => ({
-        getSnapshot: (): ContentTypeSchemaBootstrap => ({ fields, hasSlug, slugFieldKey }),
+        getSnapshot: (): ContentTypeSchemaBootstrap => ({ fields, hasSlug }),
       }),
-      [fields, hasSlug, slugFieldKey],
+      [fields, hasSlug],
     );
 
     const deferredFields = useDeferredValue(fields);
@@ -1313,10 +1330,6 @@ const ContentTypeSchemaBlock = memo(
     );
     const availableKeysVersion = useMemo(() => deferredAvailableKeys.join('\u001f'), [deferredAvailableKeys]);
     const fieldMetaVersion = useMemo(() => createFieldMetaVersion(deferredFieldMetaMap), [deferredFieldMetaMap]);
-    const slugFieldComboboxOptions = useMemo(
-      () => deferredAvailableKeys.filter(Boolean).map((key) => ({ value: key, label: key })),
-      [deferredAvailableKeys],
-    );
 
     return (
       <>
@@ -1338,29 +1351,6 @@ const ContentTypeSchemaBlock = memo(
                 <FieldDescription>Optional URL segments for entries of this type.</FieldDescription>
               </FieldContent>
             </Field>
-            <Field
-              data-disabled={hasSlug ? undefined : 'true'}
-              aria-disabled={!hasSlug}
-              className={!hasSlug ? 'pointer-events-none' : undefined}
-            >
-              <FieldLabel htmlFor="ct-slug-source-field">Slug source field</FieldLabel>
-              <FieldContent>
-                <Combobox
-                  id="ct-slug-source-field"
-                  value={slugFieldKey}
-                  onValueChange={setSlugFieldKey}
-                  options={slugFieldComboboxOptions}
-                  placeholder={hasSlug ? 'Select source field' : 'Enable slugs first'}
-                  searchPlaceholder="Search fields..."
-                  emptyText="No fields"
-                  className="w-full"
-                  disabled={!hasSlug}
-                />
-              </FieldContent>
-              <FieldDescription>
-                Auto-generate the slug from this field until the editor changes it manually.
-              </FieldDescription>
-            </Field>
           </FieldGroup>
         </Item>
 
@@ -1370,18 +1360,12 @@ const ContentTypeSchemaBlock = memo(
           role="group"
           aria-label="Content type fields"
         >
-          <FieldGroup className="w-full gap-3">
-            <div className="flex flex-wrap items-end justify-between gap-2">
-              <div className="flex flex-col gap-1">
-                <FieldTitle>Fields</FieldTitle>
-                <FieldDescription>
-                  Drag using the handle to reorder. Use conditional visibility for ACF-style rules.
-                </FieldDescription>
-              </div>
-              <Button type="button" variant="outline" onClick={() => setFields((prev) => [...prev, createEmptyField()])}>
-                <Plus data-icon="inline-start" />
-                Add field
-              </Button>
+          <FieldGroup className="flex w-full flex-col gap-3">
+            <div className="flex flex-col gap-1">
+              <FieldTitle>Fields</FieldTitle>
+              <FieldDescription>
+                Drag using the handle to reorder. Use conditional visibility for ACF-style rules.
+              </FieldDescription>
             </div>
             <FieldBuilder
               pathPrefixStr=""
@@ -1394,6 +1378,16 @@ const ContentTypeSchemaBlock = memo(
               contentTypeOptions={contentTypeOptions}
               contentTypeFieldMap={contentTypeFieldMap}
             />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="self-start text-primary"
+              onClick={() => setFields((prev) => [...prev, createEmptyField()])}
+            >
+              <Plus className="h-4 w-4" />
+              Add field
+            </Button>
           </FieldGroup>
         </Item>
       </>
@@ -1447,7 +1441,6 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
             setSchemaBootstrap({
               fields: [createEmptyField()],
               hasSlug: false,
-              slugFieldKey: '',
             });
           }
           return;
@@ -1469,7 +1462,6 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
           setSchemaBootstrap({
             fields: target.fields?.length ? target.fields : [createEmptyField()],
             hasSlug: Boolean(target.options?.hasSlug),
-            slugFieldKey: target.options?.slugFieldKey ?? '',
           });
         }
       } catch (loadError) {
@@ -1496,7 +1488,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
       setError('Schema is not ready to save');
       return;
     }
-    const { fields, hasSlug, slugFieldKey } = schema;
+    const { fields, hasSlug } = schema;
     setIsSaving(true);
     setError('');
     try {
@@ -1511,7 +1503,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
             name: name.trim(),
             slug,
             fields,
-            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: hasSlug ? slugFieldKey : '' },
+            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: '' },
           },
         );
       } else {
@@ -1523,7 +1515,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
             siteId: workspaceSiteId,
             name: name.trim(),
             fields,
-            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: hasSlug ? slugFieldKey : '' },
+            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: '' },
           },
         );
       }

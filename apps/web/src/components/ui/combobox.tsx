@@ -55,11 +55,22 @@ function Combobox({
   const hasGroups = groupedOptions.length > 0
   const allOptions = hasGroups ? groupedOptions.flatMap((group) => group.options) : options
 
+  /** Map stored value (e.g. id) to visible label; Base UI does not look up `items` for primitive values. */
+  const itemToStringLabel = React.useCallback(
+    (itemValue: string) => {
+      if (itemValue == null || itemValue === "") return ""
+      const match = allOptions.find((o) => o.value === itemValue)
+      return match?.label ?? String(itemValue)
+    },
+    [allOptions],
+  )
+
   return (
     <ComboboxRoot
       value={value}
       onValueChange={(nextValue) => onValueChange(String(nextValue))}
       items={allOptions.map((option) => ({ value: option.value, label: option.label, disabled: option.disabled }))}
+      itemToStringLabel={itemToStringLabel}
     >
       <ComboboxInput
         id={id}
@@ -138,7 +149,7 @@ function ComboboxInput({
   showClear?: boolean
 }) {
   return (
-    <InputGroup className={cn("w-auto", className)}>
+    <InputGroup className={cn("min-w-0 w-full", className)}>
       <ComboboxPrimitive.Input
         render={<InputGroupInput disabled={disabled} />}
         {...props}
@@ -177,19 +188,22 @@ function ComboboxContent({
     "side" | "align" | "sideOffset" | "alignOffset" | "anchor"
   >) {
   return (
-    <ComboboxPrimitive.Portal>
+    <ComboboxPrimitive.Portal className="pointer-events-auto">
       <ComboboxPrimitive.Positioner
         side={side}
         sideOffset={sideOffset}
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="isolate z-50"
+        className="pointer-events-auto isolate z-[100]"
       >
         <ComboboxPrimitive.Popup
           data-slot="combobox-content"
           data-chips={!!anchor}
-          className={cn("group/combobox-content relative max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) min-w-[calc(var(--anchor-width)+--spacing(7))] origin-(--transform-origin) overflow-hidden rounded-3xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/5 duration-100 data-[chips=true]:min-w-(--anchor-width) data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 *:data-[slot=input-group]:m-1.5 *:data-[slot=input-group]:mb-0 *:data-[slot=input-group]:h-8 *:data-[slot=input-group]:border-input/30 *:data-[slot=input-group]:bg-input/50 *:data-[slot=input-group]:shadow-none dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95", className )}
+          className={cn(
+            "pointer-events-auto group/combobox-content relative max-h-(--available-height) w-(--anchor-width) max-w-(--available-width) min-w-[calc(var(--anchor-width)+--spacing(7))] origin-(--transform-origin) overflow-hidden rounded-3xl bg-popover text-popover-foreground shadow-lg ring-1 ring-foreground/5 duration-100 data-[chips=true]:min-w-(--anchor-width) data-[side=bottom]:slide-in-from-top-2 data-[side=inline-end]:slide-in-from-left-2 data-[side=inline-start]:slide-in-from-right-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 *:data-[slot=input-group]:m-1.5 *:data-[slot=input-group]:mb-0 *:data-[slot=input-group]:h-8 *:data-[slot=input-group]:border-input/30 *:data-[slot=input-group]:bg-input/50 *:data-[slot=input-group]:shadow-none dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+            className,
+          )}
           {...props}
         />
       </ComboboxPrimitive.Positioner>

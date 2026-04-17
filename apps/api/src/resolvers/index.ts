@@ -1,19 +1,24 @@
 import { GraphQLJSON } from 'graphql-scalars';
+import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../auth/api-key.js';
+import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
-import { requireRole } from '../auth/rbac.js';
 import { env } from '../config/env.js';
 import { getStorageAdapter } from '../assets/index.js';
-import { buildImageVariants, sanitizeFilename } from '../assets/image.js';
+import {
+  buildImageVariants,
+  derivativeFileExtension,
+  mimeForDerivativeKey,
+  sanitizeFilename,
+} from '../assets/image.js';
 import { normalizeStorageKey } from '../assets/storage.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
 import { AssetModel } from '../db/models/Asset.js';
 import { MembershipModel, roles } from '../db/models/Membership.js';
 import { SiteModel } from '../db/models/Site.js';
+import { ApiKeyModel } from '../db/models/ApiKey.js';
 import { UserModel } from '../db/models/User.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
-
-type Ctx = { userId?: string };
 
 type FieldDef = {
   key: string;
@@ -29,10 +34,33 @@ function toSlug(value: string) {
     .replace(/^-+|-+$/g, '');
 }
 
+const ENTRY_NAME_MAX = 200;
+
+function normalizeEntryName(raw: unknown): string {
+  if (typeof raw !== 'string') throw new Error('Display name is required.');
+  const t = raw.trim();
+  if (!t) throw new Error('Display name is required.');
+  if (t.length > ENTRY_NAME_MAX) throw new Error(`Display name must be at most ${ENTRY_NAME_MAX} characters.`);
+  return t;
+}
+
+async function assertEntryNameUnique(
+  siteId: unknown,
+  contentTypeId: unknown,
+  name: string,
+  excludeEntryId?: string,
+) {
+  const filter: Record<string, unknown> = { siteId, contentTypeId, name };
+  if (excludeEntryId) filter._id = { $ne: excludeEntryId };
+  const clash = await EntryModel.findOne(filter).select({ _id: 1 }).lean();
+  if (clash) throw new Error('An entry with this name already exists for this content type.');
+}
+
 function resolveEntrySlug(
   contentType: { options?: Record<string, unknown> },
   data: Record<string, unknown>,
   inputSlug?: string | null,
+  displayName?: string | null,
 ) {
   const hasSlug = Boolean(contentType.options?.hasSlug);
   if (!hasSlug) return null;
@@ -40,14 +68,8 @@ function resolveEntrySlug(
   const direct = typeof inputSlug === 'string' ? toSlug(inputSlug) : '';
   if (direct) return direct;
 
-  const slugFieldKey = typeof contentType.options?.slugFieldKey === 'string' ? contentType.options.slugFieldKey : '';
-  if (slugFieldKey) {
-    const sourceValue = data[slugFieldKey];
-    if (typeof sourceValue === 'string') {
-      const generated = toSlug(sourceValue);
-      if (generated) return generated;
-    }
-  }
+  const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? toSlug(displayName) : '';
+  if (fromDisplayName) return fromDisplayName;
 
   throw new Error('Slug is required for this content type');
 }
@@ -56,13 +78,74 @@ function toId(doc: any) {
   return { ...doc, id: String(doc._id), _id: undefined };
 }
 
-function buildAssetUrls(asset: any) {
-  const storage = getStorageAdapter();
+async function entryDocumentToGql(entry: any) {
+  let lastEditedBy: { id: string; email: string } | null = null;
+  if (entry.updatedBy) {
+    const editor = await UserModel.findById(entry.updatedBy).select({ email: 1 }).lean();
+    lastEditedBy = {
+      id: String(entry.updatedBy),
+      email: editor?.email ?? 'Unknown',
+    };
+  }
   return {
-    original: storage.getDataUrl(asset.storageKeyOriginal, asset.mimeType),
-    web: storage.getDataUrl(asset.storageKeyWeb, 'image/webp'),
-    thumbnail: storage.getDataUrl(asset.storageKeyThumb, 'image/webp'),
+    ...toId(entry),
+    siteId: String(entry.siteId),
+    contentTypeId: String(entry.contentTypeId),
+    name: typeof entry.name === 'string' ? entry.name : '',
+    updatedAt: new Date(entry.updatedAt ?? Date.now()).toISOString(),
+    lastEditedBy,
   };
+}
+
+function formatApiKeyDoc(doc: {
+  _id: unknown;
+  siteId: unknown;
+  name: string;
+  keyHint: string;
+  createdAt: Date;
+  lastUsedAt?: Date | null;
+}) {
+  return {
+    id: String(doc._id),
+    siteId: String(doc.siteId),
+    name: doc.name,
+    keyHint: doc.keyHint,
+    createdAt: new Date(doc.createdAt).toISOString(),
+    lastUsedAt: doc.lastUsedAt ? new Date(doc.lastUsedAt).toISOString() : null,
+  };
+}
+
+async function buildAssetUrls(asset: any) {
+  const storage = getStorageAdapter();
+
+  const url = (key: string | null | undefined, mime?: string) =>
+    key ? storage.getDataUrl(key, mime ?? mimeForDerivativeKey(key)) : Promise.resolve(null);
+
+   const [original, web, thumbnail, small, medium, xlarge] = await Promise.all([
+    url(asset.storageKeyOriginal, asset.mimeType),
+    url(asset.storageKeyWeb),
+    url(asset.storageKeyThumb),
+    url(asset.storageKeySmall),
+    url(asset.storageKeyMedium),
+    url(asset.storageKeyXlarge),
+  ]);
+
+  if (!original || !web || !thumbnail) throw new Error('Asset missing required storage keys');
+
+  return {
+    original,
+    web,
+    thumbnail,
+    small,
+    medium,
+    large: web,
+    xlarge,
+  };
+}
+
+function normalizeFocal01(value: unknown, fallback = 0.5) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return fallback;
+  return Math.min(1, Math.max(0, value));
 }
 
 async function toAsset(asset: any) {
@@ -77,6 +160,10 @@ async function toAsset(asset: any) {
     height: asset.height ?? null,
     alt: asset.alt ?? '',
     title: asset.title ?? '',
+    focalPoint: {
+      x: normalizeFocal01(asset.focalX),
+      y: normalizeFocal01(asset.focalY),
+    },
     variants: await buildAssetUrls(asset),
     createdAt: new Date(asset.createdAt).toISOString(),
     updatedAt: new Date(asset.updatedAt).toISOString(),
@@ -222,12 +309,12 @@ export const resolvers = {
     options: (parent: any) => parent.options ?? {},
   },
   Query: {
-    me: async (_: unknown, __: unknown, ctx: Ctx) => {
+    me: async (_: unknown, __: unknown, ctx: RequestContext) => {
       if (!ctx.userId) return null;
       const user = await UserModel.findById(ctx.userId).lean();
       return user ? toId(user) : null;
     },
-    listMySites: async (_: unknown, __: unknown, ctx: Ctx) => {
+    listMySites: async (_: unknown, __: unknown, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const memberships = await MembershipModel.find({ userId: ctx.userId }).lean();
       const siteIds = memberships.map((m) => m.siteId);
@@ -240,7 +327,7 @@ export const resolvers = {
     globalUsers: async (
       _: unknown,
       { role, siteId, status, isAdmin }: { role?: string; siteId?: string; status?: string; isAdmin?: boolean },
-      ctx: Ctx,
+      ctx: RequestContext,
     ) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const adminMemberships = await MembershipModel.find({ userId: ctx.userId, role: { $in: ['owner', 'admin'] } }).lean();
@@ -283,20 +370,21 @@ export const resolvers = {
         };
       });
     },
-    contentTypes: async (_: unknown, { siteId }: { siteId: string }, ctx: Ctx) => {
-      if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'viewer');
+    contentTypes: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      await requireReadSite(ctx, siteId);
       return (await ContentTypeModel.find({ siteId }).lean()).map(toId);
     },
-    entries: async (_: unknown, { siteId, contentTypeId, limit = 30, offset = 0 }: any, ctx: Ctx) => {
-      if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'viewer');
+    entries: async (_: unknown, { siteId, contentTypeId, limit = 30, offset = 0 }: any, ctx: RequestContext) => {
+      await requireReadSite(ctx, siteId);
       const entries = await EntryModel.find({ siteId, contentTypeId }).sort({ updatedAt: -1 }).skip(offset).limit(limit).lean();
       const editorIds = [...new Set(entries.map((entry) => (entry.updatedBy ? String(entry.updatedBy) : '')).filter(Boolean))];
       const editors = await UserModel.find({ _id: { $in: editorIds } }).select({ _id: 1, email: 1 }).lean();
       const editorMap = new Map(editors.map((editor) => [String(editor._id), editor]));
       return entries.map((entry) => ({
         ...toId(entry),
+        siteId: String(entry.siteId),
+        contentTypeId: String(entry.contentTypeId),
+        name: typeof entry.name === 'string' ? entry.name : '',
         updatedAt: new Date(entry.updatedAt ?? Date.now()).toISOString(),
         lastEditedBy: entry.updatedBy
           ? {
@@ -306,15 +394,38 @@ export const resolvers = {
           : null,
       }));
     },
-    listAssets: async (_: unknown, { siteId, query = '', limit = 30, offset = 0 }: any, ctx: Ctx) => {
-      if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'viewer');
+    entry: async (_: unknown, { id, siteId }: { id: string; siteId: string }, ctx: RequestContext) => {
+      await requireReadSite(ctx, siteId);
+      const doc = await EntryModel.findOne({ _id: id, siteId }).lean();
+      if (!doc) return null;
+      return entryDocumentToGql(doc);
+    },
+    entryBySlug: async (
+      _: unknown,
+      { siteId, contentTypeSlug, slug }: { siteId: string; contentTypeSlug: string; slug: string },
+      ctx: RequestContext,
+    ) => {
+      await requireReadSite(ctx, siteId);
+      const ct = await ContentTypeModel.findOne({ siteId, slug: contentTypeSlug }).lean();
+      if (!ct) return null;
+      const doc = await EntryModel.findOne({ siteId, contentTypeId: ct._id, slug }).lean();
+      if (!doc) return null;
+      return entryDocumentToGql(doc);
+    },
+    listAssets: async (_: unknown, { siteId, query = '', limit = 30, offset = 0 }: any, ctx: RequestContext) => {
+      await requireReadSite(ctx, siteId);
 
       const filter: Record<string, unknown> = { siteId };
       if (query.trim()) filter.filename = { $regex: query.trim(), $options: 'i' };
 
       const assets = await AssetModel.find(filter).sort({ createdAt: -1 }).skip(offset).limit(limit).lean();
       return Promise.all(assets.map(toAsset));
+    },
+    apiKeys: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+      const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
+      return keys.map(formatApiKeyDoc);
     },
   },
   Mutation: {
@@ -330,7 +441,7 @@ export const resolvers = {
       if (!(await comparePassword(password, user.passwordHash))) throw new Error('Invalid credentials');
       return { token: signToken({ userId: String(user._id), siteId }), user: toId(user.toObject()) };
     },
-    createSite: async (_: unknown, { name, url }: { name: string; url: string }, ctx: Ctx) => {
+    createSite: async (_: unknown, { name, url }: { name: string; url: string }, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const creator = await UserModel.findById(ctx.userId).lean();
       if (!creator?.isAdmin) throw new Error('Only admins can create new sites');
@@ -338,7 +449,7 @@ export const resolvers = {
       await MembershipModel.create({ userId: ctx.userId, siteId: site._id, role: 'owner' });
       return toId(site.toObject());
     },
-    createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: Ctx) => {
+    createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
@@ -354,7 +465,7 @@ export const resolvers = {
 
       return toGlobalUser(String(user._id));
     },
-    updateUserStatus: async (_: unknown, { userId, status }: any, ctx: Ctx) => {
+    updateUserStatus: async (_: unknown, { userId, status }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       if (!['active', 'disabled'].includes(status)) throw new Error('Invalid status');
       const hasAdminMembership = await MembershipModel.findOne({
@@ -368,7 +479,7 @@ export const resolvers = {
 
       return toGlobalUser(String(user._id));
     },
-    setUserAdmin: async (_: unknown, { userId, isAdmin }: { userId: string; isAdmin: boolean }, ctx: Ctx) => {
+    setUserAdmin: async (_: unknown, { userId, isAdmin }: { userId: string; isAdmin: boolean }, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const currentUser = await UserModel.findById(ctx.userId).lean();
       if (!currentUser?.isAdmin) throw new Error('Only admins can change admin access');
@@ -376,7 +487,7 @@ export const resolvers = {
       if (!user) throw new Error('User not found');
       return toGlobalUser(String(user._id));
     },
-    setUserSiteRole: async (_: unknown, { userId, siteId, role }: any, ctx: Ctx) => {
+    setUserSiteRole: async (_: unknown, { userId, siteId, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       if (!roles.includes(role)) throw new Error('Invalid role');
@@ -388,13 +499,13 @@ export const resolvers = {
 
       return toGlobalUser(String(userId));
     },
-    removeUserSiteAccess: async (_: unknown, { userId, siteId }: any, ctx: Ctx) => {
+    removeUserSiteAccess: async (_: unknown, { userId, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       await MembershipModel.deleteOne({ userId, siteId });
       return toGlobalUser(String(userId));
     },
-    inviteUser: async (_: unknown, { siteId, email, role }: any, ctx: Ctx) => {
+    inviteUser: async (_: unknown, { siteId, email, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       if (!roles.includes(role)) throw new Error('Invalid role');
@@ -407,7 +518,7 @@ export const resolvers = {
       );
       return toId(membership!.toObject());
     },
-    setRole: async (_: unknown, { siteId, userId, role }: any, ctx: Ctx) => {
+    setRole: async (_: unknown, { siteId, userId, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       if (!roles.includes(role)) throw new Error('Invalid role');
@@ -415,7 +526,7 @@ export const resolvers = {
       if (!membership) throw new Error('Membership not found');
       return toId(membership.toObject());
     },
-    createContentType: async (_: unknown, { siteId, name, slug, fields, options = {} }: any, ctx: Ctx) => {
+    createContentType: async (_: unknown, { siteId, name, slug, fields, options = {} }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       const safeFields = validateFieldDefinitions(fields);
@@ -438,7 +549,7 @@ export const resolvers = {
         throw error;
       }
     },
-    updateContentType: async (_: unknown, { id, siteId, ...rest }: any, ctx: Ctx) => {
+    updateContentType: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       if (rest.fields) {
@@ -464,29 +575,46 @@ export const resolvers = {
         throw error;
       }
     },
-    deleteContentType: async (_: unknown, { id, siteId }: any, ctx: Ctx) => {
+    deleteContentType: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
       await ContentTypeModel.deleteOne({ _id: id, siteId });
       return true;
     },
-    createEntry: async (_: unknown, { siteId, contentTypeId, slug, data }: any, ctx: Ctx) => {
+    createEntry: async (_: unknown, { siteId, contentTypeId, name, slug, data }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
       const contentType = await ContentTypeModel.findOne({ _id: contentTypeId, siteId }).lean();
       if (!contentType) throw new Error('Content type not found');
+      const displayName = normalizeEntryName(name);
+      await assertEntryNameUnique(siteId, contentTypeId, displayName);
       const hydratedFields = await hydrateRepeaterFields(siteId, contentType.fields as FieldDef[]);
       validateEntryData(hydratedFields as any, data as Record<string, unknown>);
       await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data as Record<string, unknown>));
-      const resolvedSlug = resolveEntrySlug(contentType as any, data as Record<string, unknown>, slug);
-      const entry = await EntryModel.create({ siteId, contentTypeId, slug: resolvedSlug, data, updatedBy: ctx.userId });
-      return toId(entry.toObject());
+      const resolvedSlug = resolveEntrySlug(contentType as any, data as Record<string, unknown>, slug, displayName);
+      const entry = await EntryModel.create({
+        siteId,
+        contentTypeId,
+        name: displayName,
+        slug: resolvedSlug,
+        data,
+        updatedBy: ctx.userId,
+      });
+      return entryDocumentToGql(entry.toObject());
     },
-    updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: Ctx) => {
+    updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
       const current = await EntryModel.findOne({ _id: id, siteId }).lean();
       if (!current) throw new Error('Entry not found');
+      if (Object.prototype.hasOwnProperty.call(rest, 'name')) {
+        const displayName = normalizeEntryName(rest.name);
+        await assertEntryNameUnique(siteId, current.contentTypeId, displayName, id);
+        rest.name = displayName;
+      }
+      const nameForSlugResolution =
+        typeof rest.name === 'string' ? rest.name : typeof current.name === 'string' ? current.name : null;
+
       if (rest.data) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId }).lean();
         if (!ct) throw new Error('Content type not found');
@@ -494,24 +622,24 @@ export const resolvers = {
         validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
         await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
         if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
-          rest.slug = resolveEntrySlug(ct as any, rest.data as Record<string, unknown>, rest.slug);
+          rest.slug = resolveEntrySlug(ct as any, rest.data as Record<string, unknown>, rest.slug, nameForSlugResolution);
         }
       } else if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId }).lean();
         if (!ct) throw new Error('Content type not found');
-        rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug);
+        rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug, nameForSlugResolution);
       }
       const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId }, { ...rest, updatedBy: ctx.userId }, { new: true });
       if (!entry) throw new Error('Entry not found');
-      return toId(entry.toObject());
+      return entryDocumentToGql(entry.toObject());
     },
-    deleteEntry: async (_: unknown, { id, siteId }: any, ctx: Ctx) => {
+    deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
       await EntryModel.deleteOne({ _id: id, siteId });
       return true;
     },
-    uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: Ctx) => {
+    uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
 
@@ -527,14 +655,22 @@ export const resolvers = {
       const keyPrefix = normalizeStorageKey(`${siteId}/${Date.now()}-${safeFilename}`);
       const storage = getStorageAdapter();
       const variants = await buildImageVariants(original, mimeType);
+      const ext = derivativeFileExtension(variants.format);
+      const derivativeMime = variants.format === 'png' ? 'image/png' : 'image/webp';
 
       const originalKey = `${keyPrefix}/original`;
-      const webKey = `${keyPrefix}/web.webp`;
-      const thumbKey = `${keyPrefix}/thumbnail.webp`;
+      const thumbKey = `${keyPrefix}/thumbnail.${ext}`;
+      const smallKey = `${keyPrefix}/small.${ext}`;
+      const mediumKey = `${keyPrefix}/medium.${ext}`;
+      const webKey = `${keyPrefix}/large.${ext}`;
+      const xlargeKey = `${keyPrefix}/xlarge.${ext}`;
 
       await storage.put(originalKey, original, mimeType);
-      await storage.put(webKey, variants.web, 'image/webp');
-      await storage.put(thumbKey, variants.thumbnail, 'image/webp');
+      await storage.put(thumbKey, variants.thumbnail, derivativeMime);
+      await storage.put(smallKey, variants.small, derivativeMime);
+      await storage.put(mediumKey, variants.medium, derivativeMime);
+      await storage.put(webKey, variants.large, derivativeMime);
+      await storage.put(xlargeKey, variants.xlarge, derivativeMime);
 
       const asset = await AssetModel.create({
         siteId,
@@ -549,18 +685,27 @@ export const resolvers = {
         storageKeyOriginal: originalKey,
         storageKeyWeb: webKey,
         storageKeyThumb: thumbKey,
+        storageKeySmall: smallKey,
+        storageKeyMedium: mediumKey,
+        storageKeyXlarge: xlargeKey,
       });
 
       return toAsset(asset.toObject());
     },
-    updateAssetMeta: async (_: unknown, { id, siteId, alt = '', title = '' }: any, ctx: Ctx) => {
+    updateAssetMeta: async (_: unknown, { id, siteId, alt, title, focalX, focalY }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
-      const asset = await AssetModel.findOneAndUpdate({ _id: id, siteId }, { alt, title }, { new: true }).lean();
+      const $set: Record<string, unknown> = {};
+      if (alt !== undefined) $set.alt = alt ?? '';
+      if (title !== undefined) $set.title = title ?? '';
+      if (focalX !== undefined) $set.focalX = normalizeFocal01(Number(focalX));
+      if (focalY !== undefined) $set.focalY = normalizeFocal01(Number(focalY));
+      if (!Object.keys($set).length) throw new Error('No fields to update');
+      const asset = await AssetModel.findOneAndUpdate({ _id: id, siteId }, { $set }, { new: true }).lean();
       if (!asset) throw new Error('Asset not found');
       return toAsset(asset);
     },
-    deleteAsset: async (_: unknown, { id, siteId }: any, ctx: Ctx) => {
+    deleteAsset: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
 
@@ -571,11 +716,40 @@ export const resolvers = {
       const asset = await AssetModel.findOneAndDelete({ _id: id, siteId }).lean();
       if (!asset) return true;
       const storage = getStorageAdapter();
-      await Promise.all([
-        storage.delete(asset.storageKeyOriginal),
-        storage.delete(asset.storageKeyWeb),
-        storage.delete(asset.storageKeyThumb),
-      ]);
+      const keys = [
+        asset.storageKeyOriginal,
+        asset.storageKeyWeb,
+        asset.storageKeyThumb,
+        asset.storageKeySmall,
+        asset.storageKeyMedium,
+        asset.storageKeyXlarge,
+      ].filter((key): key is string => Boolean(key));
+      await Promise.all(keys.map((key) => storage.delete(key)));
+      return true;
+    },
+    createApiKey: async (_: unknown, { siteId, name }: { siteId: string; name: string }, ctx: RequestContext) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+      const secret = generateApiKeySecret();
+      const doc = await ApiKeyModel.create({
+        siteId,
+        name: String(name ?? '').trim() || 'API key',
+        secretHash: hashApiKeySecret(secret),
+        keyHint: secret.slice(-6),
+        createdBy: ctx.userId,
+      });
+      const token = formatApiKeyToken(String(doc._id), secret);
+      return { apiKey: formatApiKeyDoc(doc.toObject()), token };
+    },
+    revokeApiKey: async (_: unknown, { id, siteId }: { id: string; siteId: string }, ctx: RequestContext) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+      const updated = await ApiKeyModel.findOneAndUpdate(
+        { _id: id, siteId, revokedAt: null },
+        { $set: { revokedAt: new Date() } },
+        { new: true },
+      ).lean();
+      if (!updated) throw new Error('API key not found');
       return true;
     },
   },

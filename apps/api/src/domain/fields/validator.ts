@@ -200,7 +200,10 @@ function validateSingleValue(field: FieldDefinition, value: unknown, visibilityD
       const assetId = (value as Record<string, unknown>).assetId;
       if (typeof assetId !== 'string' || !assetId) throw new Error(`Field ${field.key} requires assetId`);
       const variant = (value as Record<string, unknown>).variant;
-      if (variant !== undefined && !['original', 'web', 'thumbnail'].includes(String(variant))) {
+      if (
+        variant !== undefined &&
+        !['original', 'web', 'thumbnail', 'small', 'medium', 'large', 'xlarge'].includes(String(variant))
+      ) {
         throw new Error(`Field ${field.key} has invalid image variant`);
       }
       break;

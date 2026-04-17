@@ -1,4 +1,4 @@
-import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image } from 'lucide-react';
+import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image, KeyRound } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -28,7 +28,7 @@ const workspaceItems = [
   { path: '/users', title: 'Users', icon: Users },
 ];
 
-const adminItems = [
+const adminItemsBase = [
   { path: '/sites', title: 'Sites', icon: Globe },
   { path: '/settings', title: 'Settings', icon: Settings },
 ];
@@ -43,6 +43,8 @@ type AppSidebarProps = {
   activePath: string;
   onNavigate: (path: string) => void;
   contentTypeMenuItems?: Array<{ path: string; title: string }>;
+  /** Workspace owner/admin: show API keys under Admin */
+  showSiteAdminTools?: boolean;
 };
 
 export function AppSidebar({
@@ -55,8 +57,15 @@ export function AppSidebar({
   activePath,
   onNavigate,
   contentTypeMenuItems = [],
+  showSiteAdminTools = false,
 }: AppSidebarProps) {
   const activeSite = sites.find((site) => site.id === activeSiteId);
+
+  const adminItems = [
+    adminItemsBase[0],
+    ...(showSiteAdminTools ? [{ path: '/api-keys' as const, title: 'API keys', icon: KeyRound }] : []),
+    adminItemsBase[1],
+  ];
 
   return (
     <Sidebar variant='floating'>

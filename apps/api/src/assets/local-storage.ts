@@ -9,10 +9,14 @@ export class LocalStorageAdapter implements StorageAdapter {
     return path.join(this.rootPath, key);
   }
 
-  async put(key: string, data: Buffer): Promise<void> {
+  async put(key: string, data: Buffer, _contentType?: string): Promise<void> {
     const target = this.resolve(key);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, data);
+  }
+
+  async getBuffer(key: string): Promise<Buffer> {
+    return readFile(this.resolve(key));
   }
 
   async delete(key: string): Promise<void> {

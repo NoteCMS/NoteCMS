@@ -1,22 +1,28 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { ChevronDown, Copy, Ellipsis, Globe, Plus, Trash2 } from 'lucide-react';
+import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Combobox } from '@/components/ui/combobox';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dropzone, DropZoneArea, DropzoneMessage, DropzoneTrigger, useDropzone } from '@/components/ui/dropzone';
 import { Field, FieldContent, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
-import { Item, ItemActions, ItemContent } from '@/components/ui/item';
+import { Item, ItemContent } from '@/components/ui/item';
 import { Label } from '@/components/ui/label';
 import { MarkdownEditor } from '@/components/ui/markdown-editor';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { assetGalleryLabels } from '@/lib/asset-gallery';
+import { focalToObjectPosition } from '@/lib/focal-point';
+import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
 
@@ -80,6 +86,18 @@ function shouldShowField(field: ContentField, data: Record<string, unknown>): bo
   return visibility.relation === 'all' ? groupResults.every(Boolean) : groupResults.some(Boolean);
 }
 
+function initialsFromEmail(email: string): string {
+  const local = email.split('@')[0]?.trim() ?? '';
+  if (!local) return '?';
+  const segments = local.split(/[._\s-]+/).filter(Boolean);
+  if (segments.length >= 2) {
+    const a = segments[0]?.[0];
+    const b = segments[1]?.[0];
+    if (a && b) return `${a}${b}`.toUpperCase();
+  }
+  return local.slice(0, 2).toUpperCase();
+}
+
 function formatRowSummaryValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value.trim();
@@ -101,6 +119,342 @@ type FieldListProps = {
   onChange: (next: Record<string, unknown>) => void;
 };
 
+/** Keyed by asset so `useDropzone` internal file state resets between selections (registry dropzone keeps a file list). */
+function ImageFieldDropzonePreview({
+  fieldId,
+  previewUrl,
+  selectedAsset,
+  uploadAsset,
+  onUploaded,
+}: {
+  fieldId: string;
+  previewUrl: string | undefined;
+  selectedAsset: Asset | undefined;
+  uploadAsset: (file: File) => Promise<Asset>;
+  onUploaded: (asset: Asset) => void;
+}) {
+  const imageDropzone = useDropzone<Asset, string>({
+    validation: {
+      accept: { 'image/*': [] },
+      maxFiles: 1,
+      maxSize: 25 * 1024 * 1024,
+    },
+    onDropFile: useCallback(
+      async (file) => {
+        try {
+          const asset = await uploadAsset(file);
+          onUploaded(asset);
+          return { status: 'success' as const, result: asset };
+        } catch (error) {
+          return {
+            status: 'error' as const,
+            error: error instanceof Error ? error.message : 'Upload failed',
+          };
+        }
+      },
+      [uploadAsset, onUploaded],
+    ),
+  });
+
+  return (
+    <Dropzone {...imageDropzone}>
+      <DropZoneArea
+        className={cn(
+          'relative size-24 shrink-0 overflow-hidden rounded-xl border-2 border-dashed border-muted-foreground/30 bg-muted/40 p-0 ring-offset-background',
+          imageDropzone.isDragActive && 'animate-pulse border-primary bg-primary/10',
+          previewUrl && 'border-solid border-input',
+        )}
+      >
+        <DropzoneTrigger
+          id={fieldId}
+          className="flex size-full cursor-pointer flex-col items-center justify-center rounded-[10px] border-0 bg-transparent p-0 shadow-none hover:bg-transparent has-[input:focus-visible]:ring-2 has-[input:focus-visible]:ring-ring has-[input:focus-visible]:ring-offset-2"
+        >
+          {previewUrl ? (
+            <img
+              src={previewUrl}
+              alt={selectedAsset?.alt || selectedAsset?.filename || ''}
+              className="pointer-events-none size-full object-cover"
+              style={{ objectPosition: focalToObjectPosition(selectedAsset?.focalPoint) }}
+              loading="lazy"
+            />
+          ) : (
+            <span className="flex flex-col items-center gap-1 px-1">
+              <Upload className="size-5 text-muted-foreground" aria-hidden />
+              <span className="text-[10px] leading-tight font-medium text-muted-foreground">Drop or click</span>
+            </span>
+          )}
+        </DropzoneTrigger>
+      </DropZoneArea>
+      <DropzoneMessage className="min-h-0 text-[10px] leading-tight break-words text-destructive" />
+    </Dropzone>
+  );
+}
+
+function ImageFieldInput({
+  fieldId,
+  value,
+  assets,
+  onImageChange,
+  uploadAsset,
+}: {
+  fieldId: string;
+  value: Partial<ImageFieldValue>;
+  assets: Asset[];
+  onImageChange: (next: Partial<ImageFieldValue>) => void;
+  uploadAsset: (file: File) => Promise<Asset>;
+}) {
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [libraryQuery, setLibraryQuery] = useState('');
+  /** Highlight inside the library dialog before confirming with Select. */
+  const [libraryPickId, setLibraryPickId] = useState('');
+  const [libraryUploading, setLibraryUploading] = useState(false);
+  const [libraryDropActive, setLibraryDropActive] = useState(false);
+  const libraryFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleLibraryNewFile = useCallback(
+    async (file: File | undefined) => {
+      if (!file || !file.type.startsWith('image/')) return;
+      setLibraryUploading(true);
+      try {
+        const asset = await uploadAsset(file);
+        setLibraryPickId(asset.id);
+      } finally {
+        setLibraryUploading(false);
+      }
+    },
+    [uploadAsset],
+  );
+
+  const selectedAsset = assets.find((a) => a.id === value.assetId);
+  const previewUrl = selectedAsset?.variants.thumbnail;
+
+  const filteredLibrary = useMemo(() => {
+    const q = libraryQuery.trim().toLowerCase();
+    if (!q) return assets;
+    return assets.filter((a) => a.filename.toLowerCase().includes(q) || a.title.toLowerCase().includes(q));
+  }, [assets, libraryQuery]);
+
+  const onUploaded = useCallback(
+    (asset: Asset) => {
+      onImageChange({ assetId: asset.id });
+    },
+    [onImageChange],
+  );
+
+  return (
+    <div className="flex flex-wrap items-start gap-3">
+      <div className="flex w-24 shrink-0 flex-col gap-1">
+        <ImageFieldDropzonePreview
+          key={`${fieldId}-${value.assetId ?? 'none'}`}
+          fieldId={fieldId}
+          previewUrl={previewUrl}
+          selectedAsset={selectedAsset}
+          uploadAsset={uploadAsset}
+          onUploaded={onUploaded}
+        />
+      </div>
+
+      <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="outline" size="sm" className="h-8 gap-1.5" onClick={() => setBrowserOpen(true)}>
+            <Images className="size-3.5" aria-hidden />
+            Library
+          </Button>
+          {value.assetId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-8 text-muted-foreground"
+              onClick={() => onImageChange({ assetId: '' })}
+            >
+              Clear
+            </Button>
+          ) : null}
+        </div>
+        {selectedAsset ? (
+          <p className="truncate text-xs text-muted-foreground" title={selectedAsset.filename}>
+            {selectedAsset.filename}
+          </p>
+        ) : (
+          <p className="text-xs text-muted-foreground">No image selected.</p>
+        )}
+      </div>
+
+      <Dialog
+        open={browserOpen}
+        onOpenChange={(open) => {
+          setBrowserOpen(open);
+          if (!open) {
+            setLibraryQuery('');
+            setLibraryDropActive(false);
+            return;
+          }
+          setLibraryPickId(value.assetId ?? '');
+        }}
+      >
+        <DialogContent className="flex max-h-[85vh] flex-col gap-4 overflow-hidden p-4 sm:max-w-3xl">
+          <DialogHeader className="space-y-1">
+            <DialogTitle>Choose asset</DialogTitle>
+            <DialogDescription>
+              Pick an existing image or use the + tile to upload a new one, then press Select.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-1.5">
+            <Input
+              value={libraryQuery}
+              onChange={(event) => setLibraryQuery(event.target.value)}
+              placeholder="Search by filename…"
+              className="h-9"
+              aria-label="Filter assets"
+            />
+            {assets.length === 0 ? (
+              <p className="text-xs leading-snug text-muted-foreground" role="status">
+                This workspace has no assets yet. Use the <span className="font-medium text-foreground/80">+</span> tile below to
+                upload.
+              </p>
+            ) : libraryQuery.trim() && filteredLibrary.length === 0 ? (
+              <p className="text-xs leading-snug text-muted-foreground" role="status">
+                No results for{' '}
+                <span className="font-medium text-foreground/90">{`\u201c${libraryQuery.trim()}\u201d`}</span>. Adjust your search
+                or add a file with the + tile.
+              </p>
+            ) : null}
+          </div>
+          <div className="min-h-0 max-h-[min(55vh,28rem)] flex-1 overflow-y-auto overscroll-contain rounded-xl border border-border/50 bg-muted/10 p-2">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              <input
+                ref={libraryFileInputRef}
+                type="file"
+                accept="image/*"
+                className="sr-only"
+                aria-label="Upload new image to library"
+                disabled={libraryUploading}
+                onChange={async (event: ChangeEvent<HTMLInputElement>) => {
+                  const file = event.target.files?.[0];
+                  event.target.value = '';
+                  await handleLibraryNewFile(file);
+                }}
+              />
+              <div
+                className={cn(
+                  'flex flex-col overflow-hidden rounded-xl border border-dashed bg-card/50 text-left transition-colors',
+                  libraryDropActive ? 'border-primary bg-primary/5' : 'border-muted-foreground/35',
+                  libraryUploading && 'pointer-events-none opacity-70',
+                )}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLibraryDropActive(true);
+                }}
+                onDragLeave={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLibraryDropActive(false);
+                }}
+                onDrop={async (event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setLibraryDropActive(false);
+                  const file = event.dataTransfer.files?.[0];
+                  await handleLibraryNewFile(file);
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={libraryUploading}
+                  onClick={() => libraryFileInputRef.current?.click()}
+                  className={cn(
+                    'flex w-full flex-col focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover',
+                    'hover:border-primary/45',
+                  )}
+                >
+                  <div className="relative flex aspect-[4/3] w-full flex-col items-center justify-center gap-2 bg-muted/30">
+                    {libraryUploading ? (
+                      <span className="text-xs font-medium text-muted-foreground">Uploading…</span>
+                    ) : (
+                      <>
+                        <span className="flex size-11 items-center justify-center rounded-full border-2 border-dashed border-muted-foreground/40 bg-background/80 text-muted-foreground">
+                          <Plus className="size-5" aria-hidden />
+                        </span>
+                        <span className="px-2 text-center text-[11px] font-medium text-muted-foreground">Add image</span>
+                      </>
+                    )}
+                  </div>
+                  <div className="flex min-h-[2.75rem] flex-col justify-center border-t border-border/60 px-2.5 py-2">
+                    <span className="text-xs font-medium text-foreground">Upload new</span>
+                    <span className="truncate text-[10px] text-muted-foreground">Click or drop a file</span>
+                  </div>
+                </button>
+              </div>
+              {filteredLibrary.map((asset) => {
+                const { primary, hint, title } = assetGalleryLabels(asset);
+                const highlighted = asset.id === libraryPickId;
+                return (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    title={title}
+                    aria-pressed={highlighted}
+                    onClick={() => setLibraryPickId(asset.id)}
+                    className={cn(
+                      'flex flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors',
+                      'hover:border-primary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-popover',
+                      highlighted ? 'border-primary' : 'border-border/80',
+                    )}
+                  >
+                    <div className="relative aspect-[4/3] w-full overflow-hidden bg-muted">
+                      <img
+                        src={asset.variants.thumbnail}
+                        alt={asset.alt || primary}
+                        className="size-full object-cover"
+                        style={{ objectPosition: focalToObjectPosition(asset.focalPoint) }}
+                        loading="lazy"
+                      />
+                      {highlighted ? (
+                        <span
+                          className="absolute right-1.5 top-1.5 flex size-6 items-center justify-center rounded-full bg-primary text-primary-foreground"
+                          aria-hidden
+                        >
+                          <Check className="size-3.5 stroke-[2.5]" />
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex min-h-[2.75rem] flex-col justify-center gap-0.5 border-t border-border/60 px-2.5 py-2">
+                      <span className="line-clamp-2 text-xs font-medium leading-snug text-foreground">{primary}</span>
+                      {hint ? (
+                        <span className="truncate font-mono text-[10px] text-muted-foreground" title={asset.filename}>
+                          {hint}
+                        </span>
+                      ) : null}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <DialogFooter className="!-mx-4 !-mb-4 !mt-0 !rounded-b-xl !px-4 !py-3 sm:justify-end sm:gap-2">
+            <Button type="button" variant="outline" onClick={() => setBrowserOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={!libraryPickId}
+              onClick={() => {
+                if (!libraryPickId) return;
+                onImageChange({ assetId: libraryPickId });
+                setBrowserOpen(false);
+              }}
+            >
+              Select
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
 function FieldList({
   token,
   siteId,
@@ -118,19 +472,21 @@ function FieldList({
 
   const [uploadError, setUploadError] = useState('');
 
-  async function uploadFieldAsset(file: File, onDone: (asset: Asset) => void) {
+  async function uploadFieldAsset(file: File): Promise<Asset> {
     setUploadError('');
     try {
       const fileBase64 = await fileToBase64(file);
       const response = await gqlRequest<{ uploadAsset: Asset }>(
         token,
-        'mutation($siteId:ID!,$fileBase64:String!,$filename:String!,$mimeType:String!){ uploadAsset(siteId:$siteId,fileBase64:$fileBase64,filename:$filename,mimeType:$mimeType){ id siteId uploadedBy filename mimeType sizeBytes width height alt title variants { original web thumbnail } createdAt updatedAt } }',
+        'mutation($siteId:ID!,$fileBase64:String!,$filename:String!,$mimeType:String!){ uploadAsset(siteId:$siteId,fileBase64:$fileBase64,filename:$filename,mimeType:$mimeType){ id siteId uploadedBy filename mimeType sizeBytes width height alt title focalPoint { x y } variants { original web thumbnail small medium large xlarge } createdAt updatedAt } }',
         { siteId, fileBase64, filename: file.name, mimeType: file.type },
       );
       await onAssetsChanged();
-      onDone(response.uploadAsset);
+      return response.uploadAsset;
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : 'Failed to upload asset');
+      const message = error instanceof Error ? error.message : 'Failed to upload asset';
+      setUploadError(message);
+      throw error;
     }
   }
 
@@ -151,28 +507,29 @@ function FieldList({
 
           return (
             <Item key={field.key} variant="muted" className="w-full">
-              <ItemContent className="w-full">
+              <ItemContent className="flex w-full flex-col gap-3">
                 <Field>
-                  <div className="flex items-center justify-between gap-2">
-                    <FieldLabel>{field.label}</FieldLabel>
-                    <ItemActions>
-                      <Button type="button" variant="outline" size="sm" onClick={() => onChange({ ...value, [field.key]: [...items, {}] })}>
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add row
-                      </Button>
-                    </ItemActions>
-                  </div>
+                  <FieldLabel>{field.label}</FieldLabel>
                 </Field>
 
                 {items.length ? (
                   <div className="space-y-3">
                     {items.map((item, itemIndex) => (
                       <Collapsible key={`${field.key}-${itemIndex}`} defaultOpen className="group/row w-full">
-                        <Item variant="outline" className="w-full bg-background">
-                          <ItemContent className="w-full">
-                            <div className="flex items-center justify-between">
-                              <div className="flex min-w-0 items-center gap-2">
-                                <p className="text-xs text-muted-foreground">Row {(itemIndex + 1).toString()}</p>
+                        <Card className="gap-0 overflow-hidden border-border bg-background p-0 shadow-sm">
+                          <CardHeader className="relative mb-0 space-y-0 border-b border-border px-4 py-3 sm:px-5">
+                            <CollapsibleTrigger asChild>
+                              <button
+                                type="button"
+                                className="absolute inset-0 z-0 rounded-t-xl hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+                                aria-label={`Toggle row ${(itemIndex + 1).toString()}`}
+                              />
+                            </CollapsibleTrigger>
+                            <div className="relative z-10 flex items-center justify-between gap-3 pointer-events-none">
+                              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                                <CardTitle className="shrink-0 text-sm font-semibold leading-snug tracking-tight">
+                                  Row {(itemIndex + 1).toString()}
+                                </CardTitle>
                                 {(() => {
                                   const firstNestedField = nestedFields[0];
                                   const summary = firstNestedField ? formatRowSummaryValue(item[firstNestedField.key]) : '';
@@ -180,7 +537,7 @@ function FieldList({
                                   return (
                                     <Badge
                                       variant="secondary"
-                                      className="max-w-[14rem] truncate group-data-[state=open]/row:hidden"
+                                      className="max-w-[min(20rem,100%)] shrink truncate group-data-[state=open]/row:hidden"
                                       title={summary}
                                     >
                                       {summary}
@@ -188,7 +545,7 @@ function FieldList({
                                   );
                                 })()}
                               </div>
-                              <div className="flex items-center gap-1">
+                              <CardAction className="gap-1">
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
                                     <Button type="button" variant="outline" size="icon-sm" aria-label="Row options">
@@ -225,33 +582,44 @@ function FieldList({
                                     <ChevronDown className="h-4 w-4 transition-transform group-data-[state=open]/row:rotate-180" />
                                   </Button>
                                 </CollapsibleTrigger>
-                              </div>
+                              </CardAction>
                             </div>
-                            <CollapsibleContent className="pt-2">
-                              <FieldList
-                                token={token}
-                                siteId={siteId}
-                                assets={assets}
-                                contentTypeFieldMap={contentTypeFieldMap}
-                                internalUrlSuggestionGroups={internalUrlSuggestionGroups}
-                                onAssetsChanged={onAssetsChanged}
-                                fields={nestedFields}
-                                value={item}
-                                onChange={(nextItem) => {
-                                  const next = [...items];
-                                  next[itemIndex] = nextItem;
-                                  onChange({ ...value, [field.key]: next });
-                                }}
-                              />
-                            </CollapsibleContent>
-                          </ItemContent>
-                        </Item>
+                          </CardHeader>
+                          <CollapsibleContent className="px-4 pb-4 pt-4 sm:px-5">
+                            <FieldList
+                              token={token}
+                              siteId={siteId}
+                              assets={assets}
+                              contentTypeFieldMap={contentTypeFieldMap}
+                              internalUrlSuggestionGroups={internalUrlSuggestionGroups}
+                              onAssetsChanged={onAssetsChanged}
+                              fields={nestedFields}
+                              value={item}
+                              onChange={(nextItem) => {
+                                const next = [...items];
+                                next[itemIndex] = nextItem;
+                                onChange({ ...value, [field.key]: next });
+                              }}
+                            />
+                          </CollapsibleContent>
+                        </Card>
                       </Collapsible>
                     ))}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">No rows yet.</p>
                 )}
+
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="self-start text-primary"
+                  onClick={() => onChange({ ...value, [field.key]: [...items, {}] })}
+                >
+                  <Plus className="h-4 w-4" />
+                  Add row
+                </Button>
               </ItemContent>
             </Item>
           );
@@ -283,60 +651,18 @@ function FieldList({
                   className="w-full"
                 />
               ) : field.type === 'image' ? (
-                <div className="space-y-2">
-                  {(() => {
-                    const imageValue = (fieldValue ?? {}) as Partial<ImageFieldValue>;
-                    const selectedAsset = assets.find((asset) => asset.id === imageValue.assetId);
-                    const preview = selectedAsset?.variants.thumbnail;
-
-                    return (
-                      <>
-                        <Combobox
-                          value={imageValue.assetId ?? ''}
-                          onValueChange={(next) => onChange({ ...value, [field.key]: { assetId: next, variant: imageValue.variant ?? 'web' } })}
-                          options={assets.map((asset) => ({ value: asset.id, label: asset.filename }))}
-                          placeholder="Select image asset"
-                          searchPlaceholder="Search assets..."
-                          className="w-full"
-                        />
-                        <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                          <Combobox
-                            value={imageValue.variant ?? 'web'}
-                            onValueChange={(next) => onChange({ ...value, [field.key]: { assetId: imageValue.assetId ?? '', variant: next } })}
-                            options={[
-                              { value: 'original', label: 'original' },
-                              { value: 'web', label: 'web' },
-                              { value: 'thumbnail', label: 'thumbnail' },
-                            ]}
-                            placeholder="Variant"
-                            className="w-full"
-                          />
-                          <Input
-                            id={fieldId}
-                            type="file"
-                            accept="image/*"
-                            onChange={async (event: ChangeEvent<HTMLInputElement>) => {
-                              const file = event.target.files?.[0];
-                              event.target.value = '';
-                              if (!file) return;
-                              await uploadFieldAsset(file, (asset) => {
-                                onChange({
-                                  ...value,
-                                  [field.key]: { assetId: asset.id, variant: imageValue.variant ?? 'web' },
-                                });
-                              });
-                            }}
-                          />
-                        </div>
-                        {preview ? (
-                          <img src={preview} alt={selectedAsset?.alt || selectedAsset?.filename || 'Asset preview'} className="h-28 w-40 rounded-md border object-cover" loading="lazy" />
-                        ) : (
-                          <p className="text-xs text-muted-foreground">No image selected.</p>
-                        )}
-                      </>
-                    );
-                  })()}
-                </div>
+                <ImageFieldInput
+                  fieldId={fieldId}
+                  value={(fieldValue ?? {}) as Partial<ImageFieldValue>}
+                  assets={assets}
+                  onImageChange={(next) =>
+                    onChange({
+                      ...value,
+                      [field.key]: { assetId: next.assetId ?? '' },
+                    })
+                  }
+                  uploadAsset={uploadFieldAsset}
+                />
               ) : field.type === 'url' ? (
                 <Combobox
                   id={fieldId}
@@ -382,13 +708,13 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [entryName, setEntryName] = useState('');
   const [slug, setSlug] = useState('');
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
 
   const selectedType = useMemo(() => contentTypes.find((contentType) => contentType.id === selectedTypeId) ?? null, [contentTypes, selectedTypeId]);
   const requiresSlug = Boolean(selectedType?.options?.hasSlug);
-  const slugFieldKey = selectedType?.options?.slugFieldKey ?? '';
   const contentTypeFieldMap = useMemo(
     () => new Map(contentTypes.map((contentType) => [contentType.id, contentType.fields ?? []] as const)),
     [contentTypes],
@@ -429,7 +755,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     if (!workspaceSiteId) return;
     const response = await gqlRequest<{ listAssets: Asset[] }>(
       token,
-      'query($siteId:ID!){ listAssets(siteId:$siteId,limit:200){ id siteId uploadedBy filename mimeType sizeBytes width height alt title variants { original web thumbnail } createdAt updatedAt } }',
+      'query($siteId:ID!){ listAssets(siteId:$siteId,limit:200){ id siteId uploadedBy filename mimeType sizeBytes width height alt title focalPoint { x y } variants { original web thumbnail small medium large xlarge } createdAt updatedAt } }',
       { siteId: workspaceSiteId },
     );
     setAssets(response.listAssets);
@@ -473,7 +799,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     try {
       const response = await gqlRequest<{ entries: Entry[] }>(
         token,
-        'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }',
+        'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId name slug data updatedAt lastEditedBy { id email } } }',
         { siteId: workspaceSiteId, contentTypeId },
       );
       setEntries(response.entries);
@@ -495,7 +821,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         try {
           const response = await gqlRequest<{ entries: Entry[] }>(
             token,
-            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }',
+            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId name slug data updatedAt lastEditedBy { id email } } }',
             { siteId: workspaceSiteId, contentTypeId: contentType.id },
           );
           return [contentType.id, response.entries] as const;
@@ -518,12 +844,14 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   useEffect(() => {
     if (!entryId) {
+      setEntryName('');
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
       return;
     }
     if (entryId === 'new') {
+      setEntryName('');
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
@@ -531,23 +859,22 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     }
     const entry = entries.find((item) => item.id === entryId);
     if (!entry) return;
+    setEntryName(entry.name ?? '');
     setSlug(entry.slug ?? '');
     setIsSlugManuallyEdited(false);
     setData((entry.data ?? {}) as Record<string, unknown>);
   }, [entryId, entries]);
 
   useEffect(() => {
-    if (!requiresSlug || !slugFieldKey || entryId !== 'new' || isSlugManuallyEdited) return;
-    const sourceValue = data[slugFieldKey];
-    if (typeof sourceValue !== 'string') return;
+    if (!requiresSlug || entryId !== 'new' || isSlugManuallyEdited) return;
     setSlug(
-      sourceValue
+      entryName
         .toLowerCase()
         .trim()
         .replace(/[^a-z0-9]+/g, '-')
         .replace(/^-+|-+$/g, ''),
     );
-  }, [requiresSlug, slugFieldKey, data, entryId, isSlugManuallyEdited]);
+  }, [requiresSlug, entryId, entryName, isSlugManuallyEdited]);
 
   async function handleSaveEntry() {
     if (!workspaceSiteId || !selectedTypeId) return;
@@ -557,15 +884,27 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       if (entryId && entryId !== 'new') {
         const response = await gqlRequest<{ updateEntry: { id: string } }>(
           token,
-          'mutation($id:ID!,$siteId:ID!,$slug:String,$data:JSON){ updateEntry(id:$id,siteId:$siteId,slug:$slug,data:$data){ id } }',
-          { id: entryId, siteId: workspaceSiteId, slug: requiresSlug ? slug : null, data },
+          'mutation($id:ID!,$siteId:ID!,$name:String!,$slug:String,$data:JSON){ updateEntry(id:$id,siteId:$siteId,name:$name,slug:$slug,data:$data){ id } }',
+          {
+            id: entryId,
+            siteId: workspaceSiteId,
+            name: entryName.trim(),
+            slug: requiresSlug ? slug : null,
+            data,
+          },
         );
         navigate(`${basePath}/${response.updateEntry.id}`, { replace: true });
       } else {
         const response = await gqlRequest<{ createEntry: { id: string } }>(
           token,
-          'mutation($siteId:ID!,$contentTypeId:ID!,$slug:String,$data:JSON!){ createEntry(siteId:$siteId,contentTypeId:$contentTypeId,slug:$slug,data:$data){ id } }',
-          { siteId: workspaceSiteId, contentTypeId: selectedTypeId, slug: requiresSlug ? slug : null, data },
+          'mutation($siteId:ID!,$contentTypeId:ID!,$name:String!,$slug:String,$data:JSON!){ createEntry(siteId:$siteId,contentTypeId:$contentTypeId,name:$name,slug:$slug,data:$data){ id } }',
+          {
+            siteId: workspaceSiteId,
+            contentTypeId: selectedTypeId,
+            name: entryName.trim(),
+            slug: requiresSlug ? slug : null,
+            data,
+          },
         );
         navigate(`${basePath}/${response.createEntry.id}`, { replace: true });
       }
@@ -578,24 +917,78 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     }
   }
 
-  async function handleDeleteEntry(entryId: string) {
-    if (!workspaceSiteId) return;
-    setError('');
-    try {
-      await gqlRequest(token, 'mutation($id:ID!,$siteId:ID!){ deleteEntry(id:$id,siteId:$siteId) }', {
-        id: entryId,
-        siteId: workspaceSiteId,
-      });
-      await loadEntries(selectedTypeId);
-      await loadEntriesIndex(contentTypes);
-      navigate(basePath);
-    } catch (deleteError) {
-      setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete entry');
-    }
-  }
+  const handleDeleteEntry = useCallback(
+    async (id: string) => {
+      if (!workspaceSiteId) return;
+      setError('');
+      try {
+        await gqlRequest(token, 'mutation($id:ID!,$siteId:ID!){ deleteEntry(id:$id,siteId:$siteId) }', {
+          id,
+          siteId: workspaceSiteId,
+        });
+        await loadEntries(selectedTypeId);
+        await loadEntriesIndex(contentTypes);
+        navigate(basePath);
+      } catch (deleteError) {
+        setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete entry');
+      }
+    },
+    [workspaceSiteId, selectedTypeId, contentTypes, token, navigate, basePath],
+  );
+
+  const handleDuplicateEntry = useCallback(
+    async (entry: Entry) => {
+      if (!workspaceSiteId || !selectedTypeId) return;
+      setError('');
+      try {
+        const data = structuredClone((entry.data ?? {}) as Record<string, unknown>);
+
+        const hasSlug = Boolean(selectedType?.options?.hasSlug);
+        let slug: string | null = null;
+        if (hasSlug) {
+          const base = entry.slug?.trim() ?? '';
+          if (base) {
+            const taken = new Set(entries.map((e) => e.slug).filter((s): s is string => Boolean(s)));
+            let candidate = `${base}-copy`;
+            let n = 2;
+            while (taken.has(candidate)) {
+              candidate = `${base}-copy-${n}`;
+              n += 1;
+            }
+            slug = candidate;
+          }
+        }
+
+        const baseName = (entry.name ?? '').trim() || 'Entry';
+        const takenNames = new Set(entries.map((e) => e.name).filter(Boolean));
+        let duplicateName = `${baseName} (copy)`;
+        let nameN = 2;
+        while (takenNames.has(duplicateName)) {
+          duplicateName = `${baseName} (copy) ${nameN}`;
+          nameN += 1;
+        }
+
+        await gqlRequest<{ createEntry: { id: string } }>(
+          token,
+          'mutation($siteId:ID!,$contentTypeId:ID!,$name:String!,$slug:String,$data:JSON!){ createEntry(siteId:$siteId,contentTypeId:$contentTypeId,name:$name,slug:$slug,data:$data){ id } }',
+          { siteId: workspaceSiteId, contentTypeId: entry.contentTypeId, name: duplicateName, slug, data },
+        );
+        await loadEntries(selectedTypeId);
+        await loadEntriesIndex(contentTypes);
+      } catch (dupError) {
+        setError(dupError instanceof Error ? dupError.message : 'Failed to duplicate entry');
+      }
+    },
+    [workspaceSiteId, selectedTypeId, selectedType, entries, contentTypes, token],
+  );
 
   const columns = useMemo<ColumnDef<Entry>[]>(
     () => [
+      {
+        accessorKey: 'name',
+        header: 'Name',
+        cell: ({ row }) => <span className="font-medium">{row.original.name || '—'}</span>,
+      },
       { accessorKey: 'slug', header: 'Slug', cell: ({ row }) => row.original.slug ?? '—' },
       {
         id: 'updatedAt',
@@ -605,19 +998,68 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       {
         id: 'lastEditedBy',
         header: 'Last edited by',
-        cell: ({ row }) => row.original.lastEditedBy?.email ?? 'Unknown',
+        cell: ({ row }) => {
+          const email = row.original.lastEditedBy?.email;
+          if (!email) {
+            return (
+              <Avatar className="size-8">
+                <AvatarFallback className="text-xs">?</AvatarFallback>
+              </Avatar>
+            );
+          }
+          return (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  aria-label={`Last edited by ${email}`}
+                >
+                  <Avatar className="size-8">
+                    <AvatarFallback className="text-xs font-medium">{initialsFromEmail(email)}</AvatarFallback>
+                  </Avatar>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">{email}</TooltipContent>
+            </Tooltip>
+          );
+        },
       },
       {
         id: 'actions',
+        meta: { compact: true },
         header: '',
         cell: ({ row }) => (
-          <Button variant="outline" size="sm" onClick={() => navigate(`${basePath}/${row.original.id}`)}>
-            Edit
-          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-sm" aria-label="Entry actions">
+                <Ellipsis />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuGroup>
+                <DropdownMenuItem onClick={() => void handleDuplicateEntry(row.original)}>
+                  <Copy />
+                  Duplicate entry
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  variant="destructive"
+                  onClick={() => {
+                    if (window.confirm('Delete this entry? This cannot be undone.')) {
+                      void handleDeleteEntry(row.original.id);
+                    }
+                  }}
+                >
+                  <Trash2 />
+                  Delete entry
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
         ),
       },
     ],
-    [navigate, basePath],
+    [entries, handleDeleteEntry, handleDuplicateEntry],
   );
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
@@ -636,6 +1078,18 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
             {selectedType ? (
               <>
+                <Field>
+                  <FieldLabel htmlFor="entry-display-name">Display name</FieldLabel>
+                  <FieldContent>
+                    <Input
+                      id="entry-display-name"
+                      value={entryName}
+                      onChange={(event) => setEntryName(event.target.value)}
+                      placeholder="Visible title in the admin and lists"
+                      autoComplete="off"
+                    />
+                  </FieldContent>
+                </Field>
                 {requiresSlug ? (
                   <Field>
                     <FieldLabel htmlFor="entry-slug">Slug</FieldLabel>
@@ -682,7 +1136,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                       Cancel
                     </Button>
                   )}
-                  <Button onClick={() => void handleSaveEntry()} disabled={isSaving || (requiresSlug && !slug.trim())}>
+                  <Button
+                    onClick={() => void handleSaveEntry()}
+                    disabled={isSaving || !entryName.trim() || (requiresSlug && !slug.trim())}
+                  >
                     {isSaving ? 'Saving…' : entryId === 'new' ? 'Create Entry' : 'Update Entry'}
                   </Button>
                 </div>
@@ -719,7 +1176,15 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         <CardContent className="space-y-4">
           {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
           {selectedType ? (
-            <DataTable columns={columns} data={entries} isLoading={isLoadingEntries} emptyMessage="No entries yet." showColumnToggle={false} />
+            <DataTable
+              columns={columns}
+              data={entries}
+              isLoading={isLoadingEntries}
+              emptyMessage="No entries yet."
+              showColumnToggle={false}
+              onRowClick={(entry) => navigate(`${basePath}/${entry.id}`)}
+              rowClickIgnoreColumnIds={['actions', 'lastEditedBy']}
+            />
           ) : (
             <p className="text-sm text-muted-foreground">Select a content type to manage entries.</p>
           )}

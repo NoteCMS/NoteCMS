@@ -14,7 +14,18 @@ export function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElemen
 }
 
 export function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn('mb-4 space-y-1', className)} {...props} />;
+  return <div data-slot="card-header" className={cn('mb-4 space-y-1', className)} {...props} />;
+}
+
+/** Right-aligned actions in a card header (e.g. menus, icon buttons). Keep interactive. */
+export function CardAction({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
+  return (
+    <div
+      data-slot="card-action"
+      className={cn('pointer-events-auto flex shrink-0 items-center gap-2', className)}
+      {...props}
+    />
+  );
 }
 
 export function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {

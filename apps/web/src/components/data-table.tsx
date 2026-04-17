@@ -29,6 +29,14 @@ import {
   TableRow,
 } from '@/components/ui/table';
 
+/** Optional `meta` on `ColumnDef` — use `compact: true` on narrow action columns so they don’t absorb extra width. */
+export type DataTableColumnMeta = {
+  compact?: boolean;
+};
+
+const compactHeadClass = 'w-[1%] whitespace-nowrap px-1 py-2 text-right';
+const compactCellClass = 'w-[1%] whitespace-nowrap px-1 py-2 text-right';
+
 type DataTableProps<TData, TValue> = {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
@@ -123,11 +131,14 @@ export function DataTable<TData, TValue>({
           <TableHeader>
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
-                  </TableHead>
-                ))}
+                {headerGroup.headers.map((header) => {
+                  const compact = Boolean((header.column.columnDef.meta as DataTableColumnMeta | undefined)?.compact);
+                  return (
+                    <TableHead key={header.id} className={compact ? compactHeadClass : undefined}>
+                      {header.isPlaceholder ? null : flexRender(header.column.columnDef.header, header.getContext())}
+                    </TableHead>
+                  );
+                })}
               </TableRow>
             ))}
           </TableHeader>
@@ -148,9 +159,11 @@ export function DataTable<TData, TValue>({
                 >
                   {row.getVisibleCells().map((cell) => {
                     const stopRowClick = rowClickIgnoreColumnIds?.includes(cell.column.id) ?? false;
+                    const compact = Boolean((cell.column.columnDef.meta as DataTableColumnMeta | undefined)?.compact);
                     return (
                       <TableCell
                         key={cell.id}
+                        className={compact ? compactCellClass : undefined}
                         onClick={stopRowClick ? (event) => event.stopPropagation() : undefined}
                       >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}

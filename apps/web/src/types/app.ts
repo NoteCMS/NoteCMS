@@ -33,9 +33,10 @@ export type VisibilityConfig = {
   groups: VisibilityGroup[];
 };
 
+/** Stored on the entry: which asset to use. Variant/derivatives are chosen when rendering (optional legacy `variant` may still exist on old data). */
 export type ImageFieldValue = {
   assetId: string;
-  variant?: 'original' | 'web' | 'thumbnail';
+  variant?: 'original' | 'web' | 'thumbnail' | 'small' | 'medium' | 'large' | 'xlarge';
   altOverride?: string;
 };
 
@@ -63,8 +64,12 @@ export type ContentType = {
     sidebarLabel?: string;
     sidebarOrder?: number;
     hasSlug?: boolean;
-    slugFieldKey?: string;
   };
+};
+
+export type FocalPoint = {
+  x: number;
+  y: number;
 };
 
 export type Asset = {
@@ -78,10 +83,15 @@ export type Asset = {
   height: number | null;
   alt: string;
   title: string;
+  focalPoint: FocalPoint;
   variants: {
     original: string;
     web: string;
     thumbnail: string;
+    small: string | null;
+    medium: string | null;
+    large: string;
+    xlarge: string | null;
   };
   createdAt: string;
   updatedAt: string;
@@ -91,6 +101,7 @@ export type Entry = {
   id: string;
   siteId: string;
   contentTypeId: string;
+  name: string;
   slug: string | null;
   data: Record<string, unknown>;
   updatedAt: string;

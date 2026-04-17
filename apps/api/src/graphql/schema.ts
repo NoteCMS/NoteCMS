@@ -8,13 +8,22 @@ export const typeDefs = `#graphql
   type GlobalUser { id: ID!, email: String!, status: String!, isAdmin: Boolean!, access: [SiteAccess!]! }
   type ContentType { id: ID!, siteId: ID!, name: String!, slug: String!, fields: JSON!, options: JSON! }
   type EntryEditor { id: ID!, email: String! }
-  type Entry { id: ID!, siteId: ID!, contentTypeId: ID!, slug: String, data: JSON!, updatedAt: String!, lastEditedBy: EntryEditor }
+  type Entry { id: ID!, siteId: ID!, contentTypeId: ID!, name: String!, slug: String, data: JSON!, updatedAt: String!, lastEditedBy: EntryEditor }
   type AuthPayload { token: String!, user: User! }
 
   type AssetVariantUrls {
     original: String!
     web: String!
     thumbnail: String!
+    small: String
+    medium: String
+    large: String!
+    xlarge: String
+  }
+
+  type FocalPoint {
+    x: Float!
+    y: Float!
   }
 
   type Asset {
@@ -28,9 +37,24 @@ export const typeDefs = `#graphql
     height: Int
     alt: String!
     title: String!
+    focalPoint: FocalPoint!
     variants: AssetVariantUrls!
     createdAt: String!
     updatedAt: String!
+  }
+
+  type ApiKey {
+    id: ID!
+    siteId: ID!
+    name: String!
+    keyHint: String!
+    createdAt: String!
+    lastUsedAt: String
+  }
+
+  type CreateApiKeyPayload {
+    apiKey: ApiKey!
+    token: String!
   }
 
   input FieldInput {
@@ -47,7 +71,10 @@ export const typeDefs = `#graphql
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
     contentTypes(siteId: ID!): [ContentType!]!
     entries(siteId: ID!, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
+    entry(id: ID!, siteId: ID!): Entry
+    entryBySlug(siteId: ID!, contentTypeSlug: String!, slug: String!): Entry
     listAssets(siteId: ID!, query: String, limit: Int, offset: Int): [Asset!]!
+    apiKeys(siteId: ID!): [ApiKey!]!
   }
 
   type Mutation {
@@ -67,12 +94,15 @@ export const typeDefs = `#graphql
     updateContentType(id: ID!, siteId: ID!, name: String, slug: String, fields: [FieldInput!], options: JSON): ContentType!
     deleteContentType(id: ID!, siteId: ID!): Boolean!
 
-    createEntry(siteId: ID!, contentTypeId: ID!, slug: String, data: JSON!): Entry!
-    updateEntry(id: ID!, siteId: ID!, slug: String, data: JSON): Entry!
+    createEntry(siteId: ID!, contentTypeId: ID!, name: String!, slug: String, data: JSON!): Entry!
+    updateEntry(id: ID!, siteId: ID!, name: String, slug: String, data: JSON): Entry!
     deleteEntry(id: ID!, siteId: ID!): Boolean!
 
     uploadAsset(siteId: ID!, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String): Asset!
-    updateAssetMeta(id: ID!, siteId: ID!, alt: String, title: String): Asset!
+    updateAssetMeta(id: ID!, siteId: ID!, alt: String, title: String, focalX: Float, focalY: Float): Asset!
     deleteAsset(id: ID!, siteId: ID!): Boolean!
+
+    createApiKey(siteId: ID!, name: String!): CreateApiKeyPayload!
+    revokeApiKey(id: ID!, siteId: ID!): Boolean!
   }
 `;
