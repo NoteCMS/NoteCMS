@@ -11,6 +11,16 @@ export const typeDefs = `#graphql
   type Entry { id: ID!, siteId: ID!, contentTypeId: ID!, name: String!, slug: String, data: JSON!, updatedAt: String!, lastEditedBy: EntryEditor }
   type AuthPayload { token: String!, user: User! }
 
+  type LoginPayload {
+    token: String
+    requiresPasswordSetup: Boolean!
+    user: User
+  }
+
+  type BootstrapAuthStatus {
+    initialPasswordRequiresSecret: Boolean!
+  }
+
   type AssetVariantUrls {
     original: String!
     web: String!
@@ -90,6 +100,7 @@ export const typeDefs = `#graphql
   }
 
   type Query {
+    bootstrapAuthStatus: BootstrapAuthStatus!
     me: User
     listMySites: [Site!]!
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
@@ -104,7 +115,9 @@ export const typeDefs = `#graphql
 
   type Mutation {
     register(email: String!, password: String!): AuthPayload!
-    login(email: String!, password: String!, siteId: ID): AuthPayload!
+    login(email: String!, password: String, siteId: ID): LoginPayload!
+    setInitialPassword(email: String!, newPassword: String!, bootstrapSecret: String): AuthPayload!
+
 
     createSite(name: String!, url: String!): Site!
     updateSite(siteId: ID!, name: String, url: String): Site!

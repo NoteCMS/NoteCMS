@@ -32,6 +32,14 @@ export function App() {
     password,
     setEmail,
     setPassword,
+    newPassword,
+    confirmPassword,
+    setNewPassword,
+    setConfirmPassword,
+    bootstrapSecret,
+    setBootstrapSecret,
+    setupRequiresSecret,
+    authStep,
     isSubmitting,
     isValidatingSession,
     error,
@@ -39,6 +47,8 @@ export function App() {
     isAdmin,
     refreshSites,
     handleLogin,
+    handleSetInitialPassword,
+    cancelPasswordSetup,
     handleLogout,
   } = useAuth();
   const [activeSiteId, setActiveSiteId] = useState(() => localStorage.getItem('notecms_active_site_id') ?? '');
@@ -117,13 +127,23 @@ export function App() {
   if (!token) {
     return (
       <LoginPage
+        authStep={authStep}
         email={email}
         password={password}
+        newPassword={newPassword}
+        confirmPassword={confirmPassword}
+        bootstrapSecret={bootstrapSecret}
+        setupRequiresSecret={setupRequiresSecret}
         error={error}
         isSubmitting={isSubmitting}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
-        onSubmit={handleLogin}
+        onNewPasswordChange={setNewPassword}
+        onConfirmPasswordChange={setConfirmPassword}
+        onBootstrapSecretChange={setBootstrapSecret}
+        onLoginSubmit={handleLogin}
+        onSetPasswordSubmit={handleSetInitialPassword}
+        onBackToLogin={cancelPasswordSetup}
       />
     );
   }

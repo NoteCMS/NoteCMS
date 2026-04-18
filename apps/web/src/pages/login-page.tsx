@@ -5,24 +5,110 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 
 type LoginPageProps = {
+  authStep: 'login' | 'setPassword';
   email: string;
   password: string;
+  newPassword: string;
+  confirmPassword: string;
+  bootstrapSecret: string;
+  setupRequiresSecret: boolean;
   error: string;
   isSubmitting: boolean;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
-  onSubmit: (event: FormEvent) => void;
+  onNewPasswordChange: (value: string) => void;
+  onConfirmPasswordChange: (value: string) => void;
+  onBootstrapSecretChange: (value: string) => void;
+  onLoginSubmit: (event: FormEvent) => void;
+  onSetPasswordSubmit: (event: FormEvent) => void;
+  onBackToLogin: () => void;
 };
 
 export function LoginPage({
+  authStep,
   email,
   password,
+  newPassword,
+  confirmPassword,
+  bootstrapSecret,
+  setupRequiresSecret,
   error,
   isSubmitting,
   onEmailChange,
   onPasswordChange,
-  onSubmit,
+  onNewPasswordChange,
+  onConfirmPasswordChange,
+  onBootstrapSecretChange,
+  onLoginSubmit,
+  onSetPasswordSubmit,
+  onBackToLogin,
 }: LoginPageProps) {
+  if (authStep === 'setPassword') {
+    return (
+      <div className="flex min-h-svh items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-sm">
+          <CardHeader>
+            <CardTitle>Set your password</CardTitle>
+            <CardDescription>
+              This account does not have a password yet. Choose one to finish signing in ({email}).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <form className="space-y-4" onSubmit={onSetPasswordSubmit}>
+              <div className="space-y-2">
+                <Label htmlFor="new-password">New password</Label>
+                <Input
+                  id="new-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPassword}
+                  onChange={(event) => onNewPasswordChange(event.target.value)}
+                  required
+                  minLength={8}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-password">Confirm password</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={confirmPassword}
+                  onChange={(event) => onConfirmPasswordChange(event.target.value)}
+                  required
+                  minLength={8}
+                />
+              </div>
+              {setupRequiresSecret ? (
+                <div className="space-y-2">
+                  <Label htmlFor="bootstrap-secret">Setup key</Label>
+                  <Input
+                    id="bootstrap-secret"
+                    type="password"
+                    autoComplete="off"
+                    value={bootstrapSecret}
+                    onChange={(event) => onBootstrapSecretChange(event.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Optional lock: must match BOOTSTRAP_SECRET on the API if your deployment sets it.
+                  </p>
+                </div>
+              ) : null}
+              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              <Button type="submit" className="w-full" disabled={isSubmitting}>
+                {isSubmitting ? 'Saving...' : 'Save password and continue'}
+              </Button>
+              <Button type="button" variant="ghost" className="w-full" onClick={onBackToLogin}>
+                Back to sign in
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-svh items-center justify-center bg-background p-4">
       <Card className="w-full max-w-sm">
@@ -31,7 +117,7 @@ export function LoginPage({
           <CardDescription>Sign in to your Note CMS dashboard.</CardDescription>
         </CardHeader>
         <CardContent>
-          <form className="space-y-4" onSubmit={onSubmit}>
+          <form className="space-y-4" onSubmit={onLoginSubmit}>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
               <Input id="email" type="email" value={email} onChange={(event) => onEmailChange(event.target.value)} required />
@@ -41,10 +127,13 @@ export function LoginPage({
               <Input
                 id="password"
                 type="password"
+                autoComplete="current-password"
                 value={password}
                 onChange={(event) => onPasswordChange(event.target.value)}
-                required
               />
+              <p className="text-xs text-muted-foreground">
+                Leave empty if you have not set a password yet (you will be asked to create one).
+              </p>
             </div>
             {error ? <p className="text-sm text-destructive">{error}</p> : null}
             <Button type="submit" className="w-full" disabled={isSubmitting}>

@@ -25,7 +25,7 @@ Lightweight, multi-tenant, headless CMS with an organic-styled admin UI.
 3. Start MongoDB locally on `mongodb://localhost:27017/notecms` or use Docker mongo only
 4. `npm run dev -w @note/api`
 5. `npm run dev -w @note/web`
-6. Seed demo data: `npm run seed -w @note/api`
+6. Set `BOOTSTRAP_ADMIN_EMAIL` in `.env` (first admin; no password until you set it in the UI — see below). Optionally run `npm run seed -w @note/api` to apply the same bootstrap without starting the API.
 
 ## Docker
 
@@ -33,10 +33,9 @@ Lightweight, multi-tenant, headless CMS with an organic-styled admin UI.
 
 **Self-hosted install / updates** with published images: [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
-## Demo credentials
+## First admin user
 
-- `owner@note.local`
-- `password123`
+With `BOOTSTRAP_ADMIN_EMAIL` set, the API creates that admin **without a password** on startup (and a small demo site). Sign in with that email and a **blank password**; you will be prompted to choose a password. Optionally set **`BOOTSTRAP_SECRET`** if you want a one-time “setup key” in addition to knowing the admin email.
 
 ## Implemented v1 features
 

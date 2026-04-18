@@ -8,12 +8,21 @@ const USER_EMAIL_KEY = 'notecms_user_email';
 
 type LoginResponse = {
   login: {
-    token: string;
-    user: {
-      email: string;
-      isAdmin: boolean;
-    };
+    token: string | null;
+    requiresPasswordSetup: boolean;
+    user: { email: string; isAdmin: boolean } | null;
   };
+};
+
+type AuthPayloadResponse = {
+  setInitialPassword: {
+    token: string;
+    user: { email: string; isAdmin: boolean };
+  };
+};
+
+type BootstrapStatusResponse = {
+  bootstrapAuthStatus: { initialPasswordRequiresSecret: boolean };
 };
 
 function getDefaultName(email: string) {
@@ -25,8 +34,13 @@ export function useAuth() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) ?? '');
   const [userEmail, setUserEmail] = useState<string>(() => localStorage.getItem(USER_EMAIL_KEY) ?? '');
   const [isAdmin, setIsAdmin] = useState(false);
-  const [email, setEmail] = useState('owner@note.local');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [bootstrapSecret, setBootstrapSecret] = useState('');
+  const [setupRequiresSecret, setSetupRequiresSecret] = useState(false);
+  const [authStep, setAuthStep] = useState<'login' | 'setPassword'>('login');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isValidatingSession, setIsValidatingSession] = useState(false);
   const [error, setError] = useState('');
@@ -41,6 +55,24 @@ export function useAuth() {
     if (userEmail) localStorage.setItem(USER_EMAIL_KEY, userEmail);
     else localStorage.removeItem(USER_EMAIL_KEY);
   }, [userEmail]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const data = await gqlRequest<BootstrapStatusResponse>(
+          '',
+          '{ bootstrapAuthStatus { initialPasswordRequiresSecret } }',
+        );
+        if (!cancelled) setSetupRequiresSecret(data.bootstrapAuthStatus.initialPasswordRequiresSecret);
+      } catch {
+        if (!cancelled) setSetupRequiresSecret(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const userName = useMemo(() => getDefaultName(userEmail || email), [userEmail, email]);
 
@@ -90,12 +122,18 @@ export function useAuth() {
     try {
       const data = await gqlRequest<LoginResponse>(
         '',
-        'mutation($email:String!,$password:String!){ login(email:$email,password:$password){ token user { email isAdmin } } }',
+        'mutation($email:String!,$password:String){ login(email:$email,password:$password){ token requiresPasswordSetup user { email isAdmin } } }',
         { email, password },
       );
+      if (data.login.requiresPasswordSetup) {
+        setAuthStep('setPassword');
+        if (data.login.user?.email) setEmail(data.login.user.email);
+        return;
+      }
+      if (!data.login.token) throw new Error('Login failed');
       setToken(data.login.token);
-      setUserEmail(data.login.user.email);
-      setIsAdmin(Boolean(data.login.user.isAdmin));
+      setUserEmail(data.login.user?.email ?? email);
+      setIsAdmin(Boolean(data.login.user?.isAdmin));
       await loadSites(data.login.token);
     } catch (loginError) {
       setError(loginError instanceof Error ? loginError.message : 'Login failed');
@@ -104,11 +142,60 @@ export function useAuth() {
     }
   }
 
+  async function handleSetInitialPassword(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const variables: { email: string; newPassword: string; bootstrapSecret?: string } = {
+        email,
+        newPassword,
+      };
+      if (setupRequiresSecret) {
+        variables.bootstrapSecret = bootstrapSecret.trim();
+      }
+      const data = await gqlRequest<AuthPayloadResponse>(
+        '',
+        'mutation($email:String!,$newPassword:String!,$bootstrapSecret:String){ setInitialPassword(email:$email,newPassword:$newPassword,bootstrapSecret:$bootstrapSecret){ token user { email isAdmin } } }',
+        variables,
+      );
+      setToken(data.setInitialPassword.token);
+      setUserEmail(data.setInitialPassword.user.email);
+      setIsAdmin(Boolean(data.setInitialPassword.user.isAdmin));
+      setAuthStep('login');
+      setNewPassword('');
+      setConfirmPassword('');
+      setBootstrapSecret('');
+      await loadSites(data.setInitialPassword.token);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not set password');
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  function cancelPasswordSetup() {
+    setAuthStep('login');
+    setNewPassword('');
+    setConfirmPassword('');
+    setBootstrapSecret('');
+    setError('');
+  }
+
   function handleLogout() {
     setToken('');
     setUserEmail('');
     setIsAdmin(false);
     setSites([]);
+    setAuthStep('login');
+    setPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+    setBootstrapSecret('');
   }
 
   async function refreshSites() {
@@ -125,12 +212,23 @@ export function useAuth() {
     password,
     setEmail,
     setPassword,
+    newPassword,
+    confirmPassword,
+    setNewPassword,
+    setConfirmPassword,
+    bootstrapSecret,
+    setBootstrapSecret,
+    setupRequiresSecret,
+    authStep,
+    setAuthStep,
     isSubmitting,
     isValidatingSession,
     error,
     sites,
     refreshSites,
     handleLogin,
+    handleSetInitialPassword,
+    cancelPasswordSetup,
     handleLogout,
   };
 }

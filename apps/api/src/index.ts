@@ -4,6 +4,7 @@ import { connectDb } from './db/mongoose.js';
 import { migrateEntryNames } from './db/migrate-entry-names.js';
 import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './resolvers/index.js';
+import { ensureBootstrapAdmin } from './config/bootstrap.js';
 import { env } from './config/env.js';
 import { verifyApiKeyToken } from './auth/api-key.js';
 import type { RequestContext } from './auth/rbac.js';
@@ -17,6 +18,7 @@ if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
 
 await connectDb();
 await migrateEntryNames();
+await ensureBootstrapAdmin();
 
 const server = new ApolloServer({ typeDefs, resolvers });
 

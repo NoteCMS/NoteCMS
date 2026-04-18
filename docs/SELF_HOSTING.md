@@ -20,6 +20,7 @@ The workflow is [.github/workflows/docker-publish.yml](../.github/workflows/dock
 2. From the repo root: `cp .env.example .env`
 3. Set **at least**:
    - `JWT_SECRET` — long random string (never use `change-me` in production; the API refuses to start if the default is used when `NODE_ENV=production`).
+   - `BOOTSTRAP_ADMIN_EMAIL` — admin email created **without** a password; you finish setup in the **Sign in** UI (blank password → set password). Optionally set **`BOOTSTRAP_SECRET`** if you want a setup key shown in the UI for `setInitialPassword`.
    - `NOTECMS_API_IMAGE` and `NOTECMS_WEB_IMAGE` — full image references, e.g. `ghcr.io/myorg/notecms-api:v1.0.0` and `ghcr.io/myorg/notecms-web:v1.0.0`.
    - **Web → API URL in the browser** (priority order):
      - `NOTECMS_GRAPHQL_URL` — full GraphQL HTTP URL. Use when you need an explicit URL (different host, TLS, etc.).
@@ -50,6 +51,8 @@ Back up both volumes for a full restore. S3-backed asset storage is not implemen
 | Variable | Role |
 |----------|------|
 | `JWT_SECRET` | Required for auth; must not be default in production |
+| `BOOTSTRAP_ADMIN_EMAIL` | Admin user created on API startup without a password; complete in UI |
+| `BOOTSTRAP_SECRET` | Optional; if set, required when setting the initial admin password (extra friction vs email-only) |
 | `MONGO_URI` | Mongo connection string (default in compose: `mongodb://mongo:27017/notecms`) |
 | `API_PORT` | Internal API listen port (default `4000`) |
 | `ASSET_LOCAL_ROOT`, `ASSET_STORAGE_DRIVER`, `ASSET_MAX_UPLOAD_BYTES` | Asset storage (local driver) |

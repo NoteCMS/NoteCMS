@@ -1,6 +1,7 @@
 import { GraphQLJSON } from 'graphql-scalars';
 import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../auth/api-key.js';
 import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
+import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
 import { env } from '../config/env.js';
 import { getStorageAdapter } from '../assets/index.js';
@@ -427,6 +428,9 @@ export const resolvers = {
     options: (parent: any) => parent.options ?? {},
   },
   Query: {
+    bootstrapAuthStatus: () => ({
+      initialPasswordRequiresSecret: Boolean(env.bootstrapSecret),
+    }),
     me: async (_: unknown, __: unknown, ctx: RequestContext) => {
       if (!ctx.userId) return null;
       const user = await UserModel.findById(ctx.userId).lean();
@@ -563,16 +567,58 @@ export const resolvers = {
   },
   Mutation: {
     register: async (_: unknown, { email, password }: { email: string; password: string }) => {
+      assertStrongPassword(password);
       const existing = await UserModel.findOne({ email: email.toLowerCase() });
       if (existing) throw new Error('Email already in use');
       const user = await UserModel.create({ email: email.toLowerCase(), passwordHash: await hashPassword(password) });
       return { token: signToken({ userId: String(user._id) }), user: toId(user.toObject()) };
     },
-    login: async (_: unknown, { email, password, siteId }: any) => {
+    login: async (_: unknown, { email, password, siteId }: { email: string; password?: string | null; siteId?: string | null }) => {
       const user = await UserModel.findOne({ email: email.toLowerCase() });
       if (!user) throw new Error('Invalid credentials');
-      if (!(await comparePassword(password, user.passwordHash))) throw new Error('Invalid credentials');
-      return { token: signToken({ userId: String(user._id), siteId }), user: toId(user.toObject()) };
+      const pass = typeof password === 'string' ? password : '';
+      if (!user.passwordHash) {
+        if (!user.isAdmin) throw new Error('Invalid credentials');
+        return { token: null, requiresPasswordSetup: true, user: toId(user.toObject()) };
+      }
+      if (!pass.length) throw new Error('Password is required');
+      if (!(await comparePassword(pass, user.passwordHash))) throw new Error('Invalid credentials');
+      return {
+        token: signToken({ userId: String(user._id), siteId: siteId ?? undefined }),
+        requiresPasswordSetup: false,
+        user: toId(user.toObject()),
+      };
+    },
+    setInitialPassword: async (
+      _: unknown,
+      {
+        email,
+        newPassword,
+        bootstrapSecret,
+      }: { email: string; newPassword: string; bootstrapSecret?: string | null },
+    ) => {
+      if (!env.bootstrapAdminEmail) {
+        throw new Error('Initial password setup is not enabled (BOOTSTRAP_ADMIN_EMAIL is not set).');
+      }
+      if (env.bootstrapSecret && !compareBootstrapSecret(bootstrapSecret ?? undefined, env.bootstrapSecret)) {
+        throw new Error('Invalid setup credentials');
+      }
+      const normalized = email.toLowerCase().trim();
+      if (normalized !== env.bootstrapAdminEmail) {
+        throw new Error('Invalid setup credentials');
+      }
+      assertStrongPassword(newPassword);
+      const user = await UserModel.findOne({ email: normalized });
+      if (!user) throw new Error('User not found');
+      if (user.passwordHash) throw new Error('Password already set; sign in with your password instead.');
+      if (!user.isAdmin) throw new Error('Access denied');
+      const updated = await UserModel.findByIdAndUpdate(
+        user._id,
+        { passwordHash: await hashPassword(newPassword) },
+        { new: true },
+      );
+      if (!updated) throw new Error('User not found');
+      return { token: signToken({ userId: String(updated._id) }), user: toId(updated.toObject()) };
     },
     createSite: async (_: unknown, { name, url }: { name: string; url: string }, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -617,6 +663,7 @@ export const resolvers = {
     },
     createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
+      assertStrongPassword(password);
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
       if (existing) throw new Error('Email already in use');
