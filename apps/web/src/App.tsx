@@ -17,6 +17,7 @@ import { EntriesPage } from '@/pages/entries-page';
 import { LoginPage } from '@/pages/login-page';
 import { SitesPage } from '@/pages/sites-page';
 import { ApiKeysPage } from '@/pages/api-keys-page';
+import { SiteSettingsPage } from '@/pages/site-settings-page';
 import { UsersPage } from '@/pages/users-page';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -67,6 +68,18 @@ export function App() {
       localStorage.setItem('notecms_active_site_id', next);
     }
   }, [token, sites, activeSiteId]);
+
+  /** Deep-link from Sites list: `/site-settings?site=<id>` switches workspace then strips the query. */
+  useEffect(() => {
+    if (!token || !sites.length) return;
+    if (path !== '/site-settings') return;
+    const requested = new URLSearchParams(location.search).get('site');
+    if (!requested) return;
+    if (!sites.some((s) => s.id === requested)) return;
+    setActiveSiteId(requested);
+    localStorage.setItem('notecms_active_site_id', requested);
+    navigate('/site-settings', { replace: true });
+  }, [token, sites, path, location.search, navigate]);
 
   function handleSiteChange(siteId: string) {
     setActiveSiteId(siteId);
@@ -152,8 +165,9 @@ export function App() {
       '/content-types': 'Content Types',
       '/entries': 'Entries',
       '/assets': 'Assets',
+      '/site-settings': 'Site settings',
       '/users': 'Users',
-      '/settings': 'Settings',
+      '/settings': 'Admin Settings',
       '/api-keys': 'API keys',
     };
     return [{ label: singleMap[path] ?? 'Dashboard' }];
@@ -236,6 +250,8 @@ export function App() {
             />
           ) : path === '/assets' ? (
             <AssetsPage token={token} workspaceSiteId={activeSiteId} sites={sites} />
+          ) : path === '/site-settings' ? (
+            <SiteSettingsPage token={token} workspaceSiteId={activeSiteId} sites={sites} onSitesChanged={refreshSites} />
           ) : path === '/api-keys' ? (
             <ApiKeysPage token={token} workspaceSiteId={activeSiteId} sites={sites} canManage={showSiteAdminTools} />
           ) : (

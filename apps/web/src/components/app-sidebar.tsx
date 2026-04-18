@@ -1,4 +1,4 @@
-import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image, KeyRound } from 'lucide-react';
+import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image, KeyRound, Cog } from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
@@ -25,12 +25,13 @@ const workspaceItems = [
   { path: '/content-types', title: 'Content Types', icon: Shapes },
   { path: '/entries', title: 'Entries', icon: FileText },
   { path: '/assets', title: 'Assets', icon: Image },
+  { path: '/site-settings', title: 'Site settings', icon: Cog },
   { path: '/users', title: 'Users', icon: Users },
 ];
 
 const adminItemsBase = [
   { path: '/sites', title: 'Sites', icon: Globe },
-  { path: '/settings', title: 'Settings', icon: Settings },
+  { path: '/settings', title: 'Admin Settings', icon: Settings },
 ];
 
 type AppSidebarProps = {

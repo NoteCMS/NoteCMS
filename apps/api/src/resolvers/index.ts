@@ -6,8 +6,8 @@ import { env } from '../config/env.js';
 import { getStorageAdapter } from '../assets/index.js';
 import {
   buildImageVariants,
-  derivativeFileExtension,
   mimeForDerivativeKey,
+  resolveUploadMimeType,
   sanitizeFilename,
 } from '../assets/image.js';
 import { normalizeStorageKey } from '../assets/storage.js';
@@ -16,6 +16,7 @@ import { EntryModel } from '../db/models/Entry.js';
 import { AssetModel } from '../db/models/Asset.js';
 import { MembershipModel, roles } from '../db/models/Membership.js';
 import { SiteModel } from '../db/models/Site.js';
+import { MENU_SLOT_KEY_PATTERN, MENU_SLOT_MAX_SLOTS, SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { ApiKeyModel } from '../db/models/ApiKey.js';
 import { UserModel } from '../db/models/User.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
@@ -276,6 +277,99 @@ async function assertAssetsBelongToSite(siteId: string, assetIds: string[]) {
   if (missing.length) throw new Error('One or more referenced assets are missing or outside this site');
 }
 
+function normalizeMenuEntries(raw: unknown): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return map;
+  const record = raw as Record<string, unknown>;
+  const seen = new Set<string>();
+  for (const [rawKey, value] of Object.entries(record)) {
+    const key = String(rawKey).trim();
+    if (!key) continue;
+    if (!MENU_SLOT_KEY_PATTERN.test(key)) {
+      throw new Error(
+        `Invalid menu slot key "${key}". Use a letter to start, then letters, numbers, underscores, or hyphens (1–64 characters).`,
+      );
+    }
+    if (seen.has(key)) {
+      throw new Error(`Duplicate menu slot key "${key}".`);
+    }
+    seen.add(key);
+    if (typeof value === 'string' && value.trim()) {
+      map.set(key, value.trim());
+    }
+  }
+  if (map.size > MENU_SLOT_MAX_SLOTS) {
+    throw new Error(`At most ${MENU_SLOT_MAX_SLOTS} menu slots are allowed.`);
+  }
+  return map;
+}
+
+function menuEntriesToObject(mapOrRecord: unknown): Record<string, string> {
+  if (!mapOrRecord) return {};
+  if (mapOrRecord instanceof Map) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of mapOrRecord) {
+      const key = String(k).trim();
+      if (!key || typeof v !== 'string' || !v.trim()) continue;
+      out[key] = v.trim();
+    }
+    return out;
+  }
+  if (typeof mapOrRecord === 'object' && !Array.isArray(mapOrRecord)) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(mapOrRecord as Record<string, unknown>)) {
+      const key = k.trim();
+      if (!key || typeof v !== 'string' || !v.trim()) continue;
+      out[key] = v.trim();
+    }
+    return out;
+  }
+  return {};
+}
+
+async function assertEntriesBelongToSite(siteId: string, entryIds: string[]) {
+  const unique = [...new Set(entryIds.filter(Boolean))];
+  if (!unique.length) return;
+  const entries = await EntryModel.find({ _id: { $in: unique }, siteId }).select({ _id: 1 }).lean();
+  const found = new Set(entries.map((e) => String(e._id)));
+  const missing = unique.filter((id) => !found.has(String(id)));
+  if (missing.length) throw new Error('One or more referenced entries are missing or outside this site');
+}
+
+async function entryReferencedBySiteSettings(siteId: string, entryId: string): Promise<boolean> {
+  const doc = await SiteSettingsModel.findOne({ siteId }).select({ menuEntries: 1 }).lean();
+  if (!doc?.menuEntries) return false;
+  const obj = menuEntriesToObject(doc.menuEntries);
+  return Object.values(obj).some((id) => String(id) === String(entryId));
+}
+
+async function assetReferencedBySiteSettings(siteId: string, assetId: string): Promise<boolean> {
+  const doc = await SiteSettingsModel.findOne({ siteId }).select({ logoAssetId: 1, faviconAssetId: 1 }).lean();
+  if (!doc) return false;
+  const id = String(assetId);
+  const logo = doc.logoAssetId ? String(doc.logoAssetId) : '';
+  const fav = doc.faviconAssetId ? String(doc.faviconAssetId) : '';
+  return logo === id || fav === id;
+}
+
+function siteSettingsDocToGql(doc: {
+  _id: unknown;
+  siteId: unknown;
+  logoAssetId?: unknown;
+  faviconAssetId?: unknown;
+  siteTitle?: string | null;
+  menuEntries?: unknown;
+}) {
+  return {
+    id: String(doc._id),
+    siteId: String(doc.siteId),
+    logoAssetId: doc.logoAssetId ? String(doc.logoAssetId) : null,
+    faviconAssetId: doc.faviconAssetId ? String(doc.faviconAssetId) : null,
+    siteTitle: typeof doc.siteTitle === 'string' && doc.siteTitle.trim() ? doc.siteTitle.trim() : null,
+    menuEntries: menuEntriesToObject(doc.menuEntries),
+  };
+}
+
 async function toGlobalUser(userId: string) {
   const user = await UserModel.findById(userId).lean();
   if (!user) throw new Error('User not found');
@@ -305,6 +399,30 @@ async function toGlobalUser(userId: string) {
 
 export const resolvers = {
   JSON: GraphQLJSON,
+  SiteSettings: {
+    logo: async (parent: { siteId: string; logoAssetId?: string | null }) => {
+      if (!parent.logoAssetId) return null;
+      const asset = await AssetModel.findOne({ _id: parent.logoAssetId, siteId: parent.siteId }).lean();
+      return asset ? toAsset(asset) : null;
+    },
+    favicon: async (parent: { siteId: string; faviconAssetId?: string | null }) => {
+      if (!parent.faviconAssetId) return null;
+      const asset = await AssetModel.findOne({ _id: parent.faviconAssetId, siteId: parent.siteId }).lean();
+      return asset ? toAsset(asset) : null;
+    },
+    menusResolved: async (parent: { siteId: string; menuEntries: unknown }) => {
+      const obj = menuEntriesToObject(parent.menuEntries);
+      const slots = Object.keys(obj).sort();
+      return Promise.all(
+        slots.map(async (slot) => {
+          const entryId = obj[slot];
+          if (!entryId) return { slot, entry: null };
+          const doc = await EntryModel.findOne({ _id: entryId, siteId: parent.siteId }).lean();
+          return { slot, entry: doc ? await entryDocumentToGql(doc) : null };
+        }),
+      );
+    },
+  },
   ContentType: {
     options: (parent: any) => parent.options ?? {},
   },
@@ -427,6 +545,21 @@ export const resolvers = {
       const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
       return keys.map(formatApiKeyDoc);
     },
+    siteSettings: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      await requireReadSite(ctx, siteId);
+      const doc = await SiteSettingsModel.findOne({ siteId }).lean();
+      if (!doc) {
+        return {
+          id: null,
+          siteId,
+          logoAssetId: null,
+          faviconAssetId: null,
+          siteTitle: null,
+          menuEntries: {},
+        };
+      }
+      return siteSettingsDocToGql(doc);
+    },
   },
   Mutation: {
     register: async (_: unknown, { email, password }: { email: string; password: string }) => {
@@ -448,6 +581,39 @@ export const resolvers = {
       const site = await SiteModel.create({ name, url, ownerId: ctx.userId });
       await MembershipModel.create({ userId: ctx.userId, siteId: site._id, role: 'owner' });
       return toId(site.toObject());
+    },
+    updateSite: async (
+      _: unknown,
+      { siteId, name, url }: { siteId: string; name?: string | null; url?: string | null },
+      ctx: RequestContext,
+    ) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+
+      const $set: Record<string, string> = {};
+      if (name !== undefined && name !== null) {
+        const n = String(name).trim();
+        if (!n) throw new Error('Site name cannot be empty');
+        $set.name = n;
+      }
+      if (url !== undefined && url !== null) {
+        const u = String(url).trim();
+        if (!u) throw new Error('Site URL cannot be empty');
+        $set.url = u;
+      }
+      if (!Object.keys($set).length) throw new Error('No changes to save');
+
+      try {
+        const site = await SiteModel.findOneAndUpdate({ _id: siteId }, { $set }, { new: true }).lean();
+        if (!site) throw new Error('Site not found');
+        const membership = await MembershipModel.findOne({ userId: ctx.userId, siteId }).lean();
+        return { ...toId(site), url: (site as { url?: string }).url ?? '', role: membership?.role };
+      } catch (error: unknown) {
+        if (error && typeof error === 'object' && 'code' in error && (error as { code: number }).code === 11000) {
+          throw new Error('A site with this URL already exists');
+        }
+        throw error;
+      }
     },
     createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -636,6 +802,9 @@ export const resolvers = {
     deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
+      if (await entryReferencedBySiteSettings(siteId, String(id))) {
+        throw new Error('Entry is assigned to a menu slot in site settings. Unassign it first.');
+      }
       await EntryModel.deleteOne({ _id: id, siteId });
       return true;
     },
@@ -643,8 +812,15 @@ export const resolvers = {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
 
-      const allowed = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-      if (!allowed.has(mimeType)) throw new Error('Unsupported mime type');
+      const allowed = new Set([
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+        'image/gif',
+        'image/svg+xml',
+        'image/x-icon',
+        'image/vnd.microsoft.icon',
+      ]);
 
       const original = Buffer.from(fileBase64, 'base64');
       if (!original.byteLength) throw new Error('Empty upload');
@@ -652,11 +828,14 @@ export const resolvers = {
       if (original.byteLength > env.assetMaxUploadBytes) throw new Error('Upload exceeds file size limit');
 
       const safeFilename = sanitizeFilename(filename || 'asset');
+      const effectiveMime = resolveUploadMimeType(String(mimeType ?? ''), safeFilename);
+      if (!allowed.has(effectiveMime)) throw new Error('Unsupported mime type');
+
       const keyPrefix = normalizeStorageKey(`${siteId}/${Date.now()}-${safeFilename}`);
       const storage = getStorageAdapter();
-      const variants = await buildImageVariants(original, mimeType);
-      const ext = derivativeFileExtension(variants.format);
-      const derivativeMime = variants.format === 'png' ? 'image/png' : 'image/webp';
+      const variants = await buildImageVariants(original, effectiveMime);
+      const ext = variants.derivativeExt;
+      const derivativeMime = variants.derivativeMime;
 
       const originalKey = `${keyPrefix}/original`;
       const thumbKey = `${keyPrefix}/thumbnail.${ext}`;
@@ -665,7 +844,7 @@ export const resolvers = {
       const webKey = `${keyPrefix}/large.${ext}`;
       const xlargeKey = `${keyPrefix}/xlarge.${ext}`;
 
-      await storage.put(originalKey, original, mimeType);
+      await storage.put(originalKey, original, effectiveMime);
       await storage.put(thumbKey, variants.thumbnail, derivativeMime);
       await storage.put(smallKey, variants.small, derivativeMime);
       await storage.put(mediumKey, variants.medium, derivativeMime);
@@ -676,7 +855,7 @@ export const resolvers = {
         siteId,
         uploadedBy: ctx.userId,
         filename: safeFilename,
-        mimeType,
+        mimeType: effectiveMime,
         sizeBytes: original.byteLength,
         width: variants.width,
         height: variants.height,
@@ -708,6 +887,10 @@ export const resolvers = {
     deleteAsset: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
+
+      if (await assetReferencedBySiteSettings(siteId, String(id))) {
+        throw new Error('Asset is used as site logo or favicon. Remove it from site settings first.');
+      }
 
       const entries = await EntryModel.find({ siteId }).select({ data: 1 }).lean();
       const inUse = entries.some((entry) => entryContainsAsset(entry.data, String(id)));
@@ -751,6 +934,86 @@ export const resolvers = {
       ).lean();
       if (!updated) throw new Error('API key not found');
       return true;
+    },
+    updateSiteSettings: async (
+      _: unknown,
+      {
+        siteId,
+        input,
+      }: {
+        siteId: string;
+        input: {
+          logoAssetId?: string | null;
+          faviconAssetId?: string | null;
+          siteTitle?: string | null;
+          menuEntries?: unknown;
+        };
+      },
+      ctx: RequestContext,
+    ) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'editor');
+
+      const existing = await SiteSettingsModel.findOne({ siteId }).lean();
+
+      const nextLogo = Object.prototype.hasOwnProperty.call(input, 'logoAssetId')
+        ? input.logoAssetId
+        : existing?.logoAssetId
+          ? String(existing.logoAssetId)
+          : null;
+      const nextFav = Object.prototype.hasOwnProperty.call(input, 'faviconAssetId')
+        ? input.faviconAssetId
+        : existing?.faviconAssetId
+          ? String(existing.faviconAssetId)
+          : null;
+      const nextTitle = Object.prototype.hasOwnProperty.call(input, 'siteTitle')
+        ? input.siteTitle
+        : existing?.siteTitle ?? null;
+
+      let nextMenu: Map<string, string>;
+      if (Object.prototype.hasOwnProperty.call(input, 'menuEntries')) {
+        nextMenu = normalizeMenuEntries(input.menuEntries);
+      } else if (existing?.menuEntries) {
+        nextMenu = normalizeMenuEntries(menuEntriesToObject(existing.menuEntries));
+      } else {
+        nextMenu = new Map();
+      }
+
+      function normalizeAssetRef(value: string | null | undefined): string | null {
+        if (value == null) return null;
+        const s = String(value).trim();
+        return s || null;
+      }
+
+      const logoId = normalizeAssetRef(nextLogo ?? null);
+      const favId = normalizeAssetRef(nextFav ?? null);
+
+      const assetIds: string[] = [];
+      if (logoId) assetIds.push(logoId);
+      if (favId) assetIds.push(favId);
+      await assertAssetsBelongToSite(siteId, assetIds);
+      await assertEntriesBelongToSite(siteId, [...nextMenu.values()]);
+
+      const siteTitleNormalized =
+        nextTitle === null || nextTitle === undefined
+          ? null
+          : String(nextTitle).trim() || null;
+
+      const updated = await SiteSettingsModel.findOneAndUpdate(
+        { siteId },
+        {
+          $set: {
+            logoAssetId: logoId,
+            faviconAssetId: favId,
+            siteTitle: siteTitleNormalized,
+            menuEntries: nextMenu,
+          },
+          $setOnInsert: { siteId },
+        },
+        { upsert: true, new: true },
+      ).lean();
+      if (!updated) throw new Error('Failed to save site settings');
+      return siteSettingsDocToGql(updated);
     },
   },
 };

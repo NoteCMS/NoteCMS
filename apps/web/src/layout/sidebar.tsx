@@ -9,7 +9,7 @@ const links = [
   { to: '/content-types', label: 'Content Types', icon: Shapes },
   { to: '/entries', label: 'Entries', icon: FileText },
   { to: '/users', label: 'Users', icon: Users },
-  { to: '/settings', label: 'Settings', icon: Settings },
+  { to: '/settings', label: 'Admin Settings', icon: Settings },
 ];
 
 export function Sidebar() {

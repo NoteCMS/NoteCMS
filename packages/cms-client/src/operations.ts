@@ -98,3 +98,53 @@ export const LIST_ASSETS = /* GraphQL */ `
     }
   }
 `;
+
+export const SITE_SETTINGS = /* GraphQL */ `
+  query NoteCmsSiteSettings($siteId: ID!) {
+    siteSettings(siteId: $siteId) {
+      id
+      siteId
+      logoAssetId
+      faviconAssetId
+      siteTitle
+      menuEntries
+      logo {
+        id
+        filename
+        mimeType
+        alt
+        title
+        variants {
+          web
+          thumbnail
+        }
+      }
+      favicon {
+        id
+        filename
+        mimeType
+        alt
+        variants {
+          web
+          thumbnail
+        }
+      }
+      menusResolved {
+        slot
+        entry {
+          id
+          siteId
+          contentTypeId
+          name
+          slug
+          data
+          updatedAt
+          lastEditedBy {
+            id
+            email
+          }
+        }
+      }
+    }
+  }
+`;

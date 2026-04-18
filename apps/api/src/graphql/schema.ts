@@ -57,6 +57,30 @@ export const typeDefs = `#graphql
     token: String!
   }
 
+  type MenuSlotResolved {
+    slot: String!
+    entry: Entry
+  }
+
+  type SiteSettings {
+    id: ID
+    siteId: ID!
+    logoAssetId: ID
+    faviconAssetId: ID
+    siteTitle: String
+    menuEntries: JSON!
+    logo: Asset
+    favicon: Asset
+    menusResolved: [MenuSlotResolved!]!
+  }
+
+  input SiteSettingsInput {
+    logoAssetId: ID
+    faviconAssetId: ID
+    siteTitle: String
+    menuEntries: JSON
+  }
+
   input FieldInput {
     key: String!
     label: String!
@@ -75,6 +99,7 @@ export const typeDefs = `#graphql
     entryBySlug(siteId: ID!, contentTypeSlug: String!, slug: String!): Entry
     listAssets(siteId: ID!, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
+    siteSettings(siteId: ID!): SiteSettings!
   }
 
   type Mutation {
@@ -82,6 +107,7 @@ export const typeDefs = `#graphql
     login(email: String!, password: String!, siteId: ID): AuthPayload!
 
     createSite(name: String!, url: String!): Site!
+    updateSite(siteId: ID!, name: String, url: String): Site!
     createGlobalUser(email: String!, password: String!, status: String, isAdmin: Boolean): GlobalUser!
     updateUserStatus(userId: ID!, status: String!): GlobalUser!
     setUserAdmin(userId: ID!, isAdmin: Boolean!): GlobalUser!
@@ -104,5 +130,7 @@ export const typeDefs = `#graphql
 
     createApiKey(siteId: ID!, name: String!): CreateApiKeyPayload!
     revokeApiKey(id: ID!, siteId: ID!): Boolean!
+
+    updateSiteSettings(siteId: ID!, input: SiteSettingsInput!): SiteSettings!
   }
 `;

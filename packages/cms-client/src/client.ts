@@ -1,6 +1,13 @@
-import { CONTENT_TYPES, ENTRIES, ENTRY, ENTRY_BY_SLUG, LIST_ASSETS } from './operations.js';
+import {
+  CONTENT_TYPES,
+  ENTRIES,
+  ENTRY,
+  ENTRY_BY_SLUG,
+  LIST_ASSETS,
+  SITE_SETTINGS,
+} from './operations.js';
 import { postGraphql } from './request.js';
-import type { Asset, ContentType, Entry } from './types.js';
+import type { Asset, ContentType, Entry, SiteSettings } from './types.js';
 
 export type CmsClientConfig = {
   /** GraphQL HTTP URL, e.g. `https://api.example.com/graphql` */
@@ -30,6 +37,9 @@ export type CmsClient = {
   entry(id: string): Promise<Entry | null>;
   entryBySlug(contentTypeSlug: string, slug: string): Promise<Entry | null>;
   listAssets(options?: { query?: string; limit?: number; offset?: number }): Promise<Asset[]>;
+
+  /** Site title, branding URLs, and resolved menu slots → entries (read-only; API key allowed). */
+  siteSettings(): Promise<SiteSettings>;
 };
 
 /**
@@ -96,6 +106,11 @@ export function createCmsClient(config: CmsClientConfig): CmsClient {
         offset: options.offset ?? 0,
       });
       return data.listAssets;
+    },
+
+    async siteSettings() {
+      const data = await query<{ siteSettings: SiteSettings }>(SITE_SETTINGS, { siteId });
+      return data.siteSettings;
     },
   };
 }

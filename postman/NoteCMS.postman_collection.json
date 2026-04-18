@@ -1,0 +1,341 @@
+{
+  "info": {
+    "_postman_id": "a1b2c3d4-note-cms-api",
+    "name": "NoteCMS GraphQL API",
+    "description": "GraphQL API for NoteCMS. Set **baseUrl** (default `http://localhost:4000/graphql`). Run **Login** to fill **token** automatically, then **List my sites** and copy a **siteId** into collection variables for other requests.\n\nAPI keys: set **apiKey** and use **Reads (API key)**. Allowed reads: `contentTypes`, `entries`, `entry`, `entryBySlug`, `listAssets` (same site only). Ask for `data` on entries — GraphQL only returns fields you select.\n\n**entryBySlug**: `contentTypeSlug` is the content type URL key (e.g. `pages`), `slug` is the entry slug (e.g. `home`).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:4000/graphql" },
+    { "key": "token", "value": "" },
+    { "key": "siteId", "value": "" },
+    { "key": "contentTypeId", "value": "" },
+    { "key": "entryId", "value": "" },
+    { "key": "contentTypeSlug", "value": "pages" },
+    { "key": "entrySlug", "value": "home" },
+    { "key": "apiKey", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.errors && j.errors.length) { console.log(j.errors[0].message); return; }",
+                  "const t = j.data && j.data.login && j.data.login.token;",
+                  "if (t) { pm.collectionVariables.set('token', t); console.log('Saved token to collection variable token'); }",
+                  "else { console.log('No token in response'); }"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"mutation Login($email: String!, $password: String!) { login(email: $email, password: $password) { token user { id email isAdmin } } }\",\n  \"variables\": {\n    \"email\": \"owner@note.local\",\n    \"password\": \"password123\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Me",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query { me { id email status isAdmin } }\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "List my sites",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.errors && j.errors.length) return;",
+                  "const sites = j.data && j.data.listMySites;",
+                  "if (sites && sites.length && !pm.collectionVariables.get('siteId')) {",
+                  "  pm.collectionVariables.set('siteId', sites[0].id);",
+                  "  console.log('Set siteId to first site:', sites[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query { listMySites { id name url role } }\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reads (JWT)",
+      "item": [
+        {
+          "name": "Content types",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query ContentTypes($siteId: ID!) { contentTypes(siteId: $siteId) { id siteId name slug fields options } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entries",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query Entries($siteId: ID!, $contentTypeId: ID!, $limit: Int, $offset: Int) { entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit, offset: $offset) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": {\n    \"siteId\": \"{{siteId}}\",\n    \"contentTypeId\": \"{{contentTypeId}}\",\n    \"limit\": 20,\n    \"offset\": 0\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "List assets",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query ListAssets($siteId: ID!, $query: String, $limit: Int) { listAssets(siteId: $siteId, query: $query, limit: $limit) { id filename mimeType alt title variants { thumbnail web original } } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\", \"query\": \"\", \"limit\": 10 }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entry by id",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query Entry($siteId: ID!, $id: ID!) { entry(siteId: $siteId, id: $id) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\", \"id\": \"{{entryId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entry by slug (e.g. page)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query EntryBySlug($siteId: ID!, $contentTypeSlug: String!, $slug: String!) { entryBySlug(siteId: $siteId, contentTypeSlug: $contentTypeSlug, slug: $slug) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": {\n    \"siteId\": \"{{siteId}}\",\n    \"contentTypeSlug\": \"{{contentTypeSlug}}\",\n    \"slug\": \"{{entrySlug}}\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Reads (API key)",
+      "item": [
+        {
+          "name": "Content types (Bearer apiKey)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{apiKey}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query ContentTypes($siteId: ID!) { contentTypes(siteId: $siteId) { id name slug } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Content types (x-api-key header)",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "x-api-key", "value": "{{apiKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query ContentTypes($siteId: ID!) { contentTypes(siteId: $siteId) { id name slug } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entries (API key, includes data)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{apiKey}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query Entries($siteId: ID!, $contentTypeId: ID!, $limit: Int) { entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": {\n    \"siteId\": \"{{siteId}}\",\n    \"contentTypeId\": \"{{contentTypeId}}\",\n    \"limit\": 20\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entry by id (API key)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{apiKey}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query Entry($siteId: ID!, $id: ID!) { entry(siteId: $siteId, id: $id) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\", \"id\": \"{{entryId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Entry by slug — page (API key)",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{apiKey}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query EntryBySlug($siteId: ID!, $contentTypeSlug: String!, $slug: String!) { entryBySlug(siteId: $siteId, contentTypeSlug: $contentTypeSlug, slug: $slug) { id siteId contentTypeId slug data updatedAt lastEditedBy { id email } } }\",\n  \"variables\": {\n    \"siteId\": \"{{siteId}}\",\n    \"contentTypeSlug\": \"{{contentTypeSlug}}\",\n    \"slug\": \"{{entrySlug}}\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin — API keys",
+      "item": [
+        {
+          "name": "List API keys",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"query ApiKeys($siteId: ID!) { apiKeys(siteId: $siteId) { id siteId name keyHint createdAt lastUsedAt } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Create API key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"mutation CreateApiKey($siteId: ID!, $name: String!) { createApiKey(siteId: $siteId, name: $name) { token apiKey { id name keyHint createdAt } } }\",\n  \"variables\": { \"siteId\": \"{{siteId}}\", \"name\": \"Postman test\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        },
+        {
+          "name": "Revoke API key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"mutation RevokeApiKey($id: ID!, $siteId: ID!) { revokeApiKey(id: $id, siteId: $siteId) }\",\n  \"variables\": { \"id\": \"PASTE_KEY_ID\", \"siteId\": \"{{siteId}}\" }\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": "{{baseUrl}}"
+          }
+        }
+      ]
+    }
+  ]
+}

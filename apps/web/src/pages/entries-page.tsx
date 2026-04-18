@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
+import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
+import { stableJsonStringify } from '@/lib/stable-json';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -180,7 +182,7 @@ function ImageFieldDropzonePreview({
           ) : (
             <span className="flex flex-col items-center gap-1 px-1">
               <Upload className="size-5 text-muted-foreground" aria-hidden />
-              <span className="text-[10px] leading-tight font-medium text-muted-foreground">Drop or click</span>
+              <span className="text-[10px] leading-tight font-medium text-muted-foreground">Upload</span>
             </span>
           )}
         </DropzoneTrigger>
@@ -277,7 +279,7 @@ function ImageFieldInput({
             {selectedAsset.filename}
           </p>
         ) : (
-          <p className="text-xs text-muted-foreground">No image selected.</p>
+          <p className="text-xs text-muted-foreground">No image.</p>
         )}
       </div>
 
@@ -297,7 +299,7 @@ function ImageFieldInput({
           <DialogHeader className="space-y-1">
             <DialogTitle>Choose asset</DialogTitle>
             <DialogDescription>
-              Pick an existing image or use the + tile to upload a new one, then press Select.
+              Select an image to continue.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -310,8 +312,7 @@ function ImageFieldInput({
             />
             {assets.length === 0 ? (
               <p className="text-xs leading-snug text-muted-foreground" role="status">
-                This workspace has no assets yet. Use the <span className="font-medium text-foreground/80">+</span> tile below to
-                upload.
+                No assets found.
               </p>
             ) : libraryQuery.trim() && filteredLibrary.length === 0 ? (
               <p className="text-xs leading-snug text-muted-foreground" role="status">
@@ -383,7 +384,7 @@ function ImageFieldInput({
                   </div>
                   <div className="flex min-h-[2.75rem] flex-col justify-center border-t border-border/60 px-2.5 py-2">
                     <span className="text-xs font-medium text-foreground">Upload new</span>
-                    <span className="truncate text-[10px] text-muted-foreground">Click or drop a file</span>
+                    <span className="truncate text-[10px] text-muted-foreground">Upload</span>
                   </div>
                 </button>
               </div>
@@ -607,7 +608,7 @@ function FieldList({
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-muted-foreground">No rows yet.</p>
+                  <p className="text-sm text-muted-foreground">Empty list.</p>
                 )}
 
                 <Button
@@ -634,7 +635,7 @@ function FieldList({
                 <MarkdownEditor
                   markdown={String(fieldValue ?? '')}
                   onChange={(nextMarkdown) => onChange({ ...value, [field.key]: nextMarkdown })}
-                  placeholder="Write markdown content…"
+                  placeholder="Content (Markdown)"
                 />
               ) : field.type === 'boolean' ? (
                 <div className="flex items-center gap-2">
@@ -1064,9 +1065,50 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
 
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+
+  const currentSnapshot = useMemo(
+    () =>
+      stableJsonStringify({
+        entryName: entryName.trim(),
+        slug,
+        data,
+      }),
+    [entryName, slug, data],
+  );
+
+  useLayoutEffect(() => {
+    if (!isDetailView || !entryId) {
+      setSavedSnapshot(null);
+      return;
+    }
+    if (entryId === 'new') {
+      setSavedSnapshot(stableJsonStringify({ entryName: '', slug: '', data: {} }));
+      return;
+    }
+    if (!editingEntry) {
+      setSavedSnapshot(null);
+      return;
+    }
+    setSavedSnapshot(
+      stableJsonStringify({
+        entryName: (editingEntry.name ?? '').trim(),
+        slug: editingEntry.slug ?? '',
+        data: (editingEntry.data ?? {}) as Record<string, unknown>,
+      }),
+    );
+  }, [isDetailView, entryId, editingEntry]);
+
+  const isDirty = Boolean(
+    isDetailView && savedSnapshot !== null && currentSnapshot !== savedSnapshot,
+  );
+  const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
+
   if (isDetailView) {
     return (
-      <div className="w-full space-y-4">
+      <>
+        {unsavedPrompt}
+        <div className="w-full space-y-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0">
             <CardTitle>{entryId === 'new' ? 'Create Entry' : 'Edit Entry'}</CardTitle>
@@ -1150,11 +1192,14 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           </CardContent>
         </Card>
       </div>
+      </>
     );
   }
 
   return (
-    <div className="w-full space-y-4">
+    <>
+      {unsavedPrompt}
+      <div className="w-full space-y-4">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle>{selectedType?.name ?? 'Content Entries'}</CardTitle>
@@ -1191,5 +1236,6 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }

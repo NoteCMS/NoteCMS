@@ -1,4 +1,15 @@
-import { forwardRef, memo, useCallback, useDeferredValue, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { TagInput, type Tag } from 'emblor-maintained';
 import { ChevronDown, Copy, Ellipsis, GripVertical, Plus, Settings2, Trash2 } from 'lucide-react';
@@ -21,6 +32,8 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
+import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
+import { stableJsonStringify } from '@/lib/stable-json';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -621,7 +634,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                       }
                     />
                     <FieldDescription className="min-w-0 flex-1">
-                      Entries must provide a value for this field.
+                      Mark as required.
                     </FieldDescription>
                   </div>
                 </FieldContent>
@@ -665,7 +678,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                   }}
                 />
               </FieldContent>
-              <FieldDescription>Allowed values when this field is used as a select.</FieldDescription>
+              <FieldDescription>Available options for this field.</FieldDescription>
             </Field>
           ) : null}
 
@@ -676,7 +689,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                 <FieldDescription className="text-xs">
                   {visibility
                     ? `${visibility.groups.length} group${visibility.groups.length === 1 ? '' : 's'} configured`
-                    : 'This field is always visible.'}
+                    : 'Default visibility.'}
                 </FieldDescription>
               </div>
               <SheetTrigger asChild>
@@ -699,7 +712,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
               <SheetHeader className="border-b">
                 <SheetTitle>Conditional Visibility Rules</SheetTitle>
                 <SheetDescription>
-                  Control when this field appears based on other field values.
+                  Visibility logic and field rules.
                 </SheetDescription>
               </SheetHeader>
               <div className="flex h-full flex-col gap-3 overflow-y-auto p-4">
@@ -727,7 +740,7 @@ const SortableFieldItem = memo(function SortableFieldItem({
                 {visibility ? (
                   <div className="flex flex-col gap-3">
             <Field orientation="horizontal" className="items-center justify-between gap-3">
-              <FieldLabel>How groups are combined</FieldLabel>
+              <FieldLabel>Logic operator</FieldLabel>
               <RelationToggle
                 value={visibility.relation}
                 onChange={(value) => setVisibility({ ...visibility, relation: value })}
@@ -1287,20 +1300,22 @@ type ContentTypeSchemaBlockProps = {
   bootstrap: ContentTypeSchemaBootstrap;
   contentTypeOptions: { value: string; label: string }[];
   contentTypeFieldMap: Map<string, ContentField[]>;
+  onSchemaChange?: () => void;
 };
 
 function contentTypeSchemaBlockPropsEqual(prev: ContentTypeSchemaBlockProps, next: ContentTypeSchemaBlockProps): boolean {
   return (
     prev.bootstrap === next.bootstrap &&
     prev.contentTypeOptions === next.contentTypeOptions &&
-    prev.contentTypeFieldMap === next.contentTypeFieldMap
+    prev.contentTypeFieldMap === next.contentTypeFieldMap &&
+    prev.onSchemaChange === next.onSchemaChange
   );
 }
 
 /** Holds fields + entry-slug settings so typing in the schema does not re-render the rest of the editor page. */
 const ContentTypeSchemaBlock = memo(
   forwardRef<ContentTypeSchemaHandle, ContentTypeSchemaBlockProps>(function ContentTypeSchemaBlock(
-    { bootstrap, contentTypeOptions, contentTypeFieldMap },
+    { bootstrap, contentTypeOptions, contentTypeFieldMap, onSchemaChange },
     ref,
   ) {
     const [fields, setFields] = useState(bootstrap.fields);
@@ -1310,6 +1325,10 @@ const ContentTypeSchemaBlock = memo(
       setFields(bootstrap.fields);
       setHasSlug(bootstrap.hasSlug);
     }, [bootstrap]);
+
+    useEffect(() => {
+      onSchemaChange?.();
+    }, [fields, hasSlug, onSchemaChange]);
 
     useImperativeHandle(
       ref,
@@ -1412,6 +1431,42 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
   const [sidebarOrder, setSidebarOrder] = useState(100);
   const [schemaBootstrap, setSchemaBootstrap] = useState<ContentTypeSchemaBootstrap | null>(null);
   const schemaRef = useRef<ContentTypeSchemaHandle | null>(null);
+
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [schemaTick, setSchemaTick] = useState(0);
+  const bumpSchema = useCallback(() => setSchemaTick((t) => t + 1), []);
+
+  useEffect(() => {
+    setSavedSnapshot(null);
+  }, [contentTypeId, workspaceSiteId]);
+
+  useLayoutEffect(() => {
+    if (isLoading || !schemaBootstrap) return;
+    const schema = schemaRef.current?.getSnapshot();
+    setSavedSnapshot(
+      stableJsonStringify({
+        name: name.trim(),
+        showInSidebar,
+        sidebarLabel,
+        sidebarOrder,
+        schema,
+      }),
+    );
+  }, [isLoading, schemaBootstrap, contentTypeId, workspaceSiteId]);
+
+  const currentSnapshot = useMemo(() => {
+    const schema = schemaRef.current?.getSnapshot();
+    return stableJsonStringify({
+      name: name.trim(),
+      showInSidebar,
+      sidebarLabel,
+      sidebarOrder,
+      schema,
+    });
+  }, [name, showInSidebar, sidebarLabel, sidebarOrder, schemaTick, schemaBootstrap]);
+
+  const isDirty = savedSnapshot !== null && currentSnapshot !== savedSnapshot;
+  const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
 
   useEffect(() => {
     if (!workspaceSiteId) {
@@ -1547,10 +1602,12 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
   }, [isNew, committedSlug, derivedBaseSlug, takenSlugs]);
 
   return (
-    <div className="w-full space-y-4">
-      <Card>
-        <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
-          <CardTitle>{isNew ? 'Create Content Type' : 'Edit Content Type'}</CardTitle>
+    <>
+      {unsavedPrompt}
+      <div className="w-full space-y-4">
+        <Card>
+          <CardHeader className="flex flex-row items-start justify-between gap-4 space-y-0">
+            <CardTitle>{isNew ? 'Create Content Type' : 'Edit Content Type'}</CardTitle>
           <Dialog>
             <DialogTrigger asChild>
               <Button
@@ -1659,6 +1716,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
                 bootstrap={schemaBootstrap}
                 contentTypeOptions={contentTypeOptions}
                 contentTypeFieldMap={contentTypeFieldMap}
+                onSchemaChange={bumpSchema}
               />
 
               <div className="flex flex-wrap gap-2">
@@ -1677,5 +1735,6 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
         </CardContent>
       </Card>
     </div>
+    </>
   );
 }

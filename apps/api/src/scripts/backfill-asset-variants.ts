@@ -12,7 +12,7 @@
 import path from 'node:path';
 import { Types } from 'mongoose';
 import { getStorageAdapter } from '../assets/index.js';
-import { buildImageVariants, derivativeFileExtension } from '../assets/image.js';
+import { buildImageVariants } from '../assets/image.js';
 import { env } from '../config/env.js';
 import { connectDb } from '../db/mongoose.js';
 import { AssetModel } from '../db/models/Asset.js';
@@ -81,8 +81,8 @@ for (const asset of assets) {
   try {
     const original = await storage.getBuffer(asset.storageKeyOriginal);
     const variants = await buildImageVariants(original, asset.mimeType);
-    const ext = derivativeFileExtension(variants.format);
-    const derivativeMime = variants.format === 'png' ? 'image/png' : 'image/webp';
+    const ext = variants.derivativeExt;
+    const derivativeMime = variants.derivativeMime;
 
     const smallKey = `${prefix}/small.${ext}`;
     const mediumKey = `${prefix}/medium.${ext}`;

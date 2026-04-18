@@ -5,7 +5,7 @@ export function DashboardPage() {
     <div className="space-y-6">
       <header>
         <h1 className="text-4xl font-bold">Dashboard</h1>
-        <p className="text-[var(--muted-foreground)]">Overview of your content operations.</p>
+        <p className="text-[var(--muted-foreground)]">Overview</p>
       </header>
 
       <section className="grid gap-4 md:grid-cols-3">
@@ -32,7 +32,7 @@ export function DashboardPage() {
       <Card>
         <CardHeader>
           <CardTitle>Recent Activity</CardTitle>
-          <CardDescription>Latest edits across your sites.</CardDescription>
+          <CardDescription>Recent activity</CardDescription>
         </CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm">
