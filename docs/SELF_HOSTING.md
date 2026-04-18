@@ -21,9 +21,10 @@ The workflow is [.github/workflows/docker-publish.yml](../.github/workflows/dock
 3. Set **at least**:
    - `JWT_SECRET` — long random string (never use `change-me` in production; the API refuses to start if the default is used when `NODE_ENV=production`).
    - `NOTECMS_API_IMAGE` and `NOTECMS_WEB_IMAGE` — full image references, e.g. `ghcr.io/myorg/notecms-api:v1.0.0` and `ghcr.io/myorg/notecms-web:v1.0.0`.
-   - **Web → API URL in the browser** — one of:
-     - `PUBLIC_URL` — canonical site origin **without** trailing slash (e.g. `https://cms.example.com`). The web container writes `dist/config.js` so the SPA calls `PUBLIC_URL` + `GRAPHQL_PATH` (default `/graphql`). Use this when a reverse proxy serves UI and API on the **same origin**.
-     - `NOTECMS_GRAPHQL_URL` — full GraphQL HTTP URL (e.g. `http://localhost:4000/graphql` for split ports on the host). If set, it overrides the `PUBLIC_URL` + `GRAPHQL_PATH` combination.
+   - **Web → API URL in the browser** (priority order):
+     - `NOTECMS_GRAPHQL_URL` — full GraphQL HTTP URL. Use when you need an explicit URL (different host, TLS, etc.).
+     - `PUBLIC_URL` + `GRAPHQL_PATH` — canonical origin **without** trailing slash (e.g. `https://cms.example.com`) plus path (default `/graphql`). Use when a reverse proxy serves UI and API on the **same origin**.
+     - `NOTECMS_GRAPHQL_PORT` (+ optional `GRAPHQL_PATH`) — the SPA builds the URL from **whatever host and protocol the user opened in the browser**, with this API port (e.g. `4000`). Avoids hardcoding `localhost` or the server IP. Does not apply if either of the above is set.
 4. `docker compose -f deploy/docker-compose.yml pull && docker compose -f deploy/docker-compose.yml up -d`
 
 Default port bindings are **localhost only** (`127.0.0.1:4000` and `127.0.0.1:5173`). Put **Caddy**, nginx, or another reverse proxy **in front** of those ports for TLS and public hostnames; that proxy is **not** part of this repository’s compose file.
@@ -55,7 +56,8 @@ Back up both volumes for a full restore. S3-backed asset storage is not implemen
 | `NOTECMS_API_IMAGE`, `NOTECMS_WEB_IMAGE` | Full image names for deploy compose |
 | `PUBLIC_URL` | Public browser origin for same-origin GraphQL URL |
 | `GRAPHQL_PATH` | Path segment for GraphQL (default `/graphql`) |
-| `NOTECMS_GRAPHQL_URL` | Full GraphQL URL override for the SPA |
+| `NOTECMS_GRAPHQL_URL` | Full GraphQL URL for the SPA (highest priority) |
+| `NOTECMS_GRAPHQL_PORT` | API port only; SPA uses current page host + this port + `GRAPHQL_PATH` |
 | `WEB_PORT` | Internal port for `serve` in the web container |
 | `API_PUBLISH_PORT`, `WEB_PUBLISH_PORT` | Host bindings for API and web |
 

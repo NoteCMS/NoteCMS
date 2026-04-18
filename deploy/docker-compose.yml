@@ -1,5 +1,5 @@
 # Production-style stack: pull pre-built images from GHCR (see docs/SELF_HOSTING.md).
-# Copy ../.env.example to ../.env, set NOTECMS_*_IMAGE, JWT_SECRET, and web PUBLIC_URL / NOTECMS_GRAPHQL_URL.
+# Copy ../.env.example to ../.env, set NOTECMS_*_IMAGE, JWT_SECRET, and web GraphQL env (see .env.example).
 
 services:
   mongo:
@@ -52,6 +52,7 @@ services:
       PUBLIC_URL: ${PUBLIC_URL:-}
       GRAPHQL_PATH: ${GRAPHQL_PATH:-/graphql}
       NOTECMS_GRAPHQL_URL: ${NOTECMS_GRAPHQL_URL:-}
+      NOTECMS_GRAPHQL_PORT: ${NOTECMS_GRAPHQL_PORT:-}
       PORT: ${WEB_PORT:-5173}
     ports:
       - "${WEB_PUBLISH_PORT:-127.0.0.1:5173}:${WEB_PORT:-5173}"
