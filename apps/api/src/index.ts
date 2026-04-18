@@ -9,6 +9,12 @@ import { verifyApiKeyToken } from './auth/api-key.js';
 import type { RequestContext } from './auth/rbac.js';
 import { verifyToken } from './auth/security.js';
 
+const DEFAULT_JWT_SECRET = 'change-me';
+if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
+  console.error('Refusing to start: JWT_SECRET must be set to a non-default value in production.');
+  process.exit(1);
+}
+
 await connectDb();
 await migrateEntryNames();
 

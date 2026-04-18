@@ -1,0 +1,70 @@
+# Production-style stack: pull pre-built images from GHCR (see docs/SELF_HOSTING.md).
+# Copy ../.env.example to ../.env, set NOTECMS_*_IMAGE, JWT_SECRET, and web PUBLIC_URL / NOTECMS_GRAPHQL_URL.
+
+services:
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    image: ${NOTECMS_API_IMAGE}
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      NODE_ENV: production
+      MONGO_URI: ${MONGO_URI:-mongodb://mongo:27017/notecms}
+      API_PORT: ${API_PORT:-4000}
+      ASSET_LOCAL_ROOT: ${ASSET_LOCAL_ROOT:-/data/assets}
+      ASSET_STORAGE_DRIVER: ${ASSET_STORAGE_DRIVER:-local}
+      ASSET_MAX_UPLOAD_BYTES: ${ASSET_MAX_UPLOAD_BYTES:-10000000}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    volumes:
+      - api_assets:/data/assets
+    ports:
+      - "${API_PUBLISH_PORT:-127.0.0.1:4000}:4000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- --header='content-type: application/json' --post-data='{\"query\":\"{__typename}\"}' http://localhost:4000/graphql >/dev/null || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  web:
+    image: ${NOTECMS_WEB_IMAGE}
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      GRAPHQL_PATH: ${GRAPHQL_PATH:-/graphql}
+      NOTECMS_GRAPHQL_URL: ${NOTECMS_GRAPHQL_URL:-}
+      PORT: ${WEB_PORT:-5173}
+    ports:
+      - "${WEB_PUBLISH_PORT:-127.0.0.1:5173}:${WEB_PORT:-5173}"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "wget --spider -q http://127.0.0.1:$${PORT:-5173}/ || exit 1",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongodb_data:
+  api_assets:

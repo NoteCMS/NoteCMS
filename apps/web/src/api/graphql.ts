@@ -1,7 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:4000/graphql';
+import { getGraphqlEndpoint } from '@/lib/graphql-endpoint.js';
 
 export async function gqlRequest<T>(token: string, query: string, variables?: Record<string, unknown>): Promise<T> {
-  const response = await fetch(API_URL, {
+  const response = await fetch(getGraphqlEndpoint(), {
     method: 'POST',
     headers: {
       'content-type': 'application/json',

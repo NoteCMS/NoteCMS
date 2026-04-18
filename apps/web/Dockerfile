@@ -16,5 +16,8 @@ FROM node:22-alpine
 WORKDIR /app
 RUN npm install -g serve
 COPY --from=build /app/apps/web/dist ./dist
+COPY apps/web/docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 5173
-CMD ["serve", "-s", "dist", "-l", "5173"]
+ENV PORT=5173
+ENTRYPOINT ["/app/docker-entrypoint.sh"]

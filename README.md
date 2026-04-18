@@ -15,7 +15,8 @@ Lightweight, multi-tenant, headless CMS with an organic-styled admin UI.
 - `apps/api`: GraphQL backend
 - `packages/ui`: design tokens and reusable UI primitives
 - `packages/types`: shared field and role types
-- `infra/docker-compose.yml`: local container orchestration
+- `infra/docker-compose.yml`: local container orchestration (build from source)
+- `deploy/docker-compose.yml`: production-style stack using pre-built images from GHCR — see [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)
 
 ## Local dev (without Docker)
 
@@ -28,9 +29,9 @@ Lightweight, multi-tenant, headless CMS with an organic-styled admin UI.
 
 ## Docker
 
-Run from project root:
+**Development (build from source):** from project root, `docker compose -f infra/docker-compose.yml up --build`.
 
-- `docker compose -f infra/docker-compose.yml up --build`
+**Self-hosted install / updates** with published images: [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md).
 
 ## Demo credentials
 
