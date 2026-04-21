@@ -114,7 +114,7 @@ function isFieldVisibleForEntryData(field: FieldDefinition, data: Record<string,
 const baseFieldSchema = z.object({
   key: z.string().min(1),
   label: z.string().min(1),
-  type: z.enum(['text', 'textarea', 'wysiwyg', 'url', 'number', 'boolean', 'date', 'select', 'repeater', 'image']),
+  type: z.enum(['text', 'textarea', 'wysiwyg', 'url', 'number', 'boolean', 'date', 'select', 'repeater', 'image', 'entries']),
   required: z.boolean().optional(),
   config: z.record(z.string(), z.unknown()).optional(),
 });
@@ -147,12 +147,34 @@ export function validateFieldDefinitions(fields: unknown): FieldDefinition[] {
       const options = field.config?.options;
       if (!Array.isArray(options) || options.length === 0) throw new Error(`Select ${field.key} requires config.options[]`);
     }
+    if (field.type === 'entries') {
+      const c = field.config ?? {};
+      const cid = typeof c.contentTypeId === 'string' ? c.contentTypeId.trim() : '';
+      if (!cid) throw new Error(`Entries field "${field.key}" requires config.contentTypeId`);
+      const mode = c.mode === 'latest' ? 'latest' : 'manual';
+      if (mode === 'latest') {
+        if (c.limit !== undefined) {
+          if (typeof c.limit !== 'number' || !Number.isFinite(c.limit) || c.limit < 1 || c.limit > 50) {
+            throw new Error(`Entries field "${field.key}": limit must be between 1 and 50`);
+          }
+        }
+      } else if (c.maxItems !== undefined) {
+        if (typeof c.maxItems !== 'number' || !Number.isFinite(c.maxItems) || c.maxItems < 1 || c.maxItems > 50) {
+          throw new Error(`Entries field "${field.key}": maxItems must be between 1 and 50`);
+        }
+      }
+      if (c.sortBy !== undefined && c.sortBy !== 'updatedAt' && c.sortBy !== 'createdAt') {
+        throw new Error(`Entries field "${field.key}": sortBy must be "updatedAt" or "createdAt"`);
+      }
+    }
   }
   return parsed;
 }
 
 function validateSingleValue(field: FieldDefinition, value: unknown, visibilityData: Record<string, unknown>) {
-  const effectiveRequired = Boolean(field.required) && isFieldVisibleForEntryData(field, visibilityData);
+  const isEntriesLatest = field.type === 'entries' && (field.config as Record<string, unknown> | undefined)?.mode === 'latest';
+  const effectiveRequired =
+    Boolean(field.required) && isFieldVisibleForEntryData(field, visibilityData) && !isEntriesLatest;
   if ((value === undefined || value === null || value === '') && effectiveRequired) {
     throw new Error(`Field ${field.key} is required`);
   }
@@ -206,6 +228,32 @@ function validateSingleValue(field: FieldDefinition, value: unknown, visibilityD
       ) {
         throw new Error(`Field ${field.key} has invalid image variant`);
       }
+      break;
+    }
+
+    case 'entries': {
+      const cfg = (field.config ?? {}) as Record<string, unknown>;
+      const mode = cfg.mode === 'latest' ? 'latest' : 'manual';
+      const maxItems =
+        typeof cfg.maxItems === 'number' && Number.isFinite(cfg.maxItems)
+          ? Math.min(50, Math.max(1, Math.floor(cfg.maxItems)))
+          : 10;
+
+      if (mode === 'latest') {
+        if (Array.isArray(value) && value.length === 0) return;
+        if (value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0)) {
+          throw new Error(
+            `Field ${field.key} uses latest mode — omit it or use an empty array in stored data (picked entries are resolved at read time).`,
+          );
+        }
+        return;
+      }
+
+      if (!Array.isArray(value)) throw new Error(`Field ${field.key} must be an array of entry ids`);
+      const ids = value.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+      if (ids.length !== value.length) throw new Error(`Field ${field.key}: use only non-empty string ids`);
+      if (ids.length > maxItems) throw new Error(`Field ${field.key}: at most ${maxItems} entries`);
+      if (effectiveRequired && ids.length === 0) throw new Error(`Field ${field.key} is required`);
       break;
     }
   }

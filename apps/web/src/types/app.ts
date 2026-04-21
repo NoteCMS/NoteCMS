@@ -1,6 +1,17 @@
 export type Role = 'owner' | 'admin' | 'editor' | 'viewer';
 export type Status = 'active' | 'disabled';
-export type FieldType = 'text' | 'textarea' | 'wysiwyg' | 'url' | 'number' | 'boolean' | 'date' | 'select' | 'repeater' | 'image';
+export type FieldType =
+  | 'text'
+  | 'textarea'
+  | 'wysiwyg'
+  | 'url'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'select'
+  | 'repeater'
+  | 'image'
+  | 'entries';
 export type ConditionOperator =
   | 'equals'
   | 'not_equals'
@@ -49,6 +60,14 @@ export type ContentField = {
     options?: string[];
     fields?: ContentField[];
     contentTypeId?: string;
+    /** `entries` field: how values are chosen. */
+    mode?: 'manual' | 'latest';
+    /** `entries` + latest: how many recent entries (1–50). */
+    limit?: number;
+    /** `entries` + manual: max selectable entries (1–50). */
+    maxItems?: number;
+    /** `entries` + latest: sort order for the automatic list. */
+    sortBy?: 'updatedAt' | 'createdAt';
     visibility?: VisibilityConfig;
   };
 };

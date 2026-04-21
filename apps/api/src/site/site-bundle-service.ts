@@ -4,6 +4,7 @@ import { AssetModel } from '../db/models/Asset.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
 import { MENU_SLOT_KEY_PATTERN, MENU_SLOT_MAX_SLOTS, SiteSettingsModel } from '../db/models/SiteSettings.js';
+import { assertReferencedEntriesBelongToSite } from '../domain/fields/entries-refs.js';
 import {
   assertReferencedContentTypesExist,
   hydrateRepeaterFields,
@@ -487,6 +488,7 @@ export async function importSiteBundleService(
         const data = (item.data && typeof item.data === 'object' ? item.data : {}) as Record<string, unknown>;
         validateEntryData(hydratedFields, data);
         await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data));
+        await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], data);
         const resolvedSlug = resolveEntrySlug(ct as { options?: Record<string, unknown> }, data, item.slug, displayName);
 
         const existing = await EntryModel.findOne(

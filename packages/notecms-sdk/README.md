@@ -4,7 +4,7 @@ Headless TypeScript SDK for [NoteCMS](https://github.com/) GraphQL: **site API k
 
 ## Security
 
-- **Never** put the API key in `VITE_*`, `NEXT_PUBLIC_*`, or any env var that is injected into the **browser** bundle. Keys are read credentials.
+- **Never** put the API key in `VITE_`*, `NEXT_PUBLIC_*`, or any env var that is injected into the **browser** bundle. Keys are read credentials.
 - Use **server-only** modules: SvelteKit `$env/static/private` / `+page.server.ts`, Next.js **server** Components / Route Handlers, Node scripts, CI.
 
 ## Developing (live CMS + fast refresh)
@@ -35,7 +35,7 @@ export const load = async () => {
 
 ### SvelteKit
 
-Prefer **`event.fetch`** in `load` if you want requests tied to the request lifecycle:
+Prefer `**event.fetch`** in `load` if you want requests tied to the request lifecycle:
 
 ```ts
 const cms = createDevNoteCmsClient({
@@ -70,13 +70,13 @@ const paths = listStaticPaths(snapshot);
 
 ### Snapshot semantics
 
-- **`snapshotFormatVersion`**: increment in the SDK when the JSON shape changes; check it in your pipeline if you cache snapshots.
+- `**snapshotFormatVersion**`: increment in the SDK when the JSON shape changes; check it in your pipeline if you cache snapshots.
 - **Ordering:** entries are **newest first** per content type (API `updatedAt` descending).
 - **Consistency:** pagination runs sequentially per type; during **concurrent CMS writes** a snapshot is **best-effort** (rare edge cases: skip/duplicate across pages).
 
 ### Privacy
 
-Entries include **`lastEditedBy.email`** as returned by the API. For public sites, consider whether that field should be stripped in your templates.
+Entries include `**lastEditedBy.email`** as returned by the API. For public sites, consider whether that field should be stripped in your templates.
 
 ## Advanced
 
@@ -85,4 +85,4 @@ Entries include **`lastEditedBy.email`** as returned by the API. For public site
 
 ## Limits
 
-The SDK caps `entries` / `listAssets` `limit` at **`MAX_GRAPHQL_PAGE_SIZE`** (200) per request to reduce accidental overload. The NoteCMS API may still accept higher values from other clients.
+The SDK caps `entries` / `listAssets` `limit` at `**MAX_GRAPHQL_PAGE_SIZE**` (200) per request to reduce accidental overload. The NoteCMS API may still accept higher values from other clients.

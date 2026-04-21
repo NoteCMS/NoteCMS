@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validateEntryData } from '../domain/fields/validator.js';
+import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
 
 describe('field validation', () => {
   it('supports nested repeater fields', () => {
@@ -106,5 +106,55 @@ describe('field validation', () => {
     expect(() => validateEntryData(fields, { rows: [{ kind: 'b' }] })).not.toThrow();
     expect(() => validateEntryData(fields, { rows: [{ kind: 'a' }] })).toThrow(/detail is required/);
     expect(() => validateEntryData(fields, { rows: [{ kind: 'a', detail: 'x' }] })).not.toThrow();
+  });
+
+  it('entries manual accepts an array of string ids within maxItems', () => {
+    const fields = [
+      {
+        key: 'related',
+        label: 'Related',
+        type: 'entries',
+        config: { contentTypeId: '507f1f77bcf86cd799439011', mode: 'manual', maxItems: 3 },
+      },
+    ] as any;
+    expect(() => validateEntryData(fields, { related: ['507f191e810c19729de860ea', '507f191e810c19729de860eb'] })).not.toThrow();
+  });
+
+  it('entries manual rejects more than maxItems', () => {
+    const fields = [
+      {
+        key: 'related',
+        label: 'Related',
+        type: 'entries',
+        config: { contentTypeId: '507f1f77bcf86cd799439011', mode: 'manual', maxItems: 2 },
+      },
+    ] as any;
+    expect(() =>
+      validateEntryData(fields, {
+        related: ['507f191e810c19729de860ea', '507f191e810c19729de860eb', '507f191e810c19729de860ec'],
+      }),
+    ).toThrow(/at most 2/);
+  });
+
+  it('entries latest allows omitted or empty array only', () => {
+    const fields = [
+      {
+        key: 'latestProjects',
+        label: 'Latest',
+        type: 'entries',
+        config: { contentTypeId: '507f1f77bcf86cd799439011', mode: 'latest', limit: 5 },
+      },
+    ] as any;
+    expect(() => validateEntryData(fields, {})).not.toThrow();
+    expect(() => validateEntryData(fields, { latestProjects: [] })).not.toThrow();
+    expect(() => validateEntryData(fields, { latestProjects: ['507f191e810c19729de860ea'] })).toThrow(/latest mode/);
+  });
+
+  it('validateFieldDefinitions rejects entries without contentTypeId', () => {
+    expect(() =>
+      validateFieldDefinitions([
+        { key: 'x', label: 'X', type: 'entries', config: { mode: 'manual' } },
+      ] as any),
+    ).toThrow(/contentTypeId/);
   });
 });

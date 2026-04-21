@@ -16,6 +16,7 @@ import { SiteModel } from '../db/models/Site.js';
 import { MENU_SLOT_KEY_PATTERN, MENU_SLOT_MAX_SLOTS, SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { ApiKeyModel } from '../db/models/ApiKey.js';
 import { UserModel } from '../db/models/User.js';
+import { assertReferencedEntriesBelongToSite, withResolvedLatestEntryFields } from '../domain/fields/entries-refs.js';
 import {
   assertReferencedContentTypesExist,
   hydrateRepeaterFields,
@@ -350,7 +351,9 @@ export const resolvers = {
           const entryId = obj[slot];
           if (!entryId) return { slot, entry: null };
           const doc = await EntryModel.findOne({ _id: entryId, siteId: parent.siteId }).lean();
-          return { slot, entry: doc ? await entryDocumentToGql(doc) : null };
+          if (!doc) return { slot, entry: null };
+          const enriched = await withResolvedLatestEntryFields(String(parent.siteId), doc as Record<string, unknown>);
+          return { slot, entry: await entryDocumentToGql(enriched) };
         }),
       );
     },
@@ -451,7 +454,8 @@ export const resolvers = {
       await requireReadSite(ctx, siteId);
       const doc = await EntryModel.findOne({ _id: id, siteId }).lean();
       if (!doc) return null;
-      return entryDocumentToGql(doc);
+      const enriched = await withResolvedLatestEntryFields(siteId, doc as Record<string, unknown>);
+      return entryDocumentToGql(enriched);
     },
     entryBySlug: async (
       _: unknown,
@@ -463,7 +467,8 @@ export const resolvers = {
       if (!ct) return null;
       const doc = await EntryModel.findOne({ siteId, contentTypeId: ct._id, slug }).lean();
       if (!doc) return null;
-      return entryDocumentToGql(doc);
+      const enriched = await withResolvedLatestEntryFields(siteId, doc as Record<string, unknown>);
+      return entryDocumentToGql(enriched);
     },
     listAssets: async (_: unknown, { siteId, query = '', limit = 30, offset = 0 }: any, ctx: RequestContext) => {
       await requireReadSite(ctx, siteId);
@@ -747,6 +752,7 @@ export const resolvers = {
       const hydratedFields = await hydrateRepeaterFields(siteId, contentType.fields as FieldDef[]);
       validateEntryData(hydratedFields as any, data as Record<string, unknown>);
       await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data as Record<string, unknown>));
+      await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], data as Record<string, unknown>);
       const resolvedSlug = resolveEntrySlug(contentType as any, data as Record<string, unknown>, slug, displayName);
       const entry = await EntryModel.create({
         siteId,
@@ -756,7 +762,9 @@ export const resolvers = {
         data,
         updatedBy: ctx.userId,
       });
-      return entryDocumentToGql(entry.toObject());
+      const raw = entry.toObject() as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(siteId, raw);
+      return entryDocumentToGql(enriched);
     },
     updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -777,6 +785,7 @@ export const resolvers = {
         const hydratedFields = await hydrateRepeaterFields(siteId, ct.fields as FieldDef[]);
         validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
         await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
+        await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], rest.data as Record<string, unknown>);
         if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
           rest.slug = resolveEntrySlug(ct as any, rest.data as Record<string, unknown>, rest.slug, nameForSlugResolution);
         }
@@ -787,7 +796,9 @@ export const resolvers = {
       }
       const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId }, { ...rest, updatedBy: ctx.userId }, { new: true });
       if (!entry) throw new Error('Entry not found');
-      return entryDocumentToGql(entry.toObject());
+      const raw = entry.toObject() as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(siteId, raw);
+      return entryDocumentToGql(enriched);
     },
     deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');

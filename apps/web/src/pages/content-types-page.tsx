@@ -103,6 +103,7 @@ const fieldTypeOptions: { value: FieldType; label: string }[] = [
   { value: 'select', label: 'select' },
   { value: 'image', label: 'image' },
   { value: 'repeater', label: 'repeater' },
+  { value: 'entries', label: 'entries' },
 ];
 
 const relationOptions = [
@@ -159,6 +160,11 @@ function cloneField(field: ContentField): ContentField {
   return {
     ...field,
     config: {
+      contentTypeId: field.config?.contentTypeId,
+      mode: field.config?.mode,
+      limit: field.config?.limit,
+      maxItems: field.config?.maxItems,
+      sortBy: field.config?.sortBy,
       options: field.config?.options ? [...field.config.options] : undefined,
       fields: field.config?.fields ? field.config.fields.map(cloneField) : undefined,
       visibility: field.config?.visibility
@@ -608,7 +614,16 @@ const SortableFieldItem = memo(function SortableFieldItem({
                               ? { ...(current.config ?? {}), options: current.config?.options ?? [] }
                               : value === 'repeater'
                                 ? { ...(current.config ?? {}), fields: current.config?.fields ?? [] }
-                                : current.config,
+                                : value === 'entries'
+                                  ? {
+                                      contentTypeId: current.config?.contentTypeId ?? '',
+                                      mode: current.config?.mode === 'latest' ? 'latest' : 'manual',
+                                      limit: typeof current.config?.limit === 'number' ? current.config.limit : 5,
+                                      maxItems:
+                                        typeof current.config?.maxItems === 'number' ? current.config.maxItems : 10,
+                                      sortBy: current.config?.sortBy === 'createdAt' ? 'createdAt' : 'updatedAt',
+                                    }
+                                  : current.config,
                         })),
                       )
                     }
@@ -1027,6 +1042,148 @@ const SortableFieldItem = memo(function SortableFieldItem({
                   Repeater rows will use fields from the selected content type.
                 </p>
               )}
+            </div>
+          ) : null}
+
+          {field.type === 'entries' ? (
+            <div className="flex flex-col gap-4 rounded-md border border-dashed p-3">
+              <Field>
+                <FieldLabel htmlFor={`entries-ref-ct-${sortableId}`}>Linked content type</FieldLabel>
+                <FieldContent>
+                  <Combobox
+                    id={`entries-ref-ct-${sortableId}`}
+                    value={field.config?.contentTypeId ?? ''}
+                    onValueChange={(next) =>
+                      setRootFields((prev) =>
+                        updateFieldAtPath(prev, fieldPath, (current) => ({
+                          ...current,
+                          config: { ...(current.config ?? {}), contentTypeId: next },
+                        })),
+                      )
+                    }
+                    options={contentTypeOptions}
+                    placeholder="Select type (e.g. projects)"
+                    searchPlaceholder="Search types…"
+                    emptyText="No other types yet"
+                    className={comboboxRowClass}
+                  />
+                </FieldContent>
+                <FieldDescription>Entries shown in the editor come from this type (same site).</FieldDescription>
+              </Field>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field>
+                  <FieldLabel htmlFor={`entries-mode-${sortableId}`}>Selection mode</FieldLabel>
+                  <FieldContent>
+                    <Combobox
+                      id={`entries-mode-${sortableId}`}
+                      value={field.config?.mode === 'latest' ? 'latest' : 'manual'}
+                      onValueChange={(next) =>
+                        setRootFields((prev) =>
+                          updateFieldAtPath(prev, fieldPath, (current) => ({
+                            ...current,
+                            config: {
+                              ...(current.config ?? {}),
+                              mode: next === 'latest' ? 'latest' : 'manual',
+                            },
+                          })),
+                        )
+                      }
+                      options={[
+                        { value: 'manual', label: 'Pick specific entries' },
+                        { value: 'latest', label: 'Latest N (automatic)' },
+                      ]}
+                      placeholder="Mode"
+                      className={comboboxRowClass}
+                    />
+                  </FieldContent>
+                </Field>
+
+                {field.config?.mode === 'latest' ? (
+                  <Field>
+                    <FieldLabel htmlFor={`entries-limit-${sortableId}`}>How many</FieldLabel>
+                    <FieldContent>
+                      <Input
+                        id={`entries-limit-${sortableId}`}
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={field.config?.limit ?? 5}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          setRootFields((prev) =>
+                            updateFieldAtPath(prev, fieldPath, (current) => ({
+                              ...current,
+                              config: {
+                                ...(current.config ?? {}),
+                                limit: Number.isFinite(n) ? Math.min(50, Math.max(1, Math.floor(n))) : 5,
+                              },
+                            })),
+                          );
+                        }}
+                      />
+                    </FieldContent>
+                  </Field>
+                ) : (
+                  <Field>
+                    <FieldLabel htmlFor={`entries-max-${sortableId}`}>Max picks</FieldLabel>
+                    <FieldContent>
+                      <Input
+                        id={`entries-max-${sortableId}`}
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={field.config?.maxItems ?? 10}
+                        onChange={(e) => {
+                          const n = Number(e.target.value);
+                          setRootFields((prev) =>
+                            updateFieldAtPath(prev, fieldPath, (current) => ({
+                              ...current,
+                              config: {
+                                ...(current.config ?? {}),
+                                maxItems: Number.isFinite(n) ? Math.min(50, Math.max(1, Math.floor(n))) : 10,
+                              },
+                            })),
+                          );
+                        }}
+                      />
+                    </FieldContent>
+                  </Field>
+                )}
+              </div>
+
+              {field.config?.mode === 'latest' ? (
+                <Field>
+                  <FieldLabel htmlFor={`entries-sort-${sortableId}`}>Sort by</FieldLabel>
+                  <FieldContent>
+                    <Combobox
+                      id={`entries-sort-${sortableId}`}
+                      value={field.config?.sortBy === 'createdAt' ? 'createdAt' : 'updatedAt'}
+                      onValueChange={(next) =>
+                        setRootFields((prev) =>
+                          updateFieldAtPath(prev, fieldPath, (current) => ({
+                            ...current,
+                            config: {
+                              ...(current.config ?? {}),
+                              sortBy: next === 'createdAt' ? 'createdAt' : 'updatedAt',
+                            },
+                          })),
+                        )
+                      }
+                      options={[
+                        { value: 'updatedAt', label: 'Last updated' },
+                        { value: 'createdAt', label: 'Created date' },
+                      ]}
+                      placeholder="Sort"
+                      className={comboboxRowClass}
+                    />
+                  </FieldContent>
+                  <FieldDescription>
+                    Resolved when the API reads this entry (not stored as ids). Exclude the current entry if it matches
+                    the linked type.
+                  </FieldDescription>
+                </Field>
+              ) : null}
             </div>
           ) : null}
         </div>
@@ -1574,6 +1731,16 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
           },
         );
       }
+      const schemaAfterSave = schemaRef.current?.getSnapshot();
+      setSavedSnapshot(
+        stableJsonStringify({
+          name: name.trim(),
+          showInSidebar,
+          sidebarLabel,
+          sidebarOrder,
+          schema: schemaAfterSave,
+        }),
+      );
       navigate('/content-types');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save content type');

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload } from 'lucide-react';
+import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload, X } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { stableJsonStringify } from '@/lib/stable-json';
@@ -13,7 +13,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Dropzone, DropZoneArea, DropzoneMessage, DropzoneTrigger, useDropzone } from '@/components/ui/dropzone';
-import { Field, FieldContent, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
@@ -100,6 +100,140 @@ function initialsFromEmail(email: string): string {
   return local.slice(0, 2).toUpperCase();
 }
 
+function pruneEntriesLatestFields(
+  fields: ContentField[],
+  data: Record<string, unknown>,
+  contentTypeFieldMap: Map<string, ContentField[]>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  for (const field of fields) {
+    if (field.type === 'entries' && field.config?.mode === 'latest') {
+      delete out[field.key];
+    }
+    if (field.type === 'repeater') {
+      const nestedFields = field.config?.contentTypeId
+        ? contentTypeFieldMap.get(field.config.contentTypeId) ?? []
+        : field.config?.fields ?? [];
+      const arr = out[field.key];
+      if (Array.isArray(arr)) {
+        out[field.key] = arr.map((item) =>
+          item && typeof item === 'object' && !Array.isArray(item)
+            ? pruneEntriesLatestFields(nestedFields, item as Record<string, unknown>, contentTypeFieldMap)
+            : item,
+        );
+      }
+    }
+  }
+  return out;
+}
+
+function EntriesFieldInput({
+  fieldId,
+  field,
+  value,
+  onChange,
+  entriesByTypeId,
+  contentTypes,
+  currentEntryId,
+}: {
+  fieldId: string;
+  field: ContentField;
+  value: unknown;
+  onChange: (next: string[]) => void;
+  entriesByTypeId: Record<string, Entry[]>;
+  contentTypes: ContentType[];
+  currentEntryId?: string;
+}) {
+  const refCtId = field.config?.contentTypeId ?? '';
+  const mode = field.config?.mode === 'latest' ? 'latest' : 'manual';
+  const limit = typeof field.config?.limit === 'number' ? Math.min(50, Math.max(1, field.config.limit)) : 5;
+  const maxItems = typeof field.config?.maxItems === 'number' ? Math.min(50, Math.max(1, field.config.maxItems)) : 10;
+  const sortLabel = field.config?.sortBy === 'createdAt' ? 'created date' : 'last update';
+
+  const refCt = contentTypes.find((c) => c.id === refCtId);
+  const candidates = (entriesByTypeId[refCtId] ?? []).filter((e) => e.id !== currentEntryId);
+  const selectedIds = Array.isArray(value)
+    ? (value as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    : [];
+
+  if (mode === 'latest') {
+    return (
+      <FieldDescription>
+        Shows the <span className="font-medium text-foreground">{limit}</span> most recent{' '}
+        {refCt?.name ?? 'entries'} (by {sortLabel}). Nothing to pick here — the API fills entry ids when this entry is
+        loaded.
+      </FieldDescription>
+    );
+  }
+
+  const typeName = refCt?.name ?? 'linked content type';
+  const addOptions = candidates
+    .filter((e) => !selectedIds.includes(e.id))
+    .map((e) => ({ value: e.id, label: e.name }));
+
+  return (
+    <>
+      <FieldDescription>
+        Pick up to {maxItems} {maxItems === 1 ? 'entry' : 'entries'} from the “{typeName}” type (same site). Search
+        below and add one at a time.
+      </FieldDescription>
+
+      {selectedIds.length > 0 ? (
+        <div
+          role="list"
+          aria-label="Selected entries"
+          className="flex flex-wrap gap-1.5 rounded-2xl border border-border/80 bg-muted/25 px-2 py-2"
+        >
+          {selectedIds.map((id) => {
+            const entryRow = candidates.find((x) => x.id === id);
+            return (
+              <Badge
+                key={id}
+                variant="outline"
+                className="h-7 max-w-full gap-1 border-input pr-0.5 pl-2 font-normal shadow-none"
+              >
+                <span className="max-w-[min(18rem,100%)] truncate">{entryRow?.name ?? id}</span>
+                <button
+                  type="button"
+                  className="rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                  aria-label={`Remove ${entryRow?.name ?? id}`}
+                  onClick={() => onChange(selectedIds.filter((x) => x !== id))}
+                >
+                  <X className="size-3.5 shrink-0" />
+                </button>
+              </Badge>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {selectedIds.length < maxItems ? (
+        <Combobox
+          key={`pick-${field.key}-${selectedIds.join('|')}`}
+          id={fieldId}
+          value=""
+          onValueChange={(id) => {
+            if (!id || selectedIds.includes(id)) return;
+            if (selectedIds.length >= maxItems) return;
+            onChange([...selectedIds, id]);
+          }}
+          options={addOptions}
+          placeholder="Select entry to add"
+          searchPlaceholder="Search entries…"
+          emptyText={
+            refCtId
+              ? `No “${typeName}” entries yet — add one in that type first.`
+              : 'Link a content type on the schema first.'
+          }
+          className="w-full"
+        />
+      ) : (
+        <FieldDescription>Maximum selections reached ({maxItems}).</FieldDescription>
+      )}
+    </>
+  );
+}
+
 function formatRowSummaryValue(value: unknown): string {
   if (value === null || value === undefined) return '';
   if (typeof value === 'string') return value.trim();
@@ -114,6 +248,9 @@ type FieldListProps = {
   siteId: string;
   assets: Asset[];
   contentTypeFieldMap: Map<string, ContentField[]>;
+  contentTypes: ContentType[];
+  entriesByTypeId: Record<string, Entry[]>;
+  currentEntryId?: string;
   internalUrlSuggestionGroups: Array<{ label: string; options: Array<{ value: string; label: string }> }>;
   onAssetsChanged: () => Promise<void>;
   fields: ContentField[];
@@ -461,6 +598,9 @@ function FieldList({
   siteId,
   assets,
   contentTypeFieldMap,
+  contentTypes,
+  entriesByTypeId,
+  currentEntryId,
   internalUrlSuggestionGroups,
   onAssetsChanged,
   fields,
@@ -592,6 +732,9 @@ function FieldList({
                               siteId={siteId}
                               assets={assets}
                               contentTypeFieldMap={contentTypeFieldMap}
+                              contentTypes={contentTypes}
+                              entriesByTypeId={entriesByTypeId}
+                              currentEntryId={currentEntryId}
                               internalUrlSuggestionGroups={internalUrlSuggestionGroups}
                               onAssetsChanged={onAssetsChanged}
                               fields={nestedFields}
@@ -621,6 +764,31 @@ function FieldList({
                   <Plus className="h-4 w-4" />
                   Add row
                 </Button>
+              </ItemContent>
+            </Item>
+          );
+        }
+
+        if (field.type === 'entries') {
+          const fieldId = `field-${field.key}`;
+          const entriesMode = field.config?.mode === 'latest' ? 'latest' : 'manual';
+          return (
+            <Item key={field.key} variant="muted" className="w-full">
+              <ItemContent className="flex w-full flex-col gap-3">
+                <Field>
+                  <FieldLabel htmlFor={entriesMode === 'manual' ? fieldId : undefined}>{field.label}</FieldLabel>
+                </Field>
+                <div className="flex flex-col gap-3">
+                  <EntriesFieldInput
+                    fieldId={fieldId}
+                    field={field}
+                    value={fieldValue}
+                    onChange={(next) => onChange({ ...value, [field.key]: next })}
+                    entriesByTypeId={entriesByTypeId}
+                    contentTypes={contentTypes}
+                    currentEntryId={currentEntryId}
+                  />
+                </div>
               </ItemContent>
             </Item>
           );
@@ -713,6 +881,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [slug, setSlug] = useState('');
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
 
   const selectedType = useMemo(() => contentTypes.find((contentType) => contentType.id === selectedTypeId) ?? null, [contentTypes, selectedTypeId]);
   const requiresSlug = Boolean(selectedType?.options?.hasSlug);
@@ -849,6 +1018,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
+      setSavedSnapshot(null);
       return;
     }
     if (entryId === 'new') {
@@ -856,15 +1026,61 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
+      setSavedSnapshot(stableJsonStringify({ entryName: '', slug: '', data: {} }));
       return;
     }
-    const entry = entries.find((item) => item.id === entryId);
-    if (!entry) return;
-    setEntryName(entry.name ?? '');
-    setSlug(entry.slug ?? '');
-    setIsSlugManuallyEdited(false);
-    setData((entry.data ?? {}) as Record<string, unknown>);
-  }, [entryId, entries]);
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await gqlRequest<{
+          entry: { id: string; name: string; slug: string | null; data: Record<string, unknown> | null } | null;
+        }>(
+          token,
+          'query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ id name slug data } }',
+          { id: entryId, siteId: workspaceSiteId },
+        );
+        if (cancelled || !res.entry) return;
+        setEntryName(res.entry.name ?? '');
+        setSlug(res.entry.slug ?? '');
+        setIsSlugManuallyEdited(false);
+        const nextData = (res.entry.data ?? {}) as Record<string, unknown>;
+        setData(nextData);
+        setSavedSnapshot(
+          stableJsonStringify({
+            entryName: (res.entry.name ?? '').trim(),
+            slug: res.entry.slug ?? '',
+            data: nextData,
+          }),
+        );
+        setEntries((prev) => {
+          const exists = prev.some((e) => e.id === res.entry!.id);
+          if (!exists) return [...prev, res.entry as Entry];
+          return prev.map((e) => (e.id === res.entry!.id ? ({ ...e, ...res.entry } as Entry) : e));
+        });
+      } catch {
+        if (cancelled) return;
+        const entry = entries.find((item) => item.id === entryId);
+        if (!entry) return;
+        setEntryName(entry.name ?? '');
+        setSlug(entry.slug ?? '');
+        setIsSlugManuallyEdited(false);
+        const fallbackData = (entry.data ?? {}) as Record<string, unknown>;
+        setData(fallbackData);
+        setSavedSnapshot(
+          stableJsonStringify({
+            entryName: (entry.name ?? '').trim(),
+            slug: entry.slug ?? '',
+            data: fallbackData,
+          }),
+        );
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid re-fetch when `entries` list refreshes (would reset the form).
+  }, [entryId, workspaceSiteId, token]);
 
   useEffect(() => {
     if (!requiresSlug || entryId !== 'new' || isSlugManuallyEdited) return;
@@ -878,10 +1094,16 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   }, [requiresSlug, entryId, entryName, isSlugManuallyEdited]);
 
   async function handleSaveEntry() {
-    if (!workspaceSiteId || !selectedTypeId) return;
+    if (!workspaceSiteId || !selectedTypeId || !selectedType) return;
     setIsSaving(true);
     setError('');
+    const payloadData = pruneEntriesLatestFields(
+      selectedType.fields ?? [],
+      data,
+      contentTypeFieldMap,
+    );
     try {
+      let savedEntryId: string;
       if (entryId && entryId !== 'new') {
         const response = await gqlRequest<{ updateEntry: { id: string } }>(
           token,
@@ -891,10 +1113,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             siteId: workspaceSiteId,
             name: entryName.trim(),
             slug: requiresSlug ? slug : null,
-            data,
+            data: payloadData,
           },
         );
-        navigate(`${basePath}/${response.updateEntry.id}`, { replace: true });
+        savedEntryId = response.updateEntry.id;
       } else {
         const response = await gqlRequest<{ createEntry: { id: string } }>(
           token,
@@ -904,11 +1126,41 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             contentTypeId: selectedTypeId,
             name: entryName.trim(),
             slug: requiresSlug ? slug : null,
-            data,
+            data: payloadData,
           },
         );
-        navigate(`${basePath}/${response.createEntry.id}`, { replace: true });
+        savedEntryId = response.createEntry.id;
       }
+
+      const refreshed = await gqlRequest<{
+        entry: { id: string; name: string; slug: string | null; data: Record<string, unknown> | null } | null;
+      }>(
+        token,
+        'query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ id name slug data } }',
+        { id: savedEntryId, siteId: workspaceSiteId },
+      );
+      if (!refreshed.entry) {
+        throw new Error('Entry saved but could not reload it for the editor.');
+      }
+      const r = refreshed.entry;
+      const nextData = (r.data ?? {}) as Record<string, unknown>;
+      setEntryName(r.name ?? '');
+      setSlug(r.slug ?? '');
+      setData(nextData);
+      setSavedSnapshot(
+        stableJsonStringify({
+          entryName: (r.name ?? '').trim(),
+          slug: r.slug ?? '',
+          data: nextData,
+        }),
+      );
+      setEntries((prev) => {
+        const exists = prev.some((e) => e.id === r.id);
+        if (!exists) return [...prev, r as Entry];
+        return prev.map((e) => (e.id === r.id ? ({ ...e, ...r } as Entry) : e));
+      });
+
+      navigate(`${basePath}/${savedEntryId}`, { replace: true });
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
     } catch (saveError) {
@@ -1065,8 +1317,6 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
 
-  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-
   const currentSnapshot = useMemo(
     () =>
       stableJsonStringify({
@@ -1076,28 +1326,6 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       }),
     [entryName, slug, data],
   );
-
-  useLayoutEffect(() => {
-    if (!isDetailView || !entryId) {
-      setSavedSnapshot(null);
-      return;
-    }
-    if (entryId === 'new') {
-      setSavedSnapshot(stableJsonStringify({ entryName: '', slug: '', data: {} }));
-      return;
-    }
-    if (!editingEntry) {
-      setSavedSnapshot(null);
-      return;
-    }
-    setSavedSnapshot(
-      stableJsonStringify({
-        entryName: (editingEntry.name ?? '').trim(),
-        slug: editingEntry.slug ?? '',
-        data: (editingEntry.data ?? {}) as Record<string, unknown>,
-      }),
-    );
-  }, [isDetailView, entryId, editingEntry]);
 
   const isDirty = Boolean(
     isDetailView && savedSnapshot !== null && currentSnapshot !== savedSnapshot,
@@ -1120,48 +1348,59 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
             {selectedType ? (
               <>
-                <Field>
-                  <FieldLabel htmlFor="entry-display-name">Display name</FieldLabel>
-                  <FieldContent>
-                    <Input
-                      id="entry-display-name"
-                      value={entryName}
-                      onChange={(event) => setEntryName(event.target.value)}
-                      placeholder="Visible title in the admin and lists"
-                      autoComplete="off"
-                    />
-                  </FieldContent>
-                </Field>
-                {requiresSlug ? (
-                  <Field>
-                    <FieldLabel htmlFor="entry-slug">Slug</FieldLabel>
-                    <FieldContent>
-                      <InputGroup>
-                        <InputGroupAddon>
-                          <InputGroupText>
-                            <Globe />
-                            {`https://${activeSite?.url ?? 'site'}/`}
-                          </InputGroupText>
-                        </InputGroupAddon>
-                        <InputGroupInput
-                          id="entry-slug"
-                          className="-translate-y-px"
-                          value={slug}
-                          onChange={(event) => {
-                            setIsSlugManuallyEdited(true);
-                            setSlug(event.target.value);
-                          }}
-                          placeholder="homepage-hero"
+                <Item variant="muted" className="w-full">
+                  <ItemContent className="flex w-full flex-col gap-3">
+                    <Field>
+                      <FieldLabel htmlFor="entry-display-name">Display name</FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="entry-display-name"
+                          value={entryName}
+                          onChange={(event) => setEntryName(event.target.value)}
+                          placeholder="Visible title in the admin and lists"
+                          autoComplete="off"
                         />
-                      </InputGroup>
-                    </FieldContent>
-                  </Field>
+                      </FieldContent>
+                    </Field>
+                  </ItemContent>
+                </Item>
+                {requiresSlug ? (
+                  <Item variant="muted" className="w-full">
+                    <ItemContent className="flex w-full flex-col gap-3">
+                      <Field>
+                        <FieldLabel htmlFor="entry-slug">Slug</FieldLabel>
+                        <FieldContent>
+                          <InputGroup>
+                            <InputGroupAddon>
+                              <InputGroupText>
+                                <Globe />
+                                {`https://${activeSite?.url ?? 'site'}/`}
+                              </InputGroupText>
+                            </InputGroupAddon>
+                            <InputGroupInput
+                              id="entry-slug"
+                              className="-translate-y-px"
+                              value={slug}
+                              onChange={(event) => {
+                                setIsSlugManuallyEdited(true);
+                                setSlug(event.target.value);
+                              }}
+                              placeholder="homepage-hero"
+                            />
+                          </InputGroup>
+                        </FieldContent>
+                      </Field>
+                    </ItemContent>
+                  </Item>
                 ) : null}
                 <FieldList
                   token={token}
                   siteId={workspaceSiteId}
                   assets={assets}
                   contentTypeFieldMap={contentTypeFieldMap}
+                  contentTypes={contentTypes}
+                  entriesByTypeId={entriesByTypeId}
+                  currentEntryId={entryId && entryId !== 'new' ? entryId : undefined}
                   internalUrlSuggestionGroups={internalUrlSuggestionGroups}
                   onAssetsChanged={loadAssets}
                   fields={selectedType.fields ?? []}
