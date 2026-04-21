@@ -4,14 +4,10 @@ import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.
 import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
 import { env } from '../config/env.js';
+import { exportSiteBundleService, importSiteBundleService } from '../site/site-bundle-service.js';
 import { getStorageAdapter } from '../assets/index.js';
-import {
-  buildImageVariants,
-  mimeForDerivativeKey,
-  resolveUploadMimeType,
-  sanitizeFilename,
-} from '../assets/image.js';
-import { normalizeStorageKey } from '../assets/storage.js';
+import { mimeForDerivativeKey } from '../assets/image.js';
+import { persistImageUpload } from '../assets/persist-image-upload.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
 import { AssetModel } from '../db/models/Asset.js';
@@ -20,13 +16,12 @@ import { SiteModel } from '../db/models/Site.js';
 import { MENU_SLOT_KEY_PATTERN, MENU_SLOT_MAX_SLOTS, SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { ApiKeyModel } from '../db/models/ApiKey.js';
 import { UserModel } from '../db/models/User.js';
+import {
+  assertReferencedContentTypesExist,
+  hydrateRepeaterFields,
+  type FieldDef,
+} from '../domain/fields/repeater-hydrate.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
-
-type FieldDef = {
-  key: string;
-  type: string;
-  config?: { fields?: FieldDef[]; contentTypeId?: string };
-};
 
 function toSlug(value: string) {
   return value
@@ -193,70 +188,6 @@ function collectImageAssetIds(fields: FieldDef[], data: Record<string, unknown>)
     }
   }
   return assetIds;
-}
-
-function collectRepeaterContentTypeIds(fields: FieldDef[]): string[] {
-  const ids: string[] = [];
-  for (const field of fields) {
-    if (field.type === 'repeater') {
-      const refId = field.config?.contentTypeId;
-      if (typeof refId === 'string' && refId) ids.push(refId);
-      const nested = (field.config?.fields ?? []) as FieldDef[];
-      ids.push(...collectRepeaterContentTypeIds(nested));
-    }
-  }
-  return ids;
-}
-
-async function assertReferencedContentTypesExist(siteId: string, fields: FieldDef[], currentContentTypeId?: string) {
-  const referencedIds = [...new Set(collectRepeaterContentTypeIds(fields))];
-  if (!referencedIds.length) return;
-  if (currentContentTypeId && referencedIds.includes(currentContentTypeId)) {
-    throw new Error('Repeater cannot reference itself');
-  }
-
-  const existing = await ContentTypeModel.find({ _id: { $in: referencedIds }, siteId }).select({ _id: 1 }).lean();
-  const existingIds = new Set(existing.map((item) => String(item._id)));
-  const missing = referencedIds.filter((id) => !existingIds.has(String(id)));
-  if (missing.length) throw new Error('One or more referenced repeater content types do not exist in this site');
-}
-
-async function hydrateRepeaterFields(siteId: string, fields: FieldDef[], visited = new Set<string>()): Promise<FieldDef[]> {
-  const hydrated: FieldDef[] = [];
-  for (const field of fields) {
-    if (field.type !== 'repeater') {
-      hydrated.push(field);
-      continue;
-    }
-
-    const contentTypeId = field.config?.contentTypeId;
-    if (typeof contentTypeId === 'string' && contentTypeId) {
-      if (visited.has(contentTypeId)) throw new Error('Circular repeater content type reference detected');
-      const referenced = await ContentTypeModel.findOne({ _id: contentTypeId, siteId }).lean();
-      if (!referenced) throw new Error('Referenced repeater content type not found');
-      visited.add(contentTypeId);
-      const nested = await hydrateRepeaterFields(siteId, referenced.fields as FieldDef[], visited);
-      visited.delete(contentTypeId);
-      hydrated.push({
-        ...field,
-        config: {
-          ...(field.config ?? {}),
-          fields: nested,
-        },
-      });
-      continue;
-    }
-
-    const nested = await hydrateRepeaterFields(siteId, ((field.config?.fields ?? []) as FieldDef[]), visited);
-    hydrated.push({
-      ...field,
-      config: {
-        ...(field.config ?? {}),
-        fields: nested,
-      },
-    });
-  }
-  return hydrated;
 }
 
 function entryContainsAsset(value: unknown, assetId: string): boolean {
@@ -548,6 +479,18 @@ export const resolvers = {
       await requireRole(ctx.userId, siteId, 'admin');
       const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
       return keys.map(formatApiKeyDoc);
+    },
+    exportSiteBundle: async (_: unknown, { siteId, options }: { siteId: string; options: Record<string, unknown> }, ctx: RequestContext) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+      return await exportSiteBundleService(siteId, {
+        siteSettings: Boolean(options.siteSettings),
+        contentTypes: Boolean(options.contentTypes),
+        contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
+          ? (options.contentTypeSlugsForEntries as string[])
+          : [],
+        assets: Boolean(options.assets),
+      });
     },
     siteSettings: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
       await requireReadSite(ctx, siteId);
@@ -858,65 +801,18 @@ export const resolvers = {
     uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'editor');
-
-      const allowed = new Set([
-        'image/jpeg',
-        'image/png',
-        'image/webp',
-        'image/gif',
-        'image/svg+xml',
-        'image/x-icon',
-        'image/vnd.microsoft.icon',
-      ]);
-
-      const original = Buffer.from(fileBase64, 'base64');
-      if (!original.byteLength) throw new Error('Empty upload');
-
-      if (original.byteLength > env.assetMaxUploadBytes) throw new Error('Upload exceeds file size limit');
-
-      const safeFilename = sanitizeFilename(filename || 'asset');
-      const effectiveMime = resolveUploadMimeType(String(mimeType ?? ''), safeFilename);
-      if (!allowed.has(effectiveMime)) throw new Error('Unsupported mime type');
-
-      const keyPrefix = normalizeStorageKey(`${siteId}/${Date.now()}-${safeFilename}`);
-      const storage = getStorageAdapter();
-      const variants = await buildImageVariants(original, effectiveMime);
-      const ext = variants.derivativeExt;
-      const derivativeMime = variants.derivativeMime;
-
-      const originalKey = `${keyPrefix}/original`;
-      const thumbKey = `${keyPrefix}/thumbnail.${ext}`;
-      const smallKey = `${keyPrefix}/small.${ext}`;
-      const mediumKey = `${keyPrefix}/medium.${ext}`;
-      const webKey = `${keyPrefix}/large.${ext}`;
-      const xlargeKey = `${keyPrefix}/xlarge.${ext}`;
-
-      await storage.put(originalKey, original, effectiveMime);
-      await storage.put(thumbKey, variants.thumbnail, derivativeMime);
-      await storage.put(smallKey, variants.small, derivativeMime);
-      await storage.put(mediumKey, variants.medium, derivativeMime);
-      await storage.put(webKey, variants.large, derivativeMime);
-      await storage.put(xlargeKey, variants.xlarge, derivativeMime);
-
-      const asset = await AssetModel.create({
+      const id = await persistImageUpload({
         siteId,
-        uploadedBy: ctx.userId,
-        filename: safeFilename,
-        mimeType: effectiveMime,
-        sizeBytes: original.byteLength,
-        width: variants.width,
-        height: variants.height,
+        userId: ctx.userId,
+        fileBase64,
+        filename,
+        mimeType,
         alt,
         title,
-        storageKeyOriginal: originalKey,
-        storageKeyWeb: webKey,
-        storageKeyThumb: thumbKey,
-        storageKeySmall: smallKey,
-        storageKeyMedium: mediumKey,
-        storageKeyXlarge: xlargeKey,
       });
-
-      return toAsset(asset.toObject());
+      const asset = await AssetModel.findById(id).lean();
+      if (!asset) throw new Error('Asset not found');
+      return toAsset(asset);
     },
     updateAssetMeta: async (_: unknown, { id, siteId, alt, title, focalX, focalY }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -1061,6 +957,22 @@ export const resolvers = {
       ).lean();
       if (!updated) throw new Error('Failed to save site settings');
       return siteSettingsDocToGql(updated);
+    },
+    importSiteBundle: async (
+      _: unknown,
+      { siteId, bundle, options }: { siteId: string; bundle: unknown; options: Record<string, unknown> },
+      ctx: RequestContext,
+    ) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, siteId, 'admin');
+      return await importSiteBundleService(siteId, ctx.userId, bundle, {
+        siteSettings: Boolean(options.siteSettings),
+        contentTypes: Boolean(options.contentTypes),
+        contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
+          ? (options.contentTypeSlugsForEntries as string[])
+          : [],
+        assets: Boolean(options.assets),
+      });
     },
   },
 };

@@ -15,6 +15,7 @@ Lightweight, multi-tenant, headless CMS with an organic-styled admin UI.
 - `apps/api`: GraphQL backend
 - `packages/ui`: design tokens and reusable UI primitives
 - `packages/types`: shared field and role types
+- `packages/notecms-sdk`: publishable headless client (`@notecms/sdk`) for static sites and server-side fetches
 - `infra/docker-compose.yml`: local container orchestration (build from source)
 - `deploy/docker-compose.yml`: production-style stack using pre-built images from GHCR — see [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md)
 

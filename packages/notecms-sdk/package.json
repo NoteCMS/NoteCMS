@@ -1,8 +1,8 @@
 {
-  "name": "@note-cms/client",
+  "name": "@notecms/sdk",
   "version": "0.1.0",
   "private": true,
-  "description": "Headless client for NoteCMS GraphQL (API key reads: content types, entries, assets).",
+  "description": "NoteCMS headless SDK: GraphQL client (API key), build snapshots, and path helpers for static sites.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,10 +15,12 @@
   "files": ["dist"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "clean": "rm -rf dist"
+    "clean": "rm -rf dist",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "engines": {
     "node": ">=20"

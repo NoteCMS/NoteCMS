@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
+import { SiteImportExportSection } from '@/components/site-import-export-section';
 import type { Asset, ContentType, Entry, Site } from '@/types/app';
 
 const ASSET_PREVIEW_GQL = `id filename mimeType variants { thumbnail web }`;
@@ -211,6 +212,7 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
     activeSite?.role === 'owner' || activeSite?.role === 'admin' || activeSite?.role === 'editor';
   const canManageSiteIdentity =
     activeSite?.role === 'owner' || activeSite?.role === 'admin';
+  const canManageBundle = activeSite?.role === 'owner' || activeSite?.role === 'admin';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -228,6 +230,7 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
   const [picker, setPicker] = useState<'logo' | 'favicon' | null>(null);
   const [entryOptions, setEntryOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [entryGroups, setEntryGroups] = useState<Array<{ label: string; options: Array<{ value: string; label: string }> }>>([]);
+  const [contentTypesForBundle, setContentTypesForBundle] = useState<Array<{ id: string; name: string; slug: string }>>([]);
 
   const logoFileRef = useRef<HTMLInputElement>(null);
   const faviconFileRef = useRef<HTMLInputElement>(null);
@@ -309,9 +312,11 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
 
       setEntryGroups(groups);
       setEntryOptions(flat);
+      setContentTypesForBundle(cts.map((ct) => ({ id: ct.id, name: ct.name, slug: ct.slug })));
     } catch {
       setEntryGroups([]);
       setEntryOptions([]);
+      setContentTypesForBundle([]);
     }
   }, [token, workspaceSiteId]);
 
@@ -905,6 +910,20 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
                   </Item>
                 )}
               </section>
+
+              {!loading && canManageBundle ? (
+                <SiteImportExportSection
+                  token={token}
+                  siteId={workspaceSiteId}
+                  siteLabel={activeSite?.name ?? 'site'}
+                  contentTypes={contentTypesForBundle}
+                  onImported={async () => {
+                    await loadSettings();
+                    await loadEntries();
+                    await onSitesChanged?.();
+                  }}
+                />
+              ) : null}
             </>
           )}
         </CardContent>

@@ -99,6 +99,21 @@ export const typeDefs = `#graphql
     config: JSON
   }
 
+  input SiteBundlePartOptions {
+    siteSettings: Boolean!
+    contentTypes: Boolean!
+    contentTypeSlugsForEntries: [String!]!
+    assets: Boolean!
+  }
+
+  type SiteImportSummary {
+    contentTypesUpserted: Int!
+    entriesCreated: Int!
+    entriesUpdated: Int!
+    assetsImported: Int!
+    siteSettingsApplied: Boolean!
+  }
+
   type Query {
     bootstrapAuthStatus: BootstrapAuthStatus!
     me: User
@@ -111,6 +126,7 @@ export const typeDefs = `#graphql
     listAssets(siteId: ID!, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID!): SiteSettings!
+    exportSiteBundle(siteId: ID!, options: SiteBundlePartOptions!): JSON!
   }
 
   type Mutation {
@@ -145,5 +161,6 @@ export const typeDefs = `#graphql
     revokeApiKey(id: ID!, siteId: ID!): Boolean!
 
     updateSiteSettings(siteId: ID!, input: SiteSettingsInput!): SiteSettings!
+    importSiteBundle(siteId: ID!, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
   }
 `;
