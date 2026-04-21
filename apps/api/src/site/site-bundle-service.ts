@@ -129,6 +129,45 @@ function collectImageAssetIds(fields: FieldDef[], data: Record<string, unknown>)
   return assetIds;
 }
 
+/** Replace source-site asset ids with ids created during bundle import (`export-{legacyId}` map). */
+function remapImageAssetIdsInData(
+  fields: FieldDef[],
+  data: Record<string, unknown>,
+  assetExportIdToNewId: Map<string, string>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...data };
+  for (const field of fields) {
+    const value = out[field.key];
+    if (field.type === 'image' && value && typeof value === 'object' && !Array.isArray(value)) {
+      const rec = { ...(value as Record<string, unknown>) };
+      const oldId = rec.assetId;
+      if (typeof oldId === 'string' && oldId.trim()) {
+        const trimmed = oldId.trim();
+        const mapped =
+          assetExportIdToNewId.get(trimmed) ??
+          assetExportIdToNewId.get(`export-${trimmed}`) ??
+          (trimmed.startsWith('export-') ? assetExportIdToNewId.get(trimmed) : undefined);
+        if (mapped) {
+          rec.assetId = mapped;
+          out[field.key] = rec;
+        } else if (assetExportIdToNewId.size > 0) {
+          // Bundle included an assets section but this file was missing or skipped — drop the ref so import can continue.
+          delete out[field.key];
+        }
+      }
+    }
+    if (field.type === 'repeater' && Array.isArray(value)) {
+      const nestedFields = (field.config?.fields ?? []) as FieldDef[];
+      out[field.key] = (value as unknown[]).map((item) =>
+        item && typeof item === 'object' && !Array.isArray(item)
+          ? remapImageAssetIdsInData(nestedFields, item as Record<string, unknown>, assetExportIdToNewId)
+          : item,
+      );
+    }
+  }
+  return out;
+}
+
 async function assertAssetsBelongToSite(siteId: string, assetIds: string[]) {
   if (!assetIds.length) return;
   const assets = await AssetModel.find({ _id: { $in: assetIds }, siteId }).lean();
@@ -485,7 +524,8 @@ export async function importSiteBundleService(
 
       for (const item of group.items) {
         const displayName = normalizeEntryName(item.name);
-        const data = (item.data && typeof item.data === 'object' ? item.data : {}) as Record<string, unknown>;
+        const rawData = (item.data && typeof item.data === 'object' ? item.data : {}) as Record<string, unknown>;
+        const data = remapImageAssetIdsInData(hydratedFields as FieldDef[], rawData, assetExportIdToNewId);
         validateEntryData(hydratedFields, data);
         await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data));
         await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], data);
