@@ -1,4 +1,5 @@
 import {
+  API_KEY_INFO,
   CONTENT_TYPES,
   ENTRIES,
   ENTRY,
@@ -15,7 +16,10 @@ export type NoteCmsClientConfig = {
   endpoint: string;
   /** Site-scoped API key (`ncms_v1_…`). Never use `VITE_*` env vars for this — see README. */
   apiKey: string;
-  siteId: string;
+  /**
+   * Workspace id. Optional when using a site API key — resolved via `apiKeyInfo` on first request.
+   */
+  siteId?: string;
   /** How to send the API key (default: `Authorization: Bearer`). */
   authHeader?: 'bearer' | 'x-api-key';
   /**
@@ -32,8 +36,12 @@ export type NoteCmsClientConfig = {
 };
 
 export type NoteCmsClient = {
+  /** Workspace id after resolution (from config or API key). */
   readonly siteId: string;
   readonly endpoint: string;
+
+  /** When `siteId` was omitted from config, resolves it via `apiKeyInfo` (safe to call multiple times). */
+  ensureSiteId(): Promise<string>;
 
   /** Raw GraphQL POST; same auth as other methods. */
   query<TData>(query: string, variables?: Record<string, unknown>): Promise<TData>;
@@ -58,42 +66,68 @@ function clampPageSize(requested: number | undefined, fallback: number): number 
  *
  * @example Server-only (SvelteKit `+page.server.ts`):
  * ```ts
- * import { NOTECMS_GRAPHQL_URL, NOTECMS_API_KEY, NOTECMS_SITE_ID } from '$env/static/private';
+ * import { NOTECMS_GRAPHQL_URL, NOTECMS_API_KEY } from '$env/static/private';
  * import { createNoteCmsClient } from '@notecms/sdk';
  *
  * const cms = createNoteCmsClient({
  *   endpoint: NOTECMS_GRAPHQL_URL,
  *   apiKey: NOTECMS_API_KEY,
- *   siteId: NOTECMS_SITE_ID,
  *   fetchInit: { cache: 'no-store' },
  * });
  * const page = await cms.entryBySlug('pages', 'home');
  * ```
  */
 export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient {
-  const { endpoint, apiKey, siteId, authHeader = 'bearer', fetchInit } = config;
+  const { endpoint, apiKey, authHeader = 'bearer', fetchInit } = config;
   const fetchImpl = config.fetch ?? globalThis.fetch;
+  let resolvedSiteId = config.siteId?.trim() ? config.siteId.trim() : '';
+  let siteIdPromise: Promise<string> | null = null;
 
   async function query<TData>(queryString: string, variables?: Record<string, unknown>): Promise<TData> {
     return postGraphql<TData>(endpoint, { query: queryString, variables }, { apiKey, fetchImpl, authHeader, fetchInit });
   }
 
+  async function ensureSiteId(): Promise<string> {
+    if (resolvedSiteId) return resolvedSiteId;
+    if (!siteIdPromise) {
+      siteIdPromise = (async () => {
+        const data = await query<{ apiKeyInfo: { siteId: string } }>(API_KEY_INFO);
+        resolvedSiteId = data.apiKeyInfo.siteId;
+        return resolvedSiteId;
+      })();
+    }
+    return siteIdPromise;
+  }
+
+  function siteVar(): string {
+    if (!resolvedSiteId) {
+      throw new Error('Site id not ready; call ensureSiteId() first or pass siteId in config');
+    }
+    return resolvedSiteId;
+  }
+
   return {
-    siteId,
+    get siteId() {
+      return siteVar();
+    },
     endpoint,
+
+    ensureSiteId,
 
     query,
 
     async contentTypes() {
-      const data = await query<{ contentTypes: ContentType[] }>(CONTENT_TYPES, { siteId });
+      const sid = await ensureSiteId();
+      const data = await query<{ contentTypes: ContentType[] }>(CONTENT_TYPES, { siteId: sid });
       return data.contentTypes;
     },
 
     async entries(contentTypeId, options = {}) {
+      const sid = await ensureSiteId();
       const limit = clampPageSize(options.limit, 50);
       const offset = Math.max(0, options.offset ?? 0);
       const data = await query<{ entries: Entry[] }>(ENTRIES, {
-        siteId,
+        siteId: sid,
         contentTypeId,
         limit,
         offset,
@@ -102,13 +136,15 @@ export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient 
     },
 
     async entry(id) {
-      const data = await query<{ entry: Entry | null }>(ENTRY, { siteId, id });
+      const sid = await ensureSiteId();
+      const data = await query<{ entry: Entry | null }>(ENTRY, { siteId: sid, id });
       return data.entry ?? null;
     },
 
     async entryBySlug(contentTypeSlug, slug) {
+      const sid = await ensureSiteId();
       const data = await query<{ entryBySlug: Entry | null }>(ENTRY_BY_SLUG, {
-        siteId,
+        siteId: sid,
         contentTypeSlug,
         slug,
       });
@@ -116,10 +152,11 @@ export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient 
     },
 
     async listAssets(options = {}) {
+      const sid = await ensureSiteId();
       const limit = clampPageSize(options.limit, 30);
       const offset = Math.max(0, options.offset ?? 0);
       const data = await query<{ listAssets: Asset[] }>(LIST_ASSETS, {
-        siteId,
+        siteId: sid,
         query: options.query ?? '',
         limit,
         offset,
@@ -128,7 +165,8 @@ export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient 
     },
 
     async siteSettings() {
-      const data = await query<{ siteSettings: SiteSettings }>(SITE_SETTINGS, { siteId });
+      const sid = await ensureSiteId();
+      const data = await query<{ siteSettings: SiteSettings }>(SITE_SETTINGS, { siteId: sid });
       return data.siteSettings;
     },
   };

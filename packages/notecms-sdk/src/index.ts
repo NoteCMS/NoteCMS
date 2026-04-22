@@ -17,6 +17,7 @@ export {
   type StaticPathDescriptor,
 } from './paths.js';
 export {
+  API_KEY_INFO,
   CONTENT_TYPES,
   ENTRIES,
   ENTRY,

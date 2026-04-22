@@ -19,7 +19,8 @@ export const load = async () => {
   const cms = createDevNoteCmsClient({
     endpoint: NOTECMS_GRAPHQL_URL,
     apiKey: NOTECMS_API_KEY,
-    siteId: NOTECMS_SITE_ID,
+    // siteId is optional with a site API key — resolved via `apiKeyInfo` on first request
+    ...(NOTECMS_SITE_ID ? { siteId: NOTECMS_SITE_ID } : {}),
   });
   const page = await cms.entryBySlug('pages', 'home');
   return { page };
@@ -27,6 +28,8 @@ export const load = async () => {
 ```
 
 `createDevNoteCmsClient` sets `fetchInit: { cache: 'no-store' }` so **navigating or reloading** picks up CMS edits without a full static rebuild.
+
+Use `await cms.ensureSiteId()` if you need the workspace id before any other call. The synchronous `cms.siteId` getter works after the id has been resolved.
 
 **Path helpers in dev:** `defaultPathForEntry` and `contentTypeHasSlug` need a `ContentType` (for `options.hasSlug`). Either:
 
@@ -60,7 +63,7 @@ import { createNoteCmsClient, fetchBuildSnapshot, listStaticPaths } from '@notec
 const cms = createNoteCmsClient({
   endpoint: process.env.NOTECMS_GRAPHQL_URL!,
   apiKey: process.env.NOTECMS_API_KEY!,
-  siteId: process.env.NOTECMS_SITE_ID!,
+  siteId: process.env.NOTECMS_SITE_ID, // optional when the key is site-scoped
 });
 
 const snapshot = await fetchBuildSnapshot(cms, { includeAssets: true });
@@ -78,9 +81,13 @@ const paths = listStaticPaths(snapshot);
 
 Entries include `**lastEditedBy.email`** as returned by the API. For public sites, consider whether that field should be stripped in your templates.
 
+## MCP (AI agents)
+
+The API serves **Model Context Protocol** over **Streamable HTTP** at **`/mcp`** (same host as GraphQL). Configure your MCP client with that URL and the same `Authorization: Bearer <api_key>` or `x-api-key` header. Keys are **scoped**: grant only the permissions the agent needs. See the API package doc `apps/api/docs/mcp-and-scoped-keys.md` in the NoteCMS repo.
+
 ## Advanced
 
-- `postGraphql`, raw query strings in `operations.ts`, and `client.query()` are available for custom selections.
+- `postGraphql`, raw query strings in `operations.ts` (including `API_KEY_INFO`), and `client.query()` are available for custom selections.
 - If the API ever returns **HTTP 200 with both `data` and `errors`**, the SDK **throws `NoteCmsError`** after GraphQL errors (partial `data` is not returned). Use `postGraphql` with a custom handler if you need partial success semantics.
 
 ## Limits

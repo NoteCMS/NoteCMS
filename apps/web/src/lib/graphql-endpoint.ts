@@ -15,6 +15,15 @@ export function getGraphqlEndpoint(): string {
     return import.meta.env.VITE_API_URL ?? 'http://localhost:4000/graphql';
   }
 
+  /** Same-origin `/graphql` when Vite proxies to the API (e.g. portless + `dev:portless`). */
+  if (import.meta.env.VITE_USE_GRAPHQL_PROXY === 'true') {
+    const u = new URL(window.location.href);
+    u.pathname = '/graphql';
+    u.search = '';
+    u.hash = '';
+    return u.toString();
+  }
+
   const full = window.__NOTECMS_GRAPHQL_URL__;
   if (full && full.length > 0) return full;
 

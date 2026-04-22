@@ -350,6 +350,7 @@ export async function exportSiteBundleService(
     const portable = await buildPortableMenuSlots(siteId, menuObj);
     bundle.siteSettings = {
       siteTitle: doc?.siteTitle != null ? String(doc.siteTitle).trim() || null : null,
+      mcpEnabled: doc?.mcpEnabled !== false,
       menuSlots: portable,
       logoAssetExportId: doc?.logoAssetId ? `export-${String(doc.logoAssetId)}` : null,
       faviconAssetExportId: doc?.faviconAssetId ? `export-${String(doc.faviconAssetId)}` : null,
@@ -564,6 +565,7 @@ export async function importSiteBundleService(
   if (options.siteSettings && bundle.siteSettings && typeof bundle.siteSettings === 'object') {
     const ss = bundle.siteSettings as {
       siteTitle?: string | null;
+      mcpEnabled?: boolean;
       menuSlots?: PortableMenuSlot[];
       logoAssetExportId?: string | null;
       faviconAssetExportId?: string | null;
@@ -580,6 +582,10 @@ export async function importSiteBundleService(
     if (Object.prototype.hasOwnProperty.call(ss, 'siteTitle')) {
       $set.siteTitle =
         ss.siteTitle === null || ss.siteTitle === undefined ? null : String(ss.siteTitle).trim() || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(ss, 'mcpEnabled')) {
+      $set.mcpEnabled = Boolean(ss.mcpEnabled);
     }
 
     const existingSs = await SiteSettingsModel.findOne({ siteId }).lean();

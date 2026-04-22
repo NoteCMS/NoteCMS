@@ -5,7 +5,8 @@ dotenv.config();
 
 export const env = {
   nodeEnv: process.env.NODE_ENV ?? 'development',
-  port: Number(process.env.API_PORT ?? 4000),
+  /** `PORT` is set by tools like [portless](https://github.com/vercel-labs/portless); `API_PORT` overrides when set. */
+  port: Number(process.env.API_PORT ?? process.env.PORT ?? 4000),
   mongoUri: process.env.MONGO_URI ?? 'mongodb://localhost:27017/notecms',
   jwtSecret: process.env.JWT_SECRET ?? 'change-me',
   /** If set, API creates this admin on startup (no password until setInitialPassword). */

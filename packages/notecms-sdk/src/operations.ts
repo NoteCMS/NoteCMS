@@ -1,5 +1,16 @@
 /** Stable operation strings — extend the selection set if you need more fields in your app. */
 
+export const API_KEY_INFO = /* GraphQL */ `
+  query NoteCmsApiKeyInfo {
+    apiKeyInfo {
+      siteId
+      scopes
+      name
+      keyHint
+    }
+  }
+`;
+
 export const CONTENT_TYPES = /* GraphQL */ `
   query NoteCmsContentTypes($siteId: ID!) {
     contentTypes(siteId: $siteId) {
@@ -107,6 +118,7 @@ export const SITE_SETTINGS = /* GraphQL */ `
       logoAssetId
       faviconAssetId
       siteTitle
+      mcpEnabled
       menuEntries
       logo {
         id

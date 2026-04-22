@@ -1,8 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ApiKeyModel } from '../db/models/ApiKey.js';
 import { env } from '../config/env.js';
+import { LEGACY_API_KEY_SCOPES, scopesRequireActingUser } from './api-key-scopes.js';
 
 const PREFIX = 'ncms_v1_';
+
+export type VerifiedApiKey = {
+  id: string;
+  siteId: string;
+  scopes: string[];
+  actingUserId?: string;
+};
 
 export function hashApiKeySecret(secret: string): string {
   return createHash('sha256').update(`${env.jwtSecret}:apikey:${secret}`).digest('hex');
@@ -29,7 +37,7 @@ export function parseApiKeyToken(raw: string): { id: string; secret: string } | 
   return { id, secret };
 }
 
-export async function verifyApiKeyToken(raw: string): Promise<{ id: string; siteId: string } | null> {
+export async function verifyApiKeyToken(raw: string): Promise<VerifiedApiKey | null> {
   const parsed = parseApiKeyToken(raw.trim());
   if (!parsed) return null;
 
@@ -42,5 +50,15 @@ export async function verifyApiKeyToken(raw: string): Promise<{ id: string; site
 
   void ApiKeyModel.updateOne({ _id: doc._id }, { $set: { lastUsedAt: new Date() } }).exec();
 
-  return { id: String(doc._id), siteId: String(doc.siteId) };
+  const scopes =
+    Array.isArray(doc.scopes) && doc.scopes.length > 0
+      ? [...doc.scopes]
+      : [...LEGACY_API_KEY_SCOPES];
+
+  const actingUserId = doc.actingUserId ? String(doc.actingUserId) : undefined;
+  if (scopesRequireActingUser(scopes) && !actingUserId) {
+    return null;
+  }
+
+  return { id: String(doc._id), siteId: String(doc.siteId), scopes, actingUserId };
 }

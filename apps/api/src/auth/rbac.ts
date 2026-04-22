@@ -1,9 +1,8 @@
 import { MembershipModel, type Role } from '../db/models/Membership.js';
+import { apiKeyHasScope, type ApiKeyScope } from './api-key-scopes.js';
+import type { RequestContext } from './types.js';
 
-export type RequestContext = {
-  userId?: string;
-  apiKey?: { id: string; siteId: string };
-};
+export type { RequestContext, ApiKeyPrincipal } from './types.js';
 
 const rank: Record<Role, number> = {
   viewer: 1,
@@ -19,10 +18,15 @@ export async function requireRole(userId: string, siteId: string, minRole: Role)
   return membership;
 }
 
-/** Public / headless read access: JWT (viewer+) or API key scoped to the same site. */
-export async function requireReadSite(ctx: RequestContext, siteId: string) {
+/**
+ * Site access for reads. JWT: viewer+ on site. API key: same site + optional scope check.
+ */
+export async function requireReadSite(ctx: RequestContext, siteId: string, apiKeyReadScope?: ApiKeyScope) {
   if (ctx.apiKey) {
     if (String(ctx.apiKey.siteId) !== String(siteId)) throw new Error('Access denied');
+    if (apiKeyReadScope && !apiKeyHasScope(ctx.apiKey.scopes, apiKeyReadScope)) {
+      throw new Error('Access denied: insufficient API key scope');
+    }
     return;
   }
   if (!ctx.userId) throw new Error('Unauthorized');

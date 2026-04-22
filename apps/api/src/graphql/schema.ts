@@ -58,8 +58,18 @@ export const typeDefs = `#graphql
     siteId: ID!
     name: String!
     keyHint: String!
+    scopes: [String!]!
+    actingUserId: ID
     createdAt: String!
     lastUsedAt: String
+  }
+
+  """Metadata for the caller when authenticated with a site API key."""
+  type ApiKeyInfo {
+    siteId: ID!
+    scopes: [String!]!
+    name: String!
+    keyHint: String!
   }
 
   type CreateApiKeyPayload {
@@ -79,6 +89,8 @@ export const typeDefs = `#graphql
     faviconAssetId: ID
     siteTitle: String
     menuEntries: JSON!
+    """When false, the Streamable HTTP MCP route rejects traffic for this workspace."""
+    mcpEnabled: Boolean!
     logo: Asset
     favicon: Asset
     menusResolved: [MenuSlotResolved!]!
@@ -89,6 +101,7 @@ export const typeDefs = `#graphql
     faviconAssetId: ID
     siteTitle: String
     menuEntries: JSON
+    mcpEnabled: Boolean
   }
 
   input FieldInput {
@@ -119,14 +132,15 @@ export const typeDefs = `#graphql
     me: User
     listMySites: [Site!]!
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
-    contentTypes(siteId: ID!): [ContentType!]!
-    entries(siteId: ID!, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
-    entry(id: ID!, siteId: ID!): Entry
-    entryBySlug(siteId: ID!, contentTypeSlug: String!, slug: String!): Entry
-    listAssets(siteId: ID!, query: String, limit: Int, offset: Int): [Asset!]!
+    apiKeyInfo: ApiKeyInfo!
+    contentTypes(siteId: ID): [ContentType!]!
+    entries(siteId: ID, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
+    entry(id: ID!, siteId: ID): Entry
+    entryBySlug(siteId: ID, contentTypeSlug: String!, slug: String!): Entry
+    listAssets(siteId: ID, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
-    siteSettings(siteId: ID!): SiteSettings!
-    exportSiteBundle(siteId: ID!, options: SiteBundlePartOptions!): JSON!
+    siteSettings(siteId: ID): SiteSettings!
+    exportSiteBundle(siteId: ID, options: SiteBundlePartOptions!): JSON!
   }
 
   type Mutation {
@@ -145,22 +159,22 @@ export const typeDefs = `#graphql
     inviteUser(siteId: ID!, email: String!, role: String!): Membership!
     setRole(siteId: ID!, userId: ID!, role: String!): Membership!
 
-    createContentType(siteId: ID!, name: String!, slug: String!, fields: [FieldInput!]!, options: JSON): ContentType!
-    updateContentType(id: ID!, siteId: ID!, name: String, slug: String, fields: [FieldInput!], options: JSON): ContentType!
-    deleteContentType(id: ID!, siteId: ID!): Boolean!
+    createContentType(siteId: ID, name: String!, slug: String!, fields: [FieldInput!]!, options: JSON): ContentType!
+    updateContentType(id: ID!, siteId: ID, name: String, slug: String, fields: [FieldInput!], options: JSON): ContentType!
+    deleteContentType(id: ID!, siteId: ID): Boolean!
 
-    createEntry(siteId: ID!, contentTypeId: ID!, name: String!, slug: String, data: JSON!): Entry!
-    updateEntry(id: ID!, siteId: ID!, name: String, slug: String, data: JSON): Entry!
-    deleteEntry(id: ID!, siteId: ID!): Boolean!
+    createEntry(siteId: ID, contentTypeId: ID!, name: String!, slug: String, data: JSON!): Entry!
+    updateEntry(id: ID!, siteId: ID, name: String, slug: String, data: JSON): Entry!
+    deleteEntry(id: ID!, siteId: ID): Boolean!
 
-    uploadAsset(siteId: ID!, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String): Asset!
-    updateAssetMeta(id: ID!, siteId: ID!, alt: String, title: String, focalX: Float, focalY: Float): Asset!
-    deleteAsset(id: ID!, siteId: ID!): Boolean!
+    uploadAsset(siteId: ID, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String): Asset!
+    updateAssetMeta(id: ID!, siteId: ID, alt: String, title: String, focalX: Float, focalY: Float): Asset!
+    deleteAsset(id: ID!, siteId: ID): Boolean!
 
-    createApiKey(siteId: ID!, name: String!): CreateApiKeyPayload!
+    createApiKey(siteId: ID!, name: String!, scopes: [String!]!, actingUserId: ID): CreateApiKeyPayload!
     revokeApiKey(id: ID!, siteId: ID!): Boolean!
 
-    updateSiteSettings(siteId: ID!, input: SiteSettingsInput!): SiteSettings!
-    importSiteBundle(siteId: ID!, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
+    updateSiteSettings(siteId: ID, input: SiteSettingsInput!): SiteSettings!
+    importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
   }
 `;

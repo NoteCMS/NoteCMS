@@ -1,6 +1,7 @@
 import { GraphQLJSON } from 'graphql-scalars';
 import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../auth/api-key.js';
 import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
+import { LEGACY_API_KEY_SCOPES, normalizeAndValidateScopes, requireApiKeyScope, resolveSiteId, scopesRequireActingUser } from '../auth/api-key-scopes.js';
 import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
 import { env } from '../config/env.js';
@@ -100,14 +101,20 @@ function formatApiKeyDoc(doc: {
   siteId: unknown;
   name: string;
   keyHint: string;
+  scopes?: string[] | null;
+  actingUserId?: unknown;
   createdAt: Date;
   lastUsedAt?: Date | null;
 }) {
+  const scopes =
+    Array.isArray(doc.scopes) && doc.scopes.length > 0 ? [...doc.scopes] : [...LEGACY_API_KEY_SCOPES];
   return {
     id: String(doc._id),
     siteId: String(doc.siteId),
     name: doc.name,
     keyHint: doc.keyHint,
+    scopes,
+    actingUserId: doc.actingUserId ? String(doc.actingUserId) : null,
     createdAt: new Date(doc.createdAt).toISOString(),
     lastUsedAt: doc.lastUsedAt ? new Date(doc.lastUsedAt).toISOString() : null,
   };
@@ -292,6 +299,7 @@ function siteSettingsDocToGql(doc: {
   faviconAssetId?: unknown;
   siteTitle?: string | null;
   menuEntries?: unknown;
+  mcpEnabled?: boolean | null;
 }) {
   return {
     id: String(doc._id),
@@ -300,6 +308,7 @@ function siteSettingsDocToGql(doc: {
     faviconAssetId: doc.faviconAssetId ? String(doc.faviconAssetId) : null,
     siteTitle: typeof doc.siteTitle === 'string' && doc.siteTitle.trim() ? doc.siteTitle.trim() : null,
     menuEntries: menuEntriesToObject(doc.menuEntries),
+    mcpEnabled: doc.mcpEnabled !== false,
   };
 }
 
@@ -380,6 +389,16 @@ export const resolvers = {
         return { ...toId(site), url: (site as any).url ?? (site as any).slug ?? '', role: membership?.role };
       });
     },
+    apiKeyInfo: async (_: unknown, __: unknown, ctx: RequestContext) => {
+      if (!ctx.apiKey) throw new Error('Unauthorized');
+      const doc = await ApiKeyModel.findById(ctx.apiKey.id).lean();
+      return {
+        siteId: ctx.apiKey.siteId,
+        scopes: ctx.apiKey.scopes,
+        name: typeof doc?.name === 'string' ? doc.name : '',
+        keyHint: typeof doc?.keyHint === 'string' ? doc.keyHint : '',
+      };
+    },
     globalUsers: async (
       _: unknown,
       { role, siteId, status, isAdmin }: { role?: string; siteId?: string; status?: string; isAdmin?: boolean },
@@ -426,13 +445,15 @@ export const resolvers = {
         };
       });
     },
-    contentTypes: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
-      await requireReadSite(ctx, siteId);
-      return (await ContentTypeModel.find({ siteId }).lean()).map(toId);
+    contentTypes: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'content_types:read');
+      return (await ContentTypeModel.find({ siteId: sid }).lean()).map(toId);
     },
     entries: async (_: unknown, { siteId, contentTypeId, limit = 30, offset = 0 }: any, ctx: RequestContext) => {
-      await requireReadSite(ctx, siteId);
-      const entries = await EntryModel.find({ siteId, contentTypeId }).sort({ updatedAt: -1 }).skip(offset).limit(limit).lean();
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'entries:read');
+      const entries = await EntryModel.find({ siteId: sid, contentTypeId }).sort({ updatedAt: -1 }).skip(offset).limit(limit).lean();
       const editorIds = [...new Set(entries.map((entry) => (entry.updatedBy ? String(entry.updatedBy) : '')).filter(Boolean))];
       const editors = await UserModel.find({ _id: { $in: editorIds } }).select({ _id: 1, email: 1 }).lean();
       const editorMap = new Map(editors.map((editor) => [String(editor._id), editor]));
@@ -450,30 +471,33 @@ export const resolvers = {
           : null,
       }));
     },
-    entry: async (_: unknown, { id, siteId }: { id: string; siteId: string }, ctx: RequestContext) => {
-      await requireReadSite(ctx, siteId);
-      const doc = await EntryModel.findOne({ _id: id, siteId }).lean();
+    entry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'entries:read');
+      const doc = await EntryModel.findOne({ _id: id, siteId: sid }).lean();
       if (!doc) return null;
-      const enriched = await withResolvedLatestEntryFields(siteId, doc as Record<string, unknown>);
+      const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
       return entryDocumentToGql(enriched);
     },
     entryBySlug: async (
       _: unknown,
-      { siteId, contentTypeSlug, slug }: { siteId: string; contentTypeSlug: string; slug: string },
+      { siteId, contentTypeSlug, slug }: { siteId?: string | null; contentTypeSlug: string; slug: string },
       ctx: RequestContext,
     ) => {
-      await requireReadSite(ctx, siteId);
-      const ct = await ContentTypeModel.findOne({ siteId, slug: contentTypeSlug }).lean();
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'entries:read');
+      const ct = await ContentTypeModel.findOne({ siteId: sid, slug: contentTypeSlug }).lean();
       if (!ct) return null;
-      const doc = await EntryModel.findOne({ siteId, contentTypeId: ct._id, slug }).lean();
+      const doc = await EntryModel.findOne({ siteId: sid, contentTypeId: ct._id, slug }).lean();
       if (!doc) return null;
-      const enriched = await withResolvedLatestEntryFields(siteId, doc as Record<string, unknown>);
+      const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
       return entryDocumentToGql(enriched);
     },
     listAssets: async (_: unknown, { siteId, query = '', limit = 30, offset = 0 }: any, ctx: RequestContext) => {
-      await requireReadSite(ctx, siteId);
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'assets:read');
 
-      const filter: Record<string, unknown> = { siteId };
+      const filter: Record<string, unknown> = { siteId: sid };
       if (query.trim()) filter.filename = { $regex: query.trim(), $options: 'i' };
 
       const assets = await AssetModel.find(filter).sort({ createdAt: -1 }).skip(offset).limit(limit).lean();
@@ -485,10 +509,20 @@ export const resolvers = {
       const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
       return keys.map(formatApiKeyDoc);
     },
-    exportSiteBundle: async (_: unknown, { siteId, options }: { siteId: string; options: Record<string, unknown> }, ctx: RequestContext) => {
-      if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
-      return await exportSiteBundleService(siteId, {
+    exportSiteBundle: async (
+      _: unknown,
+      { siteId, options }: { siteId?: string | null; options: Record<string, unknown> },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) {
+        requireApiKeyScope(ctx, 'bundles:read');
+        await requireReadSite(ctx, sid);
+      } else {
+        if (!ctx.userId) throw new Error('Unauthorized');
+        await requireRole(ctx.userId, sid, 'admin');
+      }
+      return await exportSiteBundleService(sid, {
         siteSettings: Boolean(options.siteSettings),
         contentTypes: Boolean(options.contentTypes),
         contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
@@ -497,17 +531,19 @@ export const resolvers = {
         assets: Boolean(options.assets),
       });
     },
-    siteSettings: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
-      await requireReadSite(ctx, siteId);
-      const doc = await SiteSettingsModel.findOne({ siteId }).lean();
+    siteSettings: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'site_settings:read');
+      const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
       if (!doc) {
         return {
           id: null,
-          siteId,
+          siteId: sid,
           logoAssetId: null,
           faviconAssetId: null,
           siteTitle: null,
           menuEntries: {},
+          mcpEnabled: true,
         };
       }
       return siteSettingsDocToGql(doc);
@@ -688,15 +724,17 @@ export const resolvers = {
       return toId(membership.toObject());
     },
     createContentType: async (_: unknown, { siteId, name, slug, fields, options = {} }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, sid, 'admin');
       const safeFields = validateFieldDefinitions(fields);
-      await assertReferencedContentTypesExist(siteId, safeFields as FieldDef[]);
+      await assertReferencedContentTypesExist(sid, safeFields as FieldDef[]);
       const normalizedSlug = toSlug(String(slug ?? ''));
       if (!normalizedSlug) throw new Error('Content type URL key could not be derived from the name');
       try {
         const ct = await ContentTypeModel.create({
-          siteId,
+          siteId: sid,
           name,
           slug: normalizedSlug,
           fields: safeFields,
@@ -711,11 +749,13 @@ export const resolvers = {
       }
     },
     updateContentType: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, sid, 'admin');
       if (rest.fields) {
         rest.fields = validateFieldDefinitions(rest.fields);
-        await assertReferencedContentTypesExist(siteId, rest.fields as FieldDef[], id);
+        await assertReferencedContentTypesExist(sid, rest.fields as FieldDef[], id);
       }
       if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
         if (rest.slug == null || rest.slug === '') {
@@ -725,7 +765,7 @@ export const resolvers = {
         }
       }
       try {
-        const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId }, rest, { new: true });
+        const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId: sid }, rest, { new: true });
         if (!ct) throw new Error('Content type not found');
         return toId(ct.toObject());
       } catch (error: unknown) {
@@ -737,25 +777,29 @@ export const resolvers = {
       }
     },
     deleteContentType: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
-      await ContentTypeModel.deleteOne({ _id: id, siteId });
+      await requireRole(ctx.userId, sid, 'admin');
+      await ContentTypeModel.deleteOne({ _id: id, siteId: sid });
       return true;
     },
     createEntry: async (_: unknown, { siteId, contentTypeId, name, slug, data }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
-      const contentType = await ContentTypeModel.findOne({ _id: contentTypeId, siteId }).lean();
+      await requireRole(ctx.userId, sid, 'editor');
+      const contentType = await ContentTypeModel.findOne({ _id: contentTypeId, siteId: sid }).lean();
       if (!contentType) throw new Error('Content type not found');
       const displayName = normalizeEntryName(name);
-      await assertEntryNameUnique(siteId, contentTypeId, displayName);
-      const hydratedFields = await hydrateRepeaterFields(siteId, contentType.fields as FieldDef[]);
+      await assertEntryNameUnique(sid, contentTypeId, displayName);
+      const hydratedFields = await hydrateRepeaterFields(sid, contentType.fields as FieldDef[]);
       validateEntryData(hydratedFields as any, data as Record<string, unknown>);
-      await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data as Record<string, unknown>));
-      await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], data as Record<string, unknown>);
+      await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], data as Record<string, unknown>));
+      await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], data as Record<string, unknown>);
       const resolvedSlug = resolveEntrySlug(contentType as any, data as Record<string, unknown>, slug, displayName);
       const entry = await EntryModel.create({
-        siteId,
+        siteId: sid,
         contentTypeId,
         name: displayName,
         slug: resolvedSlug,
@@ -763,57 +807,63 @@ export const resolvers = {
         updatedBy: ctx.userId,
       });
       const raw = entry.toObject() as Record<string, unknown>;
-      const enriched = await withResolvedLatestEntryFields(siteId, raw);
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
       return entryDocumentToGql(enriched);
     },
     updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
-      const current = await EntryModel.findOne({ _id: id, siteId }).lean();
+      await requireRole(ctx.userId, sid, 'editor');
+      const current = await EntryModel.findOne({ _id: id, siteId: sid }).lean();
       if (!current) throw new Error('Entry not found');
       if (Object.prototype.hasOwnProperty.call(rest, 'name')) {
         const displayName = normalizeEntryName(rest.name);
-        await assertEntryNameUnique(siteId, current.contentTypeId, displayName, id);
+        await assertEntryNameUnique(sid, current.contentTypeId, displayName, id);
         rest.name = displayName;
       }
       const nameForSlugResolution =
         typeof rest.name === 'string' ? rest.name : typeof current.name === 'string' ? current.name : null;
 
       if (rest.data) {
-        const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId }).lean();
+        const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
-        const hydratedFields = await hydrateRepeaterFields(siteId, ct.fields as FieldDef[]);
+        const hydratedFields = await hydrateRepeaterFields(sid, ct.fields as FieldDef[]);
         validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
-        await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
-        await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], rest.data as Record<string, unknown>);
+        await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
+        await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], rest.data as Record<string, unknown>);
         if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
           rest.slug = resolveEntrySlug(ct as any, rest.data as Record<string, unknown>, rest.slug, nameForSlugResolution);
         }
       } else if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
-        const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId }).lean();
+        const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
         rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug, nameForSlugResolution);
       }
-      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId }, { ...rest, updatedBy: ctx.userId }, { new: true });
+      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...rest, updatedBy: ctx.userId }, { new: true });
       if (!entry) throw new Error('Entry not found');
       const raw = entry.toObject() as Record<string, unknown>;
-      const enriched = await withResolvedLatestEntryFields(siteId, raw);
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
       return entryDocumentToGql(enriched);
     },
     deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
-      if (await entryReferencedBySiteSettings(siteId, String(id))) {
+      await requireRole(ctx.userId, sid, 'editor');
+      if (await entryReferencedBySiteSettings(sid, String(id))) {
         throw new Error('Entry is assigned to a menu slot in site settings. Unassign it first.');
       }
-      await EntryModel.deleteOne({ _id: id, siteId });
+      await EntryModel.deleteOne({ _id: id, siteId: sid });
       return true;
     },
     uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'assets:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
+      await requireRole(ctx.userId, sid, 'editor');
       const id = await persistImageUpload({
-        siteId,
+        siteId: sid,
         userId: ctx.userId,
         fileBase64,
         filename,
@@ -826,31 +876,35 @@ export const resolvers = {
       return toAsset(asset);
     },
     updateAssetMeta: async (_: unknown, { id, siteId, alt, title, focalX, focalY }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'assets:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
+      await requireRole(ctx.userId, sid, 'editor');
       const $set: Record<string, unknown> = {};
       if (alt !== undefined) $set.alt = alt ?? '';
       if (title !== undefined) $set.title = title ?? '';
       if (focalX !== undefined) $set.focalX = normalizeFocal01(Number(focalX));
       if (focalY !== undefined) $set.focalY = normalizeFocal01(Number(focalY));
       if (!Object.keys($set).length) throw new Error('No fields to update');
-      const asset = await AssetModel.findOneAndUpdate({ _id: id, siteId }, { $set }, { new: true }).lean();
+      const asset = await AssetModel.findOneAndUpdate({ _id: id, siteId: sid }, { $set }, { new: true }).lean();
       if (!asset) throw new Error('Asset not found');
       return toAsset(asset);
     },
     deleteAsset: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'assets:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
+      await requireRole(ctx.userId, sid, 'editor');
 
-      if (await assetReferencedBySiteSettings(siteId, String(id))) {
+      if (await assetReferencedBySiteSettings(sid, String(id))) {
         throw new Error('Asset is used as site logo or favicon. Remove it from site settings first.');
       }
 
-      const entries = await EntryModel.find({ siteId }).select({ data: 1 }).lean();
+      const entries = await EntryModel.find({ siteId: sid }).select({ data: 1 }).lean();
       const inUse = entries.some((entry) => entryContainsAsset(entry.data, String(id)));
       if (inUse) throw new Error('Asset is referenced by an entry');
 
-      const asset = await AssetModel.findOneAndDelete({ _id: id, siteId }).lean();
+      const asset = await AssetModel.findOneAndDelete({ _id: id, siteId: sid }).lean();
       if (!asset) return true;
       const storage = getStorageAdapter();
       const keys = [
@@ -864,9 +918,20 @@ export const resolvers = {
       await Promise.all(keys.map((key) => storage.delete(key)));
       return true;
     },
-    createApiKey: async (_: unknown, { siteId, name }: { siteId: string; name: string }, ctx: RequestContext) => {
+    createApiKey: async (
+      _: unknown,
+      { siteId, name, scopes, actingUserId }: { siteId: string; name: string; scopes: string[]; actingUserId?: string | null },
+      ctx: RequestContext,
+    ) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
       await requireRole(ctx.userId, siteId, 'admin');
+      const normalizedScopes = normalizeAndValidateScopes(scopes);
+      let acting: string | null = null;
+      if (scopesRequireActingUser(normalizedScopes)) {
+        if (!actingUserId) throw new Error('actingUserId is required when granting write scopes');
+        await requireRole(actingUserId, siteId, 'editor');
+        acting = String(actingUserId);
+      }
       const secret = generateApiKeySecret();
       const doc = await ApiKeyModel.create({
         siteId,
@@ -874,6 +939,8 @@ export const resolvers = {
         secretHash: hashApiKeySecret(secret),
         keyHint: secret.slice(-6),
         createdBy: ctx.userId,
+        scopes: normalizedScopes,
+        actingUserId: acting,
       });
       const token = formatApiKeyToken(String(doc._id), secret);
       return { apiKey: formatApiKeyDoc(doc.toObject()), token };
@@ -895,20 +962,26 @@ export const resolvers = {
         siteId,
         input,
       }: {
-        siteId: string;
+        siteId?: string | null;
         input: {
           logoAssetId?: string | null;
           faviconAssetId?: string | null;
           siteTitle?: string | null;
           menuEntries?: unknown;
+          mcpEnabled?: boolean | null;
         };
       },
       ctx: RequestContext,
     ) => {
-      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'editor');
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'site_settings:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      if (Object.prototype.hasOwnProperty.call(input, 'mcpEnabled')) {
+        await requireRole(ctx.userId, sid, 'admin');
+      }
 
-      const existing = await SiteSettingsModel.findOne({ siteId }).lean();
+      const existing = await SiteSettingsModel.findOne({ siteId: sid }).lean();
 
       const nextLogo = Object.prototype.hasOwnProperty.call(input, 'logoAssetId')
         ? input.logoAssetId
@@ -923,6 +996,10 @@ export const resolvers = {
       const nextTitle = Object.prototype.hasOwnProperty.call(input, 'siteTitle')
         ? input.siteTitle
         : existing?.siteTitle ?? null;
+
+      const nextMcpEnabled = Object.prototype.hasOwnProperty.call(input, 'mcpEnabled')
+        ? Boolean(input.mcpEnabled)
+        : existing?.mcpEnabled !== false;
 
       let nextMenu: Map<string, string>;
       if (Object.prototype.hasOwnProperty.call(input, 'menuEntries')) {
@@ -945,8 +1022,8 @@ export const resolvers = {
       const assetIds: string[] = [];
       if (logoId) assetIds.push(logoId);
       if (favId) assetIds.push(favId);
-      await assertAssetsBelongToSite(siteId, assetIds);
-      await assertEntriesBelongToSite(siteId, [...nextMenu.values()]);
+      await assertAssetsBelongToSite(sid, assetIds);
+      await assertEntriesBelongToSite(sid, [...nextMenu.values()]);
 
       const siteTitleNormalized =
         nextTitle === null || nextTitle === undefined
@@ -954,15 +1031,16 @@ export const resolvers = {
           : String(nextTitle).trim() || null;
 
       const updated = await SiteSettingsModel.findOneAndUpdate(
-        { siteId },
+        { siteId: sid },
         {
           $set: {
             logoAssetId: logoId,
             faviconAssetId: favId,
             siteTitle: siteTitleNormalized,
             menuEntries: nextMenu,
+            mcpEnabled: nextMcpEnabled,
           },
-          $setOnInsert: { siteId },
+          $setOnInsert: { siteId: sid },
         },
         { upsert: true, new: true },
       ).lean();
@@ -971,12 +1049,14 @@ export const resolvers = {
     },
     importSiteBundle: async (
       _: unknown,
-      { siteId, bundle, options }: { siteId: string; bundle: unknown; options: Record<string, unknown> },
+      { siteId, bundle, options }: { siteId?: string | null; bundle: unknown; options: Record<string, unknown> },
       ctx: RequestContext,
     ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'bundles:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
-      return await importSiteBundleService(siteId, ctx.userId, bundle, {
+      await requireRole(ctx.userId, sid, 'admin');
+      return await importSiteBundleService(sid, ctx.userId, bundle, {
         siteSettings: Boolean(options.siteSettings),
         contentTypes: Boolean(options.contentTypes),
         contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
