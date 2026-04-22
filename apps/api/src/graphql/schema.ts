@@ -89,7 +89,7 @@ export const typeDefs = `#graphql
     faviconAssetId: ID
     siteTitle: String
     menuEntries: JSON!
-    """When false, the Streamable HTTP MCP route rejects traffic for this workspace."""
+    """When false, the Streamable HTTP MCP route at /api/mcp rejects traffic for this workspace."""
     mcpEnabled: Boolean!
     logo: Asset
     favicon: Asset

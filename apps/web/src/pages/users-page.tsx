@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import type { ColumnDef } from '@tanstack/react-table';
 import { SlidersHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -34,6 +35,9 @@ type UsersPageProps = {
 };
 
 export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
+  const siteTitle = sites.find((s) => s.id === workspaceSiteId)?.name?.trim() || 'Workspace';
+  useDocumentTitle(buildPageTitle('Users & roles', siteTitle));
+
   const [filtersOpen, setFiltersOpen] = useState(false);
   const {
     users,

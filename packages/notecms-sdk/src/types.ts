@@ -83,7 +83,7 @@ export type SiteSettings = {
   logoAssetId: string | null;
   faviconAssetId: string | null;
   siteTitle: string | null;
-  /** When false, the API rejects MCP requests for this workspace. Omitted in older API responses (treat as true). */
+  /** When false, the API rejects MCP requests (`/api/mcp`) for this workspace. Omitted in older API responses (treat as true). */
   mcpEnabled?: boolean;
   /** Raw slot key → entry id map from the API. Prefer {@link SiteSettings.menusResolved} for rendering. */
   menuEntries: Json;

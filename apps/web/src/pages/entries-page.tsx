@@ -24,6 +24,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { assetGalleryLabels } from '@/lib/asset-gallery';
 import { focalToObjectPosition } from '@/lib/focal-point';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
@@ -920,6 +921,27 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const basePath = forcedContentTypeSlug ? `/content/${forcedContentTypeSlug}` : '/entries';
   const isDetailView = Boolean(entryId);
   const showTypeSelector = !forcedContentTypeSlug;
+  const typeLabel =
+    selectedType?.options?.sidebarLabel?.trim() || selectedType?.name || 'Content';
+
+  const entriesDocTitle = useMemo(() => {
+    const siteTitle = activeSite?.name?.trim() || 'Workspace';
+    if (!isDetailView) {
+      if (forcedContentTypeSlug) return buildPageTitle(typeLabel, siteTitle);
+      return buildPageTitle('Entries', siteTitle);
+    }
+    if (entryId === 'new') return buildPageTitle('New entry', typeLabel, siteTitle);
+    const headline = entryName.trim() || 'Entry';
+    return buildPageTitle(headline, typeLabel, siteTitle);
+  }, [
+    activeSite?.name,
+    entryId,
+    entryName,
+    forcedContentTypeSlug,
+    isDetailView,
+    typeLabel,
+  ]);
+  useDocumentTitle(entriesDocTitle);
 
   async function loadAssets() {
     if (!workspaceSiteId) return;

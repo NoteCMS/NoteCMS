@@ -20,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { assetGalleryLabels } from '@/lib/asset-gallery';
 import { clamp01, focalToObjectPosition } from '@/lib/focal-point';
 import { cn } from '@/lib/utils';
@@ -41,7 +42,9 @@ async function fileToBase64(file: File): Promise<string> {
   return btoa(binary);
 }
 
-export function AssetsPage({ token, workspaceSiteId, sites: _sites }: AssetsPageProps) {
+export function AssetsPage({ token, workspaceSiteId, sites }: AssetsPageProps) {
+  const siteTitle = sites.find((s) => s.id === workspaceSiteId)?.name?.trim() || 'Workspace';
+  useDocumentTitle(buildPageTitle('Assets', siteTitle));
   const [assets, setAssets] = useState<Asset[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isUploading, setIsUploading] = useState(false);

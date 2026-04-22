@@ -93,8 +93,8 @@ async function mcpHandler(req: express.Request, res: express.Response) {
   }
 }
 
-app.get('/mcp', mcpHandler);
-app.post('/mcp', mcpHandler);
+app.get('/api/mcp', mcpHandler);
+app.post('/api/mcp', mcpHandler);
 
 app.use((_req, res) => {
   res.status(404).json({ message: 'Not found' });
@@ -106,4 +106,4 @@ await new Promise<void>((resolve, reject) => {
 });
 
 console.log(`API ready at http://localhost:${env.port}/graphql`);
-console.log(`MCP (Streamable HTTP) at http://localhost:${env.port}/mcp`);
+console.log(`MCP (Streamable HTTP) at http://localhost:${env.port}/api/mcp`);

@@ -33,6 +33,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { stableJsonStringify } from '@/lib/stable-json';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
@@ -1260,7 +1261,9 @@ function FieldBuilder({
   );
 }
 
-export function ContentTypesPage({ token, workspaceSiteId, sites: _sites }: ContentTypesPageProps) {
+export function ContentTypesPage({ token, workspaceSiteId, sites }: ContentTypesPageProps) {
+  const siteTitle = sites.find((s) => s.id === workspaceSiteId)?.name?.trim() || 'Workspace';
+  useDocumentTitle(buildPageTitle('Content types', siteTitle));
   const navigate = useNavigate();
   const [contentTypes, setContentTypes] = useState<ContentType[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -1572,9 +1575,10 @@ const ContentTypeSchemaBlock = memo(
   contentTypeSchemaBlockPropsEqual,
 );
 
-export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, contentTypeId }: ContentTypeEditorPageProps) {
+export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTypeId }: ContentTypeEditorPageProps) {
   const navigate = useNavigate();
   const isNew = contentTypeId === 'new' || !contentTypeId;
+  const siteTitle = sites.find((s) => s.id === workspaceSiteId)?.name?.trim() || 'Workspace';
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -1592,6 +1596,17 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites: _sites, c
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [schemaTick, setSchemaTick] = useState(0);
   const bumpSchema = useCallback(() => setSchemaTick((t) => t + 1), []);
+
+  const editorDocTitle = useMemo(
+    () =>
+      buildPageTitle(
+        isNew ? 'New content type' : name.trim() || 'Content type',
+        'Content types',
+        siteTitle,
+      ),
+    [isNew, name, siteTitle],
+  );
+  useDocumentTitle(editorDocTitle);
 
   useEffect(() => {
     setSavedSnapshot(null);

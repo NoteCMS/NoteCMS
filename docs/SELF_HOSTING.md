@@ -86,4 +86,4 @@ docker compose -f deploy/docker-compose.yml logs -f api
 docker compose -f deploy/docker-compose.yml logs -f web
 ```
 
-The API exposes GraphQL over HTTP POST at `/graphql` (Apollo Server standalone).
+The API exposes GraphQL over HTTP POST at `/graphql` and MCP (Streamable HTTP) at `/api/mcp`.

@@ -3,10 +3,10 @@
 ## Endpoints
 
 - **GraphQL:** `POST /graphql` (JSON body).
-- **MCP (Streamable HTTP):** `GET` and `POST /mcp` — same process as GraphQL.
+- **MCP (Streamable HTTP):** `GET` and `POST /api/mcp` — same process as GraphQL.
 - **Health:** `GET /health`.
 
-In production, terminate TLS at your edge and reverse-proxy both `/graphql` and `/mcp` to this service.
+In production, terminate TLS at your edge and reverse-proxy `/graphql` and `/api/mcp` to this service (or mount the whole API under a path prefix so both live behind the same upstream).
 
 ## Authentication
 
@@ -41,7 +41,7 @@ MCP returns **401** if neither a valid JWT nor a valid site API key is present.
 
 ## Enabling MCP per workspace
 
-In the dashboard (**API keys**), workspace admins can toggle **Allow MCP for this workspace**. When off, `/mcp` returns **403** for that site (API keys and JWTs that include the workspace id). GraphQL is unaffected. The flag is stored on `SiteSettings` as `mcpEnabled` (default true).
+In the dashboard (**API keys**), workspace admins can toggle **Allow MCP for this workspace**. When off, `/api/mcp` returns **403** for that site (API keys and JWTs that include the workspace id). GraphQL is unaffected. The flag is stored on `SiteSettings` as `mcpEnabled` (default true).
 
 ## GraphQL: `apiKeyInfo`
 
@@ -55,9 +55,9 @@ Only succeeds when authenticated with a site API key.
 
 ## Example: Cursor MCP (illustrative)
 
-Point the MCP server URL at your deployed API, e.g. `https://notecms.example.com/mcp`, and configure the client to send the API key in headers (exact shape depends on the MCP client). Prefer a **narrow** scope set and a dedicated key per integration.
+Point the MCP server URL at your deployed API, e.g. `https://notecms.example.com/api/mcp`, and configure the client to send the API key in headers (exact shape depends on the MCP client). Prefer a **narrow** scope set and a dedicated key per integration.
 
 ## Security
 
 - Do not expose API keys in browser bundles or public repos.
-- Treat `/mcp` like `/graphql`: rate limit and monitor if exposed on the public internet.
+- Treat `/api/mcp` like `/graphql`: rate limit and monitor if exposed on the public internet.

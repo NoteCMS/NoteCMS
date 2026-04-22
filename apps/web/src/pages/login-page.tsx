@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -43,6 +44,8 @@ export function LoginPage({
   onSetPasswordSubmit,
   onBackToLogin,
 }: LoginPageProps) {
+  useDocumentTitle(buildPageTitle(authStep === 'setPassword' ? 'Choose password' : 'Sign in'));
+
   if (authStep === 'setPassword') {
     return (
       <div className="flex min-h-svh items-center justify-center bg-background p-4">

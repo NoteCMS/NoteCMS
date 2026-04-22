@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { SiteImportExportSection } from '@/components/site-import-export-section';
 import type { Asset, ContentType, Entry, Site } from '@/types/app';
 
@@ -208,6 +209,8 @@ function AssetPickerDialog({
 
 export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged }: SiteSettingsPageProps) {
   const activeSite = sites.find((s) => s.id === workspaceSiteId);
+  useDocumentTitle(buildPageTitle('Site settings', activeSite?.name?.trim() || 'Workspace'));
+
   const canEdit =
     activeSite?.role === 'owner' || activeSite?.role === 'admin' || activeSite?.role === 'editor';
   const canManageSiteIdentity =

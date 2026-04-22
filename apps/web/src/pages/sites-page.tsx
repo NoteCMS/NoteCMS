@@ -23,6 +23,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import type { Site } from '@/types/app';
 
 type SitesPageProps = {
@@ -33,6 +34,8 @@ type SitesPageProps = {
 };
 
 export function SitesPage({ token, sites, isAdmin, onSitesChanged }: SitesPageProps) {
+  useDocumentTitle(buildPageTitle('Sites'));
+
   const navigate = useNavigate();
   const [createOpen, setCreateOpen] = useState(false);
   const [name, setName] = useState('');

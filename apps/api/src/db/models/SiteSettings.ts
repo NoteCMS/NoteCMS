@@ -15,7 +15,7 @@ const siteSettingsSchema = new Schema(
       of: String,
       default: () => new Map(),
     },
-    /** When false, `/mcp` rejects requests scoped to this site (API key or JWT with siteId). Default true. */
+    /** When false, `/api/mcp` rejects requests scoped to this site (API key or JWT with siteId). Default true. */
     mcpEnabled: { type: Boolean, default: true },
   },
   { timestamps: true },

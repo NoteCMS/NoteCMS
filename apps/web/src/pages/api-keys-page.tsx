@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { gqlRequest } from '@/api/graphql';
+import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -61,6 +62,9 @@ type ApiKeysPageProps = {
 };
 
 export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKeysPageProps) {
+  const activeSite = sites.find((site) => site.id === workspaceSiteId);
+  useDocumentTitle(buildPageTitle('API keys', activeSite?.name?.trim() || 'Workspace'));
+
   const [keys, setKeys] = useState<ApiKeyRow[]>([]);
   const [name, setName] = useState('');
   const [scopes, setScopes] = useState<string[]>(DEFAULT_NEW_KEY_SCOPES);
@@ -76,7 +80,6 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
   const [mcpEnabled, setMcpEnabled] = useState(true);
   const [mcpSaving, setMcpSaving] = useState(false);
 
-  const activeSite = sites.find((site) => site.id === workspaceSiteId);
   const hasWriteScopes = scopes.some((s) => s.endsWith(':write'));
 
   const loadKeys = useCallback(async () => {
@@ -278,7 +281,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
               <code className="rounded bg-muted px-1 py-0.5 text-xs">x-api-key</code>. Each key is limited to{' '}
               <span className="font-medium">{activeSite?.name ?? 'this site'}</span> and the scopes you assign. Remote
               agents can use the same token against the MCP endpoint{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">/mcp</code> on your API host.
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">/api/mcp</code> on your API host.
             </CardDescription>
           </div>
           <Button
@@ -459,7 +462,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
         <CardHeader>
           <CardTitle>MCP endpoint</CardTitle>
           <CardDescription>
-            The Model Context Protocol is served at <code className="rounded bg-muted px-1 py-0.5 text-xs">/mcp</code>{' '}
+            The Model Context Protocol is served at <code className="rounded bg-muted px-1 py-0.5 text-xs">/api/mcp</code>{' '}
             on your API. Turn it off to block agents from using API keys or workspace-scoped JWTs against this site,
             without stopping GraphQL.
           </CardDescription>
@@ -476,7 +479,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
               <span className="text-sm font-medium leading-none">Allow MCP for this workspace</span>
               <p className="text-sm text-muted-foreground">
                 When disabled, requests that identify this site (API keys, or a sign-in session tied to this workspace)
-                receive <span className="font-mono text-xs">403</span> from <span className="font-mono text-xs">/mcp</span>
+                receive <span className="font-mono text-xs">403</span> from <span className="font-mono text-xs">/api/mcp</span>
                 . Only owners and admins can change this.
               </p>
             </div>

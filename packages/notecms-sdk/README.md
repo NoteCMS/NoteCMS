@@ -83,7 +83,7 @@ Entries include `**lastEditedBy.email`** as returned by the API. For public site
 
 ## MCP (AI agents)
 
-The API serves **Model Context Protocol** over **Streamable HTTP** at **`/mcp`** (same host as GraphQL). Configure your MCP client with that URL and the same `Authorization: Bearer <api_key>` or `x-api-key` header. Keys are **scoped**: grant only the permissions the agent needs. See the API package doc `apps/api/docs/mcp-and-scoped-keys.md` in the NoteCMS repo.
+The API serves **Model Context Protocol** over **Streamable HTTP** at **`/api/mcp`** (same host as GraphQL). Configure your MCP client with that URL and the same `Authorization: Bearer <api_key>` or `x-api-key` header. Keys are **scoped**: grant only the permissions the agent needs. See the API package doc `apps/api/docs/mcp-and-scoped-keys.md` in the NoteCMS repo.
 
 ## Advanced
 

@@ -11,6 +11,7 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { gqlRequest } from '@/api/graphql';
 import { useAuth } from '@/hooks/use-auth';
+import { buildPageTitle } from '@/lib/page-title';
 import { ContentTypeEditorPage, ContentTypesPage } from '@/pages/content-types-page';
 import { AssetsPage } from '@/pages/assets-page';
 import { EntriesPage } from '@/pages/entries-page';
@@ -115,6 +116,23 @@ export function App() {
     }
     void loadSidebarContentTypes();
   }, [token, activeSiteId]);
+
+  useEffect(() => {
+    if (isValidatingSession) {
+      document.title = buildPageTitle('Loading');
+      return;
+    }
+    if (!token) return;
+    const activeWorkspace = sites.find((site) => site.id === activeSiteId);
+    const siteTitle = activeWorkspace?.name?.trim() || 'Workspace';
+    if (path === '/dashboard') {
+      document.title = buildPageTitle('Dashboard', siteTitle);
+      return;
+    }
+    if (path === '/settings') {
+      document.title = buildPageTitle('Admin settings', siteTitle);
+    }
+  }, [isValidatingSession, token, path, sites, activeSiteId]);
 
   if (isValidatingSession) {
     return (
