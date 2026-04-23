@@ -10,6 +10,7 @@ import {
   useRef,
   useState,
 } from 'react';
+import { flushSync } from 'react-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import { TagInput, type Tag } from 'emblor-maintained';
 import { ChevronDown, Copy, Ellipsis, GripVertical, Plus, Settings2, Trash2 } from 'lucide-react';
@@ -1608,12 +1609,11 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
   );
   useDocumentTitle(editorDocTitle);
 
-  useEffect(() => {
-    setSavedSnapshot(null);
-  }, [contentTypeId, workspaceSiteId]);
-
   useLayoutEffect(() => {
-    if (isLoading || !schemaBootstrap) return;
+    if (isLoading || !schemaBootstrap) {
+      setSavedSnapshot(null);
+      return;
+    }
     const schema = schemaRef.current?.getSnapshot();
     setSavedSnapshot(
       stableJsonStringify({
@@ -1747,15 +1747,16 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
         );
       }
       const schemaAfterSave = schemaRef.current?.getSnapshot();
-      setSavedSnapshot(
-        stableJsonStringify({
-          name: name.trim(),
-          showInSidebar,
-          sidebarLabel,
-          sidebarOrder,
-          schema: schemaAfterSave,
-        }),
-      );
+      const snap = stableJsonStringify({
+        name: name.trim(),
+        showInSidebar,
+        sidebarLabel,
+        sidebarOrder,
+        schema: schemaAfterSave,
+      });
+      flushSync(() => {
+        setSavedSnapshot(snap);
+      });
       navigate('/content-types');
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : 'Failed to save content type');

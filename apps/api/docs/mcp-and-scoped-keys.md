@@ -17,6 +17,17 @@ Use either header on every request:
 
 MCP returns **401** if neither a valid JWT nor a valid site API key is present.
 
+## MCP resources and prompts (for agents)
+
+The MCP server exposes **read-only markdown resources** (via `resources/list` and `resources/read`) and an optional **prompt** so agents can load conventions before using tools:
+
+| URI | Purpose |
+|-----|---------|
+| `note-cms://docs/agent-guide` | Site id rules, scopes, safety, bundles, what not to do |
+| `note-cms://docs/api-scopes` | Scope name → permission matrix |
+
+Prompt **`notecms_agent_bootstrap`** returns starter instructions that point at those URIs. Clients that support MCP prompts/resources should surface them to the model.
+
 ## Site API keys
 
 - Each key is tied to **exactly one site**. You can omit `siteId` in GraphQL variables when using a key; the server uses the key’s site. If you pass `siteId`, it **must** match the key.

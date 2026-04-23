@@ -1,7 +1,7 @@
 {
   "name": "@notecms/sdk",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
   "description": "NoteCMS headless SDK: GraphQL client (API key), build snapshots, and path helpers for static sites.",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,6 +21,9 @@
   "devDependencies": {
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "engines": {
     "node": ">=20"

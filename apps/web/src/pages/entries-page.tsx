@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { flushSync } from 'react-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload, X } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
@@ -1166,20 +1167,21 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       }
       const r = refreshed.entry;
       const nextData = (r.data ?? {}) as Record<string, unknown>;
-      setEntryName(r.name ?? '');
-      setSlug(r.slug ?? '');
-      setData(nextData);
-      setSavedSnapshot(
-        stableJsonStringify({
-          entryName: (r.name ?? '').trim(),
-          slug: r.slug ?? '',
-          data: nextData,
-        }),
-      );
-      setEntries((prev) => {
-        const exists = prev.some((e) => e.id === r.id);
-        if (!exists) return [...prev, r as Entry];
-        return prev.map((e) => (e.id === r.id ? ({ ...e, ...r } as Entry) : e));
+      const nextSnap = stableJsonStringify({
+        entryName: (r.name ?? '').trim(),
+        slug: r.slug ?? '',
+        data: nextData,
+      });
+      flushSync(() => {
+        setEntryName(r.name ?? '');
+        setSlug(r.slug ?? '');
+        setData(nextData);
+        setSavedSnapshot(nextSnap);
+        setEntries((prev) => {
+          const exists = prev.some((e) => e.id === r.id);
+          if (!exists) return [...prev, r as Entry];
+          return prev.map((e) => (e.id === r.id ? ({ ...e, ...r } as Entry) : e));
+        });
       });
 
       navigate(`${basePath}/${savedEntryId}`, { replace: true });
@@ -1203,6 +1205,9 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         });
         await loadEntries(selectedTypeId);
         await loadEntriesIndex(contentTypes);
+        flushSync(() => {
+          setSavedSnapshot(null);
+        });
         navigate(basePath);
       } catch (deleteError) {
         setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete entry');
