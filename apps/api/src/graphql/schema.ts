@@ -127,6 +127,26 @@ export const typeDefs = `#graphql
     siteSettingsApplied: Boolean!
   }
 
+  type WorkspaceContentTypeBreakdown {
+    contentTypeId: ID!
+    name: String!
+    slug: String!
+    entryCount: Int!
+  }
+
+  """Roll-up counts and activity for the dashboard (indexed queries; safe for large sites)."""
+  type WorkspaceOverview {
+    contentTypeCount: Int!
+    entryCount: Int!
+    assetCount: Int!
+    memberCount: Int!
+    """Public site title from branding settings, when set."""
+    siteTitle: String
+    """ISO 8601 timestamp of the most recently updated entry, if any."""
+    lastEntryActivity: String
+    byContentType: [WorkspaceContentTypeBreakdown!]!
+  }
+
   type Query {
     bootstrapAuthStatus: BootstrapAuthStatus!
     me: User
@@ -134,6 +154,7 @@ export const typeDefs = `#graphql
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
     apiKeyInfo: ApiKeyInfo!
     contentTypes(siteId: ID): [ContentType!]!
+    workspaceOverview(siteId: ID): WorkspaceOverview!
     """limit and offset are capped server-side (see API docs / list limits)."""
     entries(siteId: ID, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
     entry(id: ID!, siteId: ID): Entry

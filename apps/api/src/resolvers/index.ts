@@ -1,3 +1,4 @@
+import mongoose from 'mongoose';
 import { GraphQLJSON } from 'graphql-scalars';
 import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../auth/api-key.js';
 import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
@@ -451,6 +452,56 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'content_types:read');
       return (await ContentTypeModel.find({ siteId: sid }).lean()).map(toId);
+    },
+    workspaceOverview: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid);
+
+      const siteOid = new mongoose.Types.ObjectId(sid);
+      const [
+        contentTypeCount,
+        entryCount,
+        assetCount,
+        memberCount,
+        latestEntry,
+        settings,
+        types,
+        agg,
+      ] = await Promise.all([
+        ContentTypeModel.countDocuments({ siteId: sid }),
+        EntryModel.countDocuments({ siteId: sid }),
+        AssetModel.countDocuments({ siteId: sid }),
+        MembershipModel.countDocuments({ siteId: sid }),
+        EntryModel.findOne({ siteId: sid }).sort({ updatedAt: -1 }).select({ updatedAt: 1 }).lean(),
+        SiteSettingsModel.findOne({ siteId: sid }).select({ siteTitle: 1 }).lean(),
+        ContentTypeModel.find({ siteId: sid }).select({ _id: 1, name: 1, slug: 1 }).sort({ name: 1 }).lean(),
+        EntryModel.aggregate<{ _id: mongoose.Types.ObjectId; entryCount: number }>([
+          { $match: { siteId: siteOid } },
+          { $group: { _id: '$contentTypeId', entryCount: { $sum: 1 } } },
+        ]),
+      ]);
+
+      const countByCt = new Map(agg.map((row) => [String(row._id), row.entryCount]));
+      const byContentType = types
+        .map((t) => ({
+          contentTypeId: String(t._id),
+          name: typeof t.name === 'string' ? t.name : '',
+          slug: typeof t.slug === 'string' ? t.slug : '',
+          entryCount: countByCt.get(String(t._id)) ?? 0,
+        }))
+        .sort((a, b) => b.entryCount - a.entryCount || a.name.localeCompare(b.name));
+
+      return {
+        contentTypeCount,
+        entryCount,
+        assetCount,
+        memberCount,
+        siteTitle: settings?.siteTitle && String(settings.siteTitle).trim() ? String(settings.siteTitle).trim() : null,
+        lastEntryActivity: latestEntry?.updatedAt
+          ? new Date(latestEntry.updatedAt as Date).toISOString()
+          : null,
+        byContentType,
+      };
     },
     entries: async (_: unknown, { siteId, contentTypeId, limit, offset }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);

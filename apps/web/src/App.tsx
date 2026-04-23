@@ -20,6 +20,7 @@ import { SitesPage } from '@/pages/sites-page';
 import { ApiKeysPage } from '@/pages/api-keys-page';
 import { SiteSettingsPage } from '@/pages/site-settings-page';
 import { UsersPage } from '@/pages/users-page';
+import { DashboardPage } from '@/pages/dashboard-page';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { ContentType } from '@/types/app';
@@ -125,10 +126,6 @@ export function App() {
     if (!token) return;
     const activeWorkspace = sites.find((site) => site.id === activeSiteId);
     const siteTitle = activeWorkspace?.name?.trim() || 'Workspace';
-    if (path === '/dashboard') {
-      document.title = buildPageTitle('Dashboard', siteTitle);
-      return;
-    }
     if (path === '/settings') {
       document.title = buildPageTitle('Admin settings', siteTitle);
     }
@@ -262,7 +259,7 @@ export function App() {
           </Breadcrumb>
         </header>
 
-        <div className="flex flex-1 p-3 md:p-4">
+        <div className="flex flex-1 p-2 pt-0 overflow-hidden">
           {path === '/users' ? (
             <UsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} isGlobalAdmin={isAdmin} />
           ) : path === '/sites' ? (
@@ -292,6 +289,14 @@ export function App() {
             <SiteSettingsPage token={token} workspaceSiteId={activeSiteId} sites={sites} onSitesChanged={refreshSites} />
           ) : path === '/api-keys' ? (
             <ApiKeysPage token={token} workspaceSiteId={activeSiteId} sites={sites} canManage={showSiteAdminTools} />
+          ) : path === '/dashboard' ? (
+            <DashboardPage
+              token={token}
+              workspaceSiteId={activeSiteId}
+              sites={sites}
+              showSiteAdminTools={showSiteAdminTools}
+              isGlobalAdmin={isAdmin}
+            />
           ) : (
             <div className="text-sm text-muted-foreground">Page under construction.</div>
           )}
