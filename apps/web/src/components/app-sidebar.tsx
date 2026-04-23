@@ -1,9 +1,24 @@
-import { ChevronUp, Home, Globe, Shapes, FileText, Users, Settings, LogOut, Image, KeyRound, Cog } from 'lucide-react';
+import {
+  ChevronUp,
+  Home,
+  Globe,
+  Shapes,
+  FileText,
+  Users,
+  Settings,
+  LogOut,
+  Image,
+  KeyRound,
+  Cog,
+  UserCog,
+  User,
+} from 'lucide-react';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -30,8 +45,8 @@ const workspaceItems = [
 ];
 
 const adminItemsBase = [
-  { path: '/sites', title: 'Sites', icon: Globe },
-  { path: '/settings', title: 'Admin Settings', icon: Settings },
+  { path: '/admin/sites', title: 'Sites', icon: Globe },
+  { path: '/admin/settings', title: 'Admin Settings', icon: Settings },
 ];
 
 type AppSidebarProps = {
@@ -44,8 +59,10 @@ type AppSidebarProps = {
   activePath: string;
   onNavigate: (path: string) => void;
   contentTypeMenuItems?: Array<{ path: string; title: string }>;
-  /** Workspace owner/admin: show API keys under Admin */
+  /** Site owner: show API keys under Admin */
   showSiteAdminTools?: boolean;
+  /** Platform admin: show All users under Admin */
+  showPlatformUsersNav?: boolean;
 };
 
 export function AppSidebar({
@@ -59,12 +76,14 @@ export function AppSidebar({
   onNavigate,
   contentTypeMenuItems = [],
   showSiteAdminTools = false,
+  showPlatformUsersNav = false,
 }: AppSidebarProps) {
   const activeSite = sites.find((site) => site.id === activeSiteId);
 
   const adminItems = [
     adminItemsBase[0],
-    ...(showSiteAdminTools ? [{ path: '/api-keys' as const, title: 'API keys', icon: KeyRound }] : []),
+    ...(showPlatformUsersNav ? [{ path: '/admin/users' as const, title: 'All users', icon: UserCog }] : []),
+    ...(showSiteAdminTools ? [{ path: '/admin/api-keys' as const, title: 'API keys', icon: KeyRound }] : []),
     adminItemsBase[1],
   ];
 
@@ -104,17 +123,30 @@ export function AppSidebar({
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               ))}
-              {contentTypeMenuItems.map((item) => (
-                <SidebarMenuItem key={item.path}>
-                  <SidebarMenuButton isActive={activePath === item.path} onClick={() => onNavigate(item.path)}>
-                    <FileText />
-                    <span>{item.title}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {contentTypeMenuItems.length > 0 ? (
+          <SidebarGroup>
+            <SidebarGroupLabel>Site content</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {contentTypeMenuItems.map((item) => (
+                  <SidebarMenuItem key={item.path}>
+                    <SidebarMenuButton
+                      isActive={activePath === item.path || activePath.startsWith(`${item.path}/`)}
+                      onClick={() => onNavigate(item.path)}
+                    >
+                      <FileText />
+                      <span>{item.title}</span>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ) : null}
 
         <SidebarGroup>
           <SidebarGroupLabel>Admin</SidebarGroupLabel>
@@ -122,7 +154,13 @@ export function AppSidebar({
             <SidebarMenu>
               {adminItems.map((item) => (
                 <SidebarMenuItem key={item.path}>
-                  <SidebarMenuButton isActive={activePath === item.path} onClick={() => onNavigate(item.path)}>
+                  <SidebarMenuButton
+                    isActive={
+                      activePath === item.path ||
+                      (item.path === '/admin/users' && activePath.startsWith('/admin/users'))
+                    }
+                    onClick={() => onNavigate(item.path)}
+                  >
                     <item.icon />
                     <span>{item.title}</span>
                   </SidebarMenuButton>
@@ -150,6 +188,11 @@ export function AppSidebar({
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
               <DropdownMenuContent side="top" align="end" className="w-(--radix-dropdown-menu-trigger-width)">
+                <DropdownMenuItem onClick={() => onNavigate('/account')}>
+                  <User />
+                  Your account
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout}>
                   <LogOut />
                   Logout

@@ -213,10 +213,10 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
   useDocumentTitle(buildPageTitle('Site settings', activeSite?.name?.trim() || 'Workspace'));
 
   const canEdit =
-    activeSite?.role === 'owner' || activeSite?.role === 'admin' || activeSite?.role === 'editor';
+    activeSite?.role === 'owner' || activeSite?.role === 'editor';
   const canManageSiteIdentity =
-    activeSite?.role === 'owner' || activeSite?.role === 'admin';
-  const canManageBundle = activeSite?.role === 'owner' || activeSite?.role === 'admin';
+    activeSite?.role === 'owner';
+  const canManageBundle = activeSite?.role === 'owner';
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);

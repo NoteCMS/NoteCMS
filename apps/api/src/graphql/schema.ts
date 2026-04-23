@@ -1,7 +1,7 @@
 export const typeDefs = `#graphql
   scalar JSON
 
-  type User { id: ID!, email: String!, status: String!, isAdmin: Boolean! }
+  type User { id: ID!, email: String!, displayName: String, status: String!, isAdmin: Boolean! }
   type Site { id: ID!, name: String!, url: String!, role: String }
   type Membership { id: ID!, userId: ID!, siteId: ID!, role: String! }
   type SiteAccess { siteId: ID!, siteName: String!, role: String! }
@@ -171,10 +171,15 @@ export const typeDefs = `#graphql
     login(email: String!, password: String, siteId: ID): LoginPayload!
     setInitialPassword(email: String!, newPassword: String!, bootstrapSecret: String): AuthPayload!
 
+    """Update the signed-in user's display name. Pass an empty string to clear it."""
+    updateMyProfile(displayName: String!): User!
+    changeMyPassword(currentPassword: String!, newPassword: String!): Boolean!
 
     createSite(name: String!, url: String!): Site!
     updateSite(siteId: ID!, name: String, url: String): Site!
     createGlobalUser(email: String!, password: String!, status: String, isAdmin: Boolean): GlobalUser!
+    """Create a user with access to one site (never platform isAdmin). Site owners: viewer or editor only. Platform administrators may also set site owner."""
+    createSiteUser(siteId: ID!, email: String!, password: String!, role: String!): GlobalUser!
     updateUserStatus(userId: ID!, status: String!): GlobalUser!
     setUserAdmin(userId: ID!, isAdmin: Boolean!): GlobalUser!
     setUserSiteRole(userId: ID!, siteId: ID!, role: String!): GlobalUser!

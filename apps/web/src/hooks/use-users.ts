@@ -1,10 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { gqlRequest } from '@/api/graphql';
 import type { AccessDraft, GlobalUser, Role, Site, Status } from '@/types/app';
 
-function buildAccessDraft(user: GlobalUser | null, sites: Site[]): AccessDraft {
+export type UsersListMode = 'workspace' | 'platform';
+
+function buildAccessDraft(user: GlobalUser | null, manageSites: Site[]): AccessDraft {
   const draft: AccessDraft = {};
-  for (const site of sites) {
+  for (const site of manageSites) {
     const existing = user?.access.find((entry) => entry.siteId === site.id);
     draft[site.id] = {
       enabled: Boolean(existing),
@@ -14,7 +16,13 @@ function buildAccessDraft(user: GlobalUser | null, sites: Site[]): AccessDraft {
   return draft;
 }
 
-export function useUsers(token: string, sites: Site[], active: boolean, workspaceSiteId: string) {
+export function useUsers(
+  token: string,
+  sites: Site[],
+  active: boolean,
+  workspaceSiteId: string,
+  listMode: UsersListMode,
+) {
   const [users, setUsers] = useState<GlobalUser[]>([]);
   const [isUsersLoading, setIsUsersLoading] = useState(false);
   const [usersError, setUsersError] = useState('');
@@ -29,20 +37,32 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
   const [newUserPassword, setNewUserPassword] = useState('');
   const [newUserStatus, setNewUserStatus] = useState<Status>('active');
   const [newUserIsAdmin, setNewUserIsAdmin] = useState(false);
+  const [newSiteUserRole, setNewSiteUserRole] = useState<Exclude<Role, 'owner'>>('viewer');
 
   const [manageOpen, setManageOpen] = useState(false);
   const [managedUser, setManagedUser] = useState<GlobalUser | null>(null);
   const [accessDraft, setAccessDraft] = useState<AccessDraft>({});
 
-  useEffect(() => {
-    if (!workspaceSiteId) {
-      setSiteFilter('all');
-      return;
-    }
-    setSiteFilter(workspaceSiteId);
-  }, [workspaceSiteId]);
+  const manageSites = useMemo(
+    () =>
+      listMode === 'workspace' && workspaceSiteId
+        ? sites.filter((s) => s.id === workspaceSiteId)
+        : sites,
+    [listMode, sites, workspaceSiteId],
+  );
 
-  async function loadUsers() {
+  useEffect(() => {
+    if (!active) return;
+    if (listMode === 'workspace') {
+      if (!workspaceSiteId) {
+        setSiteFilter('all');
+        return;
+      }
+      setSiteFilter(workspaceSiteId);
+    }
+  }, [active, listMode, workspaceSiteId]);
+
+  const loadUsers = useCallback(async () => {
     if (!token) return;
     setIsUsersLoading(true);
     setUsersError('');
@@ -64,13 +84,13 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
     } finally {
       setIsUsersLoading(false);
     }
-  }
+  }, [token, roleFilter, siteFilter, statusFilter, adminFilter]);
 
   useEffect(() => {
     if (token && active) {
       void loadUsers();
     }
-  }, [token, active, roleFilter, siteFilter, statusFilter, adminFilter]);
+  }, [token, active, loadUsers]);
 
   async function createUser() {
     setUsersError('');
@@ -84,6 +104,30 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
       setNewUserPassword('');
       setNewUserStatus('active');
       setNewUserIsAdmin(false);
+      setCreateOpen(false);
+      await loadUsers();
+    } catch (createError) {
+      setUsersError(createError instanceof Error ? createError.message : 'Failed to create user');
+    }
+  }
+
+  async function createSiteOnlyUser() {
+    if (!workspaceSiteId) return;
+    setUsersError('');
+    try {
+      await gqlRequest(
+        token,
+        'mutation($siteId:ID!,$email:String!,$password:String!,$role:String!){ createSiteUser(siteId:$siteId,email:$email,password:$password,role:$role){ id } }',
+        {
+          siteId: workspaceSiteId,
+          email: newUserEmail,
+          password: newUserPassword,
+          role: newSiteUserRole,
+        },
+      );
+      setNewUserEmail('');
+      setNewUserPassword('');
+      setNewSiteUserRole('viewer');
       setCreateOpen(false);
       await loadUsers();
     } catch (createError) {
@@ -119,18 +163,21 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
     }
   }
 
-  function openManageAccess(user: GlobalUser) {
-    setManagedUser(user);
-    setAccessDraft(buildAccessDraft(user, sites));
-    setManageOpen(true);
-  }
+  const openManageAccess = useCallback(
+    (user: GlobalUser) => {
+      setManagedUser(user);
+      setAccessDraft(buildAccessDraft(user, manageSites));
+      setManageOpen(true);
+    },
+    [manageSites],
+  );
 
   async function saveAccessChanges() {
     if (!managedUser) return;
     setUsersError('');
     try {
       const currentMap = new Map(managedUser.access.map((entry) => [entry.siteId, entry]));
-      for (const site of sites) {
+      for (const site of manageSites) {
         const draft = accessDraft[site.id];
         const current = currentMap.get(site.id);
         if (!draft) continue;
@@ -181,6 +228,8 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
     setNewUserStatus,
     newUserIsAdmin,
     setNewUserIsAdmin,
+    newSiteUserRole,
+    setNewSiteUserRole,
     manageOpen,
     setManageOpen,
     managedUser,
@@ -188,9 +237,11 @@ export function useUsers(token: string, sites: Site[], active: boolean, workspac
     setAccessDraft,
     loadUsers,
     createUser,
+    createSiteOnlyUser,
     updateStatus,
     updateAdmin,
     openManageAccess,
     saveAccessChanges,
+    manageSites,
   };
 }

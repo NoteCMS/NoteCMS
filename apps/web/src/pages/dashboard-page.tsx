@@ -58,7 +58,7 @@ type DashboardPageProps = {
   token: string;
   workspaceSiteId: string;
   sites: Site[];
-  /** Site owner/admin: API keys, integration hints */
+  /** Site owner: API keys, integration hints */
   showSiteAdminTools: boolean;
   isGlobalAdmin: boolean;
 };
@@ -206,7 +206,7 @@ export function DashboardPage({
   const roleLabel = activeSite?.role ? activeSite.role.charAt(0).toUpperCase() + activeSite.role.slice(1) : 'Member';
 
   const canCreateEntries =
-    activeSite?.role === 'owner' || activeSite?.role === 'admin' || activeSite?.role === 'editor';
+    activeSite?.role === 'owner' || activeSite?.role === 'editor';
 
   const firstSidebarType = useMemo(
     () =>
@@ -352,7 +352,7 @@ export function DashboardPage({
               </>
             ) : (
               <p className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                Viewers can browse entries and assets; ask an editor or admin to create new content.
+                Viewers can browse entries and assets; ask an editor or site owner to create new content.
               </p>
             )}
             <Button variant="outline" className="justify-start gap-2" asChild>
@@ -448,7 +448,7 @@ export function DashboardPage({
               {showSiteAdminTools ? (
                 <>
                   <Item variant="outline" size="sm" asChild>
-                    <Link to="/api-keys">
+                    <Link to="/admin/api-keys">
                       <ItemMedia variant="icon">
                         <KeyRound className="size-4 text-muted-foreground" />
                       </ItemMedia>
@@ -499,7 +499,7 @@ export function DashboardPage({
               </Item>
               {isGlobalAdmin ? (
                 <Item variant="outline" size="sm" asChild>
-                  <Link to="/sites">
+                  <Link to="/admin/sites">
                     <ItemMedia variant="icon">
                       <Globe className="size-4 text-muted-foreground" />
                     </ItemMedia>

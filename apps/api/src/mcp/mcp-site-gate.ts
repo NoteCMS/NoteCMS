@@ -11,6 +11,6 @@ export async function assertMcpEndpointEnabledForContext(ctx: RequestContext): P
 
   const doc = await SiteSettingsModel.findOne({ siteId }).select({ mcpEnabled: 1 }).lean();
   if (doc && doc.mcpEnabled === false) {
-    throw new Error('MCP is disabled for this workspace. An admin can enable it under API keys in the dashboard.');
+    throw new Error('MCP is disabled for this workspace. A site owner can enable it under API keys in the dashboard.');
   }
 }

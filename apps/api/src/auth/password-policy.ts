@@ -7,9 +7,11 @@ const MIN_PROD = 10;
 export function assertStrongPassword(password: string) {
   const t = typeof password === 'string' ? password : '';
   const min = env.nodeEnv === 'production' ? MIN_PROD : MIN_DEV;
-  if (t.length < min) throw new Error(`Password must be at least ${min} characters.`);
+  if (t.length < min) {
+    throw new Error(`Use at least ${min} characters for your password.`);
+  }
   if (!/[a-zA-Z]/.test(t) || !/[0-9]/.test(t)) {
-    throw new Error('Password must include at least one letter and one number.');
+    throw new Error('Include at least one letter and one number.');
   }
 }
 

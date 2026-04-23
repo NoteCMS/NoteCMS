@@ -13,7 +13,7 @@ import { persistImageUpload } from '../assets/persist-image-upload.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
 import { AssetModel } from '../db/models/Asset.js';
-import { MembershipModel, roles } from '../db/models/Membership.js';
+import { MembershipModel, roles, type Role } from '../db/models/Membership.js';
 import { SiteModel } from '../db/models/Site.js';
 import { MENU_SLOT_KEY_PATTERN, MENU_SLOT_MAX_SLOTS, SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { ApiKeyModel } from '../db/models/ApiKey.js';
@@ -39,6 +39,7 @@ function toSlug(value: string) {
 }
 
 const ENTRY_NAME_MAX = 200;
+const USER_DISPLAY_NAME_MAX = 80;
 
 function normalizeEntryName(raw: unknown): string {
   if (typeof raw !== 'string') throw new Error('Display name is required.');
@@ -93,6 +94,15 @@ function rethrowEntryValidation(err: unknown): never {
     badUserInput(err.message, err.fieldPath);
   }
   throw err;
+}
+
+/** Roles a site owner may assign when creating or inviting users (not owner). */
+const SITE_OWNER_ASSIGNABLE_ROLES: readonly Role[] = ['viewer', 'editor'];
+
+async function actorIsGlobalAdmin(ctx: RequestContext): Promise<boolean> {
+  if (!ctx.userId) return false;
+  const actor = await UserModel.findById(ctx.userId).select({ isAdmin: 1 }).lean();
+  return Boolean(actor?.isAdmin);
 }
 
 async function entryDocumentToGql(entry: any) {
@@ -388,6 +398,10 @@ export const resolvers = {
   ContentType: {
     options: (parent: any) => parent.options ?? {},
   },
+  User: {
+    displayName: (parent: { displayName?: string | null }) =>
+      typeof parent.displayName === 'string' && parent.displayName.trim() ? parent.displayName.trim() : null,
+  },
   Query: {
     bootstrapAuthStatus: () => ({
       initialPasswordRequiresSecret: Boolean(env.bootstrapSecret),
@@ -423,13 +437,24 @@ export const resolvers = {
       ctx: RequestContext,
     ) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-      const adminMemberships = await MembershipModel.find({ userId: ctx.userId, role: { $in: ['owner', 'admin'] } }).lean();
-      const allowedSiteIds = adminMemberships.map((membership) => String(membership.siteId));
-      if (!allowedSiteIds.length) return [];
+      const actor = await UserModel.findById(ctx.userId).select({ isAdmin: 1 }).lean();
 
-      const membershipFilter: Record<string, unknown> = { siteId: { $in: allowedSiteIds } };
-      if (role) membershipFilter.role = role;
-      if (siteId) membershipFilter.siteId = siteId;
+      const membershipFilter: Record<string, unknown> = {};
+      if (actor?.isAdmin) {
+        if (role) membershipFilter.role = role;
+        if (siteId) membershipFilter.siteId = siteId;
+      } else {
+        const ownerMemberships = await MembershipModel.find({ userId: ctx.userId, role: 'owner' }).lean();
+        const allowedSiteIds = ownerMemberships.map((membership) => String(membership.siteId));
+        if (!allowedSiteIds.length) return [];
+        if (siteId) {
+          if (!allowedSiteIds.includes(String(siteId))) return [];
+          membershipFilter.siteId = siteId;
+        } else {
+          membershipFilter.siteId = { $in: allowedSiteIds };
+        }
+        if (role) membershipFilter.role = role;
+      }
 
       const memberships = await MembershipModel.find(membershipFilter).lean();
       const uniqueUserIds = [...new Set(memberships.map((membership) => String(membership.userId)))];
@@ -576,7 +601,7 @@ export const resolvers = {
     },
     apiKeys: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
       return keys.map(formatApiKeyDoc);
     },
@@ -591,7 +616,7 @@ export const resolvers = {
         await requireReadSite(ctx, sid);
       } else {
         if (!ctx.userId) throw new Error('Unauthorized');
-        await requireRole(ctx.userId, sid, 'admin');
+        await requireRole(ctx.userId, sid, 'owner');
       }
       return await exportSiteBundleService(sid, {
         siteSettings: Boolean(options.siteSettings),
@@ -676,10 +701,46 @@ export const resolvers = {
       if (!updated) throw new Error('User not found');
       return { token: signToken({ userId: String(updated._id) }), user: toId(updated.toObject()) };
     },
+    updateMyProfile: async (_: unknown, { displayName }: { displayName: string }, ctx: RequestContext) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      const t = String(displayName ?? '').trim();
+      const update =
+        !t
+          ? { $unset: { displayName: '' as const } }
+          : t.length > USER_DISPLAY_NAME_MAX
+            ? null
+            : { $set: { displayName: t } };
+      if (update === null) {
+        throw new Error(`That name is too long—${USER_DISPLAY_NAME_MAX} characters max.`);
+      }
+      const user = await UserModel.findByIdAndUpdate(ctx.userId, update, { new: true }).lean();
+      if (!user) throw new Error('User not found');
+      return toId(user);
+    },
+    changeMyPassword: async (
+      _: unknown,
+      { currentPassword, newPassword }: { currentPassword: string; newPassword: string },
+      ctx: RequestContext,
+    ) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      const user = await UserModel.findById(ctx.userId).select({ passwordHash: 1 }).lean();
+      if (!user?.passwordHash) {
+        throw new Error('Set a password from the sign-in screen first, then you can change it here.');
+      }
+      if (!(await comparePassword(currentPassword, user.passwordHash))) {
+        throw new Error("That isn't your current password.");
+      }
+      assertStrongPassword(newPassword);
+      if (currentPassword === newPassword) {
+        throw new Error("Pick a new password that's different from the old one.");
+      }
+      await UserModel.findByIdAndUpdate(ctx.userId, { passwordHash: await hashPassword(newPassword) });
+      return true;
+    },
     createSite: async (_: unknown, { name, url }: { name: string; url: string }, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const creator = await UserModel.findById(ctx.userId).lean();
-      if (!creator?.isAdmin) throw new Error('Only admins can create new sites');
+      if (!creator?.isAdmin) throw new Error('Only platform administrators can create new sites');
       const site = await SiteModel.create({ name, url, ownerId: ctx.userId });
       await MembershipModel.create({ userId: ctx.userId, siteId: site._id, role: 'owner' });
       return toId(site.toObject());
@@ -690,7 +751,7 @@ export const resolvers = {
       ctx: RequestContext,
     ) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
 
       const $set: Record<string, string> = {};
       if (name !== undefined && name !== null) {
@@ -720,7 +781,7 @@ export const resolvers = {
     createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const actor = await UserModel.findById(ctx.userId).lean();
-      if (!actor?.isAdmin) throw new Error('Only global administrators can create accounts');
+      if (!actor?.isAdmin) throw new Error('Only platform administrators can create accounts');
       assertStrongPassword(password);
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
@@ -736,11 +797,43 @@ export const resolvers = {
 
       return toGlobalUser(String(user._id));
     },
+    createSiteUser: async (
+      _: unknown,
+      { siteId, email, password, role }: { siteId: string; email: string; password: string; role: string },
+      ctx: RequestContext,
+    ) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+      if (!roles.includes(role as Role)) throw new Error('Invalid role');
+
+      const isGlobal = await actorIsGlobalAdmin(ctx);
+      if (!isGlobal) {
+        await requireRole(ctx.userId, siteId, 'owner');
+        if (!SITE_OWNER_ASSIGNABLE_ROLES.includes(role as Role)) {
+          throw new Error('Site owners can only add people as viewer or editor (or ask a platform administrator for owner access)');
+        }
+      }
+
+      assertStrongPassword(password);
+      const normalizedEmail = email.toLowerCase();
+      const existing = await UserModel.findOne({ email: normalizedEmail });
+      if (existing) throw new Error('Email already in use');
+
+      const user = await UserModel.create({
+        email: normalizedEmail,
+        passwordHash: await hashPassword(password),
+        status: 'active',
+        isAdmin: false,
+      });
+
+      await MembershipModel.create({ userId: user._id, siteId, role });
+
+      return toGlobalUser(String(user._id));
+    },
     updateUserStatus: async (_: unknown, { userId, status }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       if (!['active', 'disabled'].includes(status)) throw new Error('Invalid status');
       const actor = await UserModel.findById(ctx.userId).lean();
-      if (!actor?.isAdmin) throw new Error('Only global administrators can change account status');
+      if (!actor?.isAdmin) throw new Error('Only platform administrators can change account status');
 
       const user = await UserModel.findByIdAndUpdate(userId, { status }, { new: true });
       if (!user) throw new Error('User not found');
@@ -750,18 +843,26 @@ export const resolvers = {
     setUserAdmin: async (_: unknown, { userId, isAdmin }: { userId: string; isAdmin: boolean }, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const currentUser = await UserModel.findById(ctx.userId).lean();
-      if (!currentUser?.isAdmin) throw new Error('Only admins can change admin access');
+      if (!currentUser?.isAdmin) throw new Error('Only platform administrators can change platform admin access');
       const user = await UserModel.findByIdAndUpdate(userId, { isAdmin }, { new: true });
       if (!user) throw new Error('User not found');
       return toGlobalUser(String(user._id));
     },
     setUserSiteRole: async (_: unknown, { userId, siteId, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       if (!roles.includes(role)) throw new Error('Invalid role');
 
       const user = await UserModel.findById(userId).lean();
       if (!user) throw new Error('User not found');
+
+      const existing = await MembershipModel.findOne({ userId, siteId }).lean();
+      const isGlobal = await actorIsGlobalAdmin(ctx);
+      const promotesToOwner = role === 'owner' && existing?.role !== 'owner';
+      const demotesOwner = existing?.role === 'owner' && role !== 'owner';
+      if ((promotesToOwner || demotesOwner) && !isGlobal) {
+        throw new Error('Only platform administrators can assign or change the site owner role');
+      }
 
       await MembershipModel.findOneAndUpdate({ userId, siteId }, { role }, { upsert: true, new: true });
 
@@ -769,14 +870,23 @@ export const resolvers = {
     },
     removeUserSiteAccess: async (_: unknown, { userId, siteId }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
+      const victim = await MembershipModel.findOne({ userId, siteId }).lean();
+      if (victim?.role === 'owner') {
+        const isGlobal = await actorIsGlobalAdmin(ctx);
+        if (!isGlobal) throw new Error('Only platform administrators can remove a site owner');
+      }
       await MembershipModel.deleteOne({ userId, siteId });
       return toGlobalUser(String(userId));
     },
     inviteUser: async (_: unknown, { siteId, email, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       if (!roles.includes(role)) throw new Error('Invalid role');
+      const isGlobal = await actorIsGlobalAdmin(ctx);
+      if (role === 'owner' && !isGlobal) {
+        throw new Error('Only platform administrators can invite with the site owner role');
+      }
       const user = await UserModel.findOne({ email: email.toLowerCase() });
       if (!user) throw new Error('User not found');
       const membership = await MembershipModel.findOneAndUpdate(
@@ -788,8 +898,16 @@ export const resolvers = {
     },
     setRole: async (_: unknown, { siteId, userId, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       if (!roles.includes(role)) throw new Error('Invalid role');
+      const existing = await MembershipModel.findOne({ userId, siteId }).lean();
+      if (!existing) throw new Error('Membership not found');
+      const isGlobal = await actorIsGlobalAdmin(ctx);
+      const promotesToOwner = role === 'owner' && existing.role !== 'owner';
+      const demotesOwner = existing.role === 'owner' && role !== 'owner';
+      if ((promotesToOwner || demotesOwner) && !isGlobal) {
+        throw new Error('Only platform administrators can assign or change the site owner role');
+      }
       const membership = await MembershipModel.findOneAndUpdate({ userId, siteId }, { role }, { new: true });
       if (!membership) throw new Error('Membership not found');
       return toId(membership.toObject());
@@ -798,7 +916,7 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'admin');
+      await requireRole(ctx.userId, sid, 'owner');
       const safeFields = validateFieldDefinitions(fields);
       await assertReferencedContentTypesExist(sid, safeFields as FieldDef[]);
       const normalizedSlug = toSlug(String(slug ?? ''));
@@ -823,7 +941,7 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'admin');
+      await requireRole(ctx.userId, sid, 'owner');
       if (rest.fields) {
         rest.fields = validateFieldDefinitions(rest.fields);
         await assertReferencedContentTypesExist(sid, rest.fields as FieldDef[], id);
@@ -851,7 +969,7 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'content_types:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'admin');
+      await requireRole(ctx.userId, sid, 'owner');
       await ContentTypeModel.deleteOne({ _id: id, siteId: sid });
       return true;
     },
@@ -1003,7 +1121,7 @@ export const resolvers = {
       ctx: RequestContext,
     ) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       const normalizedScopes = normalizeAndValidateScopes(scopes);
       let acting: string | null = null;
       if (scopesRequireActingUser(normalizedScopes)) {
@@ -1026,7 +1144,7 @@ export const resolvers = {
     },
     revokeApiKey: async (_: unknown, { id, siteId }: { id: string; siteId: string }, ctx: RequestContext) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, siteId, 'admin');
+      await requireRole(ctx.userId, siteId, 'owner');
       const updated = await ApiKeyModel.findOneAndUpdate(
         { _id: id, siteId, revokedAt: null },
         { $set: { revokedAt: new Date() } },
@@ -1057,7 +1175,7 @@ export const resolvers = {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'editor');
       if (Object.prototype.hasOwnProperty.call(input, 'mcpEnabled')) {
-        await requireRole(ctx.userId, sid, 'admin');
+        await requireRole(ctx.userId, sid, 'owner');
       }
 
       const existing = await SiteSettingsModel.findOne({ siteId: sid }).lean();
@@ -1134,7 +1252,7 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'bundles:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'admin');
+      await requireRole(ctx.userId, sid, 'owner');
       return await importSiteBundleService(sid, ctx.userId, bundle, {
         siteSettings: Boolean(options.siteSettings),
         contentTypes: Boolean(options.contentTypes),

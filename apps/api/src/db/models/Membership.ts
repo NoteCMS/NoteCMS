@@ -1,6 +1,7 @@
 import { Schema, model } from 'mongoose';
 
-export const roles = ['owner', 'admin', 'editor', 'viewer'] as const;
+/** Site-scoped only. Platform-wide power is `User.isAdmin` (platform admin). */
+export const roles = ['owner', 'editor', 'viewer'] as const;
 export type Role = (typeof roles)[number];
 
 const membershipSchema = new Schema(

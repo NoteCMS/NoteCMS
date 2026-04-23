@@ -5,11 +5,11 @@ import { cn } from '../lib/utils';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: Home },
-  { to: '/sites', label: 'Sites', icon: Globe },
+  { to: '/admin/sites', label: 'Sites', icon: Globe },
   { to: '/content-types', label: 'Content Types', icon: Shapes },
   { to: '/entries', label: 'Entries', icon: FileText },
   { to: '/users', label: 'Users', icon: Users },
-  { to: '/settings', label: 'Admin Settings', icon: Settings },
+  { to: '/admin/settings', label: 'Admin Settings', icon: Settings },
 ];
 
 export function Sidebar() {

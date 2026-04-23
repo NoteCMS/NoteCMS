@@ -10,6 +10,7 @@ import { buildRequestContext } from './auth/context.js';
 import type { RequestContext } from './auth/types.js';
 import { connectDb } from './db/mongoose.js';
 import { migrateEntryNames } from './db/migrate-entry-names.js';
+import { migrateMembershipRoles } from './db/migrate-membership-roles.js';
 import { ensureBootstrapAdmin } from './config/bootstrap.js';
 import { buildCorsOptions } from './config/cors-options.js';
 import { env } from './config/env.js';
@@ -27,6 +28,7 @@ if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
 
 await connectDb();
 await migrateEntryNames();
+await migrateMembershipRoles();
 await ensureBootstrapAdmin();
 
 const app = express();

@@ -19,8 +19,9 @@ import { LoginPage } from '@/pages/login-page';
 import { SitesPage } from '@/pages/sites-page';
 import { ApiKeysPage } from '@/pages/api-keys-page';
 import { SiteSettingsPage } from '@/pages/site-settings-page';
-import { UsersPage } from '@/pages/users-page';
+import { PlatformUsersPage, WorkspaceUsersPage } from '@/pages/users-page';
 import { DashboardPage } from '@/pages/dashboard-page';
+import { AccountSettingsPage } from '@/pages/account-settings-page';
 import { ModeToggle } from '@/components/mode-toggle';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
@@ -30,6 +31,7 @@ export function App() {
   const {
     token,
     userEmail,
+    userDisplayName,
     userName,
     email,
     password,
@@ -49,6 +51,7 @@ export function App() {
     sites,
     isAdmin,
     refreshSites,
+    refreshProfile,
     handleLogin,
     handleSetInitialPassword,
     cancelPasswordSetup,
@@ -63,6 +66,16 @@ export function App() {
 
   useEffect(() => {
     if (path === '/') navigate('/dashboard', { replace: true });
+  }, [path, navigate]);
+
+  useEffect(() => {
+    const legacy: Record<string, string> = {
+      '/sites': '/admin/sites',
+      '/settings': '/admin/settings',
+      '/api-keys': '/admin/api-keys',
+    };
+    const next = legacy[path];
+    if (next) navigate(next, { replace: true });
   }, [path, navigate]);
 
   useEffect(() => {
@@ -127,8 +140,10 @@ export function App() {
     if (!token) return;
     const activeWorkspace = sites.find((site) => site.id === activeSiteId);
     const siteTitle = activeWorkspace?.name?.trim() || 'Workspace';
-    if (path === '/settings') {
+    if (path === '/admin/settings') {
       document.title = buildPageTitle('Admin settings', siteTitle);
+    } else if (path === '/account') {
+      document.title = buildPageTitle('Your account', siteTitle);
     }
   }, [isValidatingSession, token, path, sites, activeSiteId]);
 
@@ -195,21 +210,39 @@ export function App() {
       }
       return [{ label: baseLabel }];
     }
+    if (
+      path === '/admin/sites' ||
+      path === '/admin/settings' ||
+      path === '/admin/api-keys' ||
+      path === '/admin/users' ||
+      path.startsWith('/admin/users/')
+    ) {
+      const tail =
+        path === '/admin/sites'
+          ? 'Sites'
+          : path === '/admin/settings'
+            ? 'Admin Settings'
+            : path === '/admin/api-keys'
+              ? 'API keys'
+              : 'All users';
+      return [
+        { label: 'Admin', href: '/admin/sites' },
+        { label: tail },
+      ];
+    }
     const singleMap: Record<string, string> = {
       '/dashboard': 'Dashboard',
-      '/sites': 'Sites',
+      '/account': 'Your account',
       '/content-types': 'Content Types',
       '/entries': 'Entries',
       '/assets': 'Assets',
       '/site-settings': 'Site settings',
       '/users': 'Users',
-      '/settings': 'Admin Settings',
-      '/api-keys': 'API keys',
     };
     return [{ label: singleMap[path] ?? 'Dashboard' }];
   })();
   const activeWorkspaceSite = sites.find((site) => site.id === activeSiteId);
-  const showSiteAdminTools = activeWorkspaceSite?.role === 'owner' || activeWorkspaceSite?.role === 'admin';
+  const showSiteAdminTools = activeWorkspaceSite?.role === 'owner';
 
   const contentTypeMenuItems = sidebarContentTypes
     .filter((contentType) => contentType.options?.showInSidebar)
@@ -235,6 +268,7 @@ export function App() {
         onNavigate={navigate}
         contentTypeMenuItems={contentTypeMenuItems}
         showSiteAdminTools={showSiteAdminTools}
+        showPlatformUsersNav={isAdmin}
       />
       <SidebarInset className="bg-muted">
         <header className="flex h-14 shrink-0 items-center gap-2 px-4">
@@ -265,8 +299,21 @@ export function App() {
 
         <div className="flex flex-1 p-2 pt-0 overflow-hidden">
           {path === '/users' ? (
-            <UsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} isGlobalAdmin={isAdmin} />
-          ) : path === '/sites' ? (
+            <WorkspaceUsersPage
+              token={token}
+              sites={sites}
+              workspaceSiteId={activeSiteId}
+              isSiteOwner={activeWorkspaceSite?.role === 'owner'}
+            />
+          ) : path === '/admin/users' ? (
+            isAdmin ? (
+              <PlatformUsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} />
+            ) : (
+              <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
+                <p>All users is only available to platform administrators.</p>
+              </div>
+            )
+          ) : path === '/admin/sites' ? (
             <SitesPage token={token} sites={sites} isAdmin={isAdmin} onSitesChanged={refreshSites} />
           ) : path === '/content-types' ? (
             <ContentTypesPage token={token} workspaceSiteId={activeSiteId} sites={sites} />
@@ -291,8 +338,17 @@ export function App() {
             <AssetsPage token={token} workspaceSiteId={activeSiteId} sites={sites} />
           ) : path === '/site-settings' ? (
             <SiteSettingsPage token={token} workspaceSiteId={activeSiteId} sites={sites} onSitesChanged={refreshSites} />
-          ) : path === '/api-keys' ? (
+          ) : path === '/admin/api-keys' ? (
             <ApiKeysPage token={token} workspaceSiteId={activeSiteId} sites={sites} canManage={showSiteAdminTools} />
+          ) : path === '/account' ? (
+            <AccountSettingsPage
+              token={token}
+              userEmail={userEmail}
+              userDisplayName={userDisplayName}
+              sites={sites}
+              workspaceSiteId={activeSiteId}
+              onProfileUpdated={refreshProfile}
+            />
           ) : path === '/dashboard' ? (
             <DashboardPage
               token={token}

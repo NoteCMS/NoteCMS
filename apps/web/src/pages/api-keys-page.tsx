@@ -263,7 +263,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
             <CardDescription>Headless access for your public site, SDK, or MCP.</CardDescription>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground">Only workspace admins and owners can manage API keys.</p>
+            <p className="text-sm text-muted-foreground">Only site owners can manage API keys.</p>
           </CardContent>
         </Card>
       </div>
@@ -496,7 +496,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
               <p className="text-sm text-muted-foreground">
                 When disabled, requests that identify this site (API keys, or a sign-in session tied to this workspace)
                 receive <span className="font-mono text-xs">403</span> from <span className="font-mono text-xs">/api/mcp</span>
-                . Only owners and admins can change this.
+                . Only site owners can change this.
               </p>
             </div>
           </label>
