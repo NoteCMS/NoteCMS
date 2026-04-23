@@ -1,10 +1,12 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/package.json
 COPY apps/web/package.json ./apps/web/package.json
 COPY packages/ui/package.json ./packages/ui/package.json
 COPY packages/types/package.json ./packages/types/package.json
-RUN npm install
+COPY packages/notecms-sdk/package.json ./packages/notecms-sdk/package.json
+RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app
@@ -17,6 +19,7 @@ WORKDIR /app
 RUN npm install -g serve && apk add --no-cache wget
 COPY --from=build /app/apps/web/dist ./dist
 COPY apps/web/docker-entrypoint.sh /app/docker-entrypoint.sh
+COPY apps/web/scripts/write-serve-config.mjs /app/write-serve-config.mjs
 RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 5173
 ENV PORT=5173

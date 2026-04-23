@@ -1,8 +1,12 @@
 FROM node:22-alpine AS deps
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/package.json
-RUN npm install
+COPY apps/web/package.json ./apps/web/package.json
+COPY packages/ui/package.json ./packages/ui/package.json
+COPY packages/types/package.json ./packages/types/package.json
+COPY packages/notecms-sdk/package.json ./packages/notecms-sdk/package.json
+RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app

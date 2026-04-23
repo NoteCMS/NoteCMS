@@ -34,4 +34,6 @@ elif [ -n "${NOTECMS_GRAPHQL_PORT:-}" ]; then
   write_port_only "$NOTECMS_GRAPHQL_PORT" "$GRAPHQL_PATH"
 fi
 
+node /app/write-serve-config.mjs /app/dist
+
 exec serve -s dist -l "$PORT"

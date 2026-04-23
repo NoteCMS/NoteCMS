@@ -32,9 +32,11 @@ type UsersPageProps = {
   token: string;
   sites: Site[];
   workspaceSiteId: string;
+  /** Global (platform) admin — only these users can create accounts or change global status/admin flags. */
+  isGlobalAdmin: boolean;
 };
 
-export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
+export function UsersPage({ token, sites, workspaceSiteId, isGlobalAdmin }: UsersPageProps) {
   const siteTitle = sites.find((s) => s.id === workspaceSiteId)?.name?.trim() || 'Workspace';
   useDocumentTitle(buildPageTitle('Users & roles', siteTitle));
 
@@ -127,7 +129,10 @@ export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
             <CardTitle>Global Users</CardTitle>
-            <CardDescription>Filter users by site access and role.</CardDescription>
+            <CardDescription>
+              Filter users by site access and role.
+              {!isGlobalAdmin ? ' Only global administrators can create accounts or change global admin/status flags.' : ''}
+            </CardDescription>
           </div>
           <Dialog open={createOpen} onOpenChange={setCreateOpen}>
             <DialogTrigger asChild>
@@ -304,13 +309,18 @@ export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
           </DialogHeader>
 
           <div className="space-y-4">
+            {!isGlobalAdmin ? (
+              <p className="text-sm text-muted-foreground">
+                Global admin and account status can only be changed by global administrators. You can still edit site access below.
+              </p>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Account Type</Label>
                 <Combobox
                   value={managedUser?.isAdmin ? 'admin' : 'user'}
                   onValueChange={(value) => {
-                    if (!managedUser) return;
+                    if (!managedUser || !isGlobalAdmin) return;
                     void updateAdmin(managedUser.id, value === 'admin');
                   }}
                   placeholder="Account type"
@@ -320,6 +330,7 @@ export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
                     { value: 'admin', label: 'admin' },
                   ]}
                   className="w-full"
+                  disabled={!isGlobalAdmin}
                 />
               </div>
 
@@ -328,7 +339,7 @@ export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
                 <Combobox
                   value={managedUser?.status ?? 'active'}
                   onValueChange={(value) => {
-                    if (!managedUser) return;
+                    if (!managedUser || !isGlobalAdmin) return;
                     void updateStatus(managedUser.id, value as Status);
                   }}
                   placeholder="Status"
@@ -338,6 +349,7 @@ export function UsersPage({ token, sites, workspaceSiteId }: UsersPageProps) {
                     { value: 'disabled', label: 'disabled' },
                   ]}
                   className="w-full"
+                  disabled={!isGlobalAdmin}
                 />
               </div>
             </div>

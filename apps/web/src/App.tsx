@@ -264,7 +264,7 @@ export function App() {
 
         <div className="flex flex-1 p-3 md:p-4">
           {path === '/users' ? (
-            <UsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} />
+            <UsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} isGlobalAdmin={isAdmin} />
           ) : path === '/sites' ? (
             <SitesPage token={token} sites={sites} isAdmin={isAdmin} onSitesChanged={refreshSites} />
           ) : path === '/content-types' ? (

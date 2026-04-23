@@ -16,4 +16,14 @@ export const env = {
   assetStorageDriver: (process.env.ASSET_STORAGE_DRIVER ?? 'local') as 'local' | 's3',
   assetLocalRoot: process.env.ASSET_LOCAL_ROOT ?? path.resolve(process.cwd(), 'data/assets'),
   assetMaxUploadBytes: Number(process.env.ASSET_MAX_UPLOAD_BYTES ?? 10_000_000),
+  /** Max JSON body size for Express (GraphQL, MCP). Site bundle import may need more — override in deploy. */
+  jsonBodyLimit: process.env.JSON_BODY_LIMIT?.trim() || '12mb',
+  /** IP rate limit: max requests per window for POST /graphql (brute-force / DoS mitigation). */
+  graphqlRateLimitMax: Number(process.env.GRAPHQL_RATE_LIMIT_MAX ?? 400),
+  /** Window in ms for GraphQL rate limit (default 15 minutes). */
+  graphqlRateLimitWindowMs: Number(process.env.GRAPHQL_RATE_LIMIT_WINDOW_MS ?? 900_000),
+  mcpRateLimitMax: Number(process.env.MCP_RATE_LIMIT_MAX ?? 120),
+  mcpRateLimitWindowMs: Number(process.env.MCP_RATE_LIMIT_WINDOW_MS ?? 900_000),
+  /** When true, Express trusts `X-Forwarded-For` (use behind a reverse proxy so rate limits key on client IP). */
+  trustProxy: ['1', 'true', 'yes'].includes((process.env.TRUST_PROXY ?? '').toLowerCase()),
 };

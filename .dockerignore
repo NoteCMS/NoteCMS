@@ -1,0 +1,16 @@
+.git
+.github
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+**/*.log
+.env
+.env.*
+!.env.example
+data
+*.md
+!README.md
+terminals
+.cursor
+**/.DS_Store

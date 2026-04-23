@@ -4,13 +4,16 @@ import { expressMiddleware } from '@as-integrations/express5';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import cors from 'cors';
 import express from 'express';
+import rateLimit from 'express-rate-limit';
 import http from 'node:http';
 import { buildRequestContext } from './auth/context.js';
 import type { RequestContext } from './auth/types.js';
 import { connectDb } from './db/mongoose.js';
 import { migrateEntryNames } from './db/migrate-entry-names.js';
 import { ensureBootstrapAdmin } from './config/bootstrap.js';
+import { buildCorsOptions } from './config/cors-options.js';
 import { env } from './config/env.js';
+import { apiSecurityHeaders } from './config/security-headers.js';
 import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
@@ -27,6 +30,10 @@ await migrateEntryNames();
 await ensureBootstrapAdmin();
 
 const app = express();
+if (env.trustProxy) {
+  app.set('trust proxy', 1);
+}
+app.use(apiSecurityHeaders());
 const httpServer = http.createServer(app);
 
 const apollo = new ApolloServer<RequestContext>({
@@ -37,14 +44,24 @@ const apollo = new ApolloServer<RequestContext>({
 
 await apollo.start();
 
-app.use(
-  cors<cors.CorsRequest>({
-    origin: true,
-    credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Api-Key', 'mcp-session-id', 'Mcp-Session-Id'],
-  }),
-);
-app.use(express.json({ limit: '50mb' }));
+app.use(cors<cors.CorsRequest>(buildCorsOptions()));
+app.use(express.json({ limit: env.jsonBodyLimit }));
+
+const graphqlLimiter = rateLimit({
+  windowMs: env.graphqlRateLimitWindowMs,
+  limit: env.graphqlRateLimitMax,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { message: 'Too many requests; try again later.' },
+});
+
+const mcpLimiter = rateLimit({
+  windowMs: env.mcpRateLimitWindowMs,
+  limit: env.mcpRateLimitMax,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { message: 'Too many MCP requests; try again later.' },
+});
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
@@ -52,10 +69,16 @@ app.get('/health', (_req, res) => {
 
 app.use(
   '/graphql',
+  graphqlLimiter,
   expressMiddleware(apollo, {
     context: async ({ req }) => buildRequestContext(req.headers),
   }),
 );
+
+function mcpSafeErrorMessage(err: unknown): string {
+  if (env.nodeEnv === 'production') return 'Internal server error';
+  return err instanceof Error ? err.message : 'MCP error';
+}
 
 async function mcpHandler(req: express.Request, res: express.Response) {
   try {
@@ -69,9 +92,13 @@ async function mcpHandler(req: express.Request, res: express.Response) {
     try {
       await assertMcpEndpointEnabledForContext(ctx);
     } catch (gateErr) {
-      res.status(403).json({
-        message: gateErr instanceof Error ? gateErr.message : 'MCP is not available for this workspace',
-      });
+      const message =
+        env.nodeEnv === 'production'
+          ? 'Forbidden'
+          : gateErr instanceof Error
+            ? gateErr.message
+            : 'MCP is not available for this workspace';
+      res.status(403).json({ message });
       return;
     }
     const mcp = createNoteCmsMcpServer(apollo, ctx);
@@ -88,13 +115,14 @@ async function mcpHandler(req: express.Request, res: express.Response) {
     }
   } catch (err) {
     if (!res.headersSent) {
-      res.status(500).json({ message: err instanceof Error ? err.message : 'MCP error' });
+      console.error('[mcp]', err);
+      res.status(500).json({ message: mcpSafeErrorMessage(err) });
     }
   }
 }
 
-app.get('/api/mcp', mcpHandler);
-app.post('/api/mcp', mcpHandler);
+app.get('/api/mcp', mcpLimiter, mcpHandler);
+app.post('/api/mcp', mcpLimiter, mcpHandler);
 
 app.use((_req, res) => {
   res.status(404).json({ message: 'Not found' });

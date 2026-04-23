@@ -24,6 +24,8 @@ import {
   type FieldDef,
 } from '../domain/fields/repeater-hydrate.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
+import { clampListArgs } from '../lib/list-args.js';
+import { escapeRegexLiteral } from '../lib/regex-escape.js';
 
 function toSlug(value: string) {
   return value
@@ -450,10 +452,11 @@ export const resolvers = {
       await requireReadSite(ctx, sid, 'content_types:read');
       return (await ContentTypeModel.find({ siteId: sid }).lean()).map(toId);
     },
-    entries: async (_: unknown, { siteId, contentTypeId, limit = 30, offset = 0 }: any, ctx: RequestContext) => {
+    entries: async (_: unknown, { siteId, contentTypeId, limit, offset }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'entries:read');
-      const entries = await EntryModel.find({ siteId: sid, contentTypeId }).sort({ updatedAt: -1 }).skip(offset).limit(limit).lean();
+      const { limit: l, offset: o } = clampListArgs(limit, offset, { limit: 30, offset: 0 });
+      const entries = await EntryModel.find({ siteId: sid, contentTypeId }).sort({ updatedAt: -1 }).skip(o).limit(l).lean();
       const editorIds = [...new Set(entries.map((entry) => (entry.updatedBy ? String(entry.updatedBy) : '')).filter(Boolean))];
       const editors = await UserModel.find({ _id: { $in: editorIds } }).select({ _id: 1, email: 1 }).lean();
       const editorMap = new Map(editors.map((editor) => [String(editor._id), editor]));
@@ -493,14 +496,16 @@ export const resolvers = {
       const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
       return entryDocumentToGql(enriched);
     },
-    listAssets: async (_: unknown, { siteId, query = '', limit = 30, offset = 0 }: any, ctx: RequestContext) => {
+    listAssets: async (_: unknown, { siteId, query = '', limit, offset }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'assets:read');
+      const { limit: l, offset: o } = clampListArgs(limit, offset, { limit: 30, offset: 0 });
 
       const filter: Record<string, unknown> = { siteId: sid };
-      if (query.trim()) filter.filename = { $regex: query.trim(), $options: 'i' };
+      const q = typeof query === 'string' ? query.trim() : '';
+      if (q) filter.filename = { $regex: escapeRegexLiteral(q), $options: 'i' };
 
-      const assets = await AssetModel.find(filter).sort({ createdAt: -1 }).skip(offset).limit(limit).lean();
+      const assets = await AssetModel.find(filter).sort({ createdAt: -1 }).skip(o).limit(l).lean();
       return Promise.all(assets.map(toAsset));
     },
     apiKeys: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
@@ -560,6 +565,7 @@ export const resolvers = {
     login: async (_: unknown, { email, password, siteId }: { email: string; password?: string | null; siteId?: string | null }) => {
       const user = await UserModel.findOne({ email: email.toLowerCase() });
       if (!user) throw new Error('Invalid credentials');
+      if (user.status !== 'active') throw new Error('Invalid credentials');
       const pass = typeof password === 'string' ? password : '';
       if (!user.passwordHash) {
         if (!user.isAdmin) throw new Error('Invalid credentials');
@@ -647,6 +653,8 @@ export const resolvers = {
     },
     createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
+      const actor = await UserModel.findById(ctx.userId).lean();
+      if (!actor?.isAdmin) throw new Error('Only global administrators can create accounts');
       assertStrongPassword(password);
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
@@ -665,11 +673,8 @@ export const resolvers = {
     updateUserStatus: async (_: unknown, { userId, status }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       if (!['active', 'disabled'].includes(status)) throw new Error('Invalid status');
-      const hasAdminMembership = await MembershipModel.findOne({
-        userId: ctx.userId,
-        role: { $in: ['owner', 'admin'] },
-      }).lean();
-      if (!hasAdminMembership) throw new Error('Access denied: admin role required');
+      const actor = await UserModel.findById(ctx.userId).lean();
+      if (!actor?.isAdmin) throw new Error('Only global administrators can change account status');
 
       const user = await UserModel.findByIdAndUpdate(userId, { status }, { new: true });
       if (!user) throw new Error('User not found');

@@ -134,9 +134,11 @@ export const typeDefs = `#graphql
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
     apiKeyInfo: ApiKeyInfo!
     contentTypes(siteId: ID): [ContentType!]!
+    """limit and offset are capped server-side (see API docs / list limits)."""
     entries(siteId: ID, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
     entry(id: ID!, siteId: ID): Entry
     entryBySlug(siteId: ID, contentTypeSlug: String!, slug: String!): Entry
+    """The query argument matches filename as a case-insensitive substring (not a regex). limit/offset are capped."""
     listAssets(siteId: ID, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID): SiteSettings!

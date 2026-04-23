@@ -1,10 +1,16 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { env } from '../config/env.js';
 
-const MIN = 8;
+const MIN_DEV = 8;
+const MIN_PROD = 10;
 
 export function assertStrongPassword(password: string) {
   const t = typeof password === 'string' ? password : '';
-  if (t.length < MIN) throw new Error(`Password must be at least ${MIN} characters.`);
+  const min = env.nodeEnv === 'production' ? MIN_PROD : MIN_DEV;
+  if (t.length < min) throw new Error(`Password must be at least ${min} characters.`);
+  if (!/[a-zA-Z]/.test(t) || !/[0-9]/.test(t)) {
+    throw new Error('Password must include at least one letter and one number.');
+  }
 }
 
 /** Compare optional setup secret to env without leaking length via timing (SHA-256 then timing-safe compare). */

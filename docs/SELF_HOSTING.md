@@ -64,6 +64,14 @@ Back up both volumes for a full restore. S3-backed asset storage is not implemen
 | `NOTECMS_GRAPHQL_PORT`                                               | API port only; SPA uses current page host + this port + `GRAPHQL_PATH`                            |
 | `WEB_PORT`                                                           | Internal port for `serve` in the web container                                                    |
 | `API_PUBLISH_PORT`, `WEB_PUBLISH_PORT`                               | Host bindings for API and web                                                                     |
+| `CORS_ORIGINS`                                                       | Comma-separated browser origins allowed to call the API (e.g. `https://cms.example.com`). **Required** for cross-origin admin UI in production; if unset, the API blocks cross-origin browser requests. |
+| `TRUST_PROXY`                                                        | Set to `1` when the API sits behind a reverse proxy so rate limits use the real client IP (`X-Forwarded-For`). |
+| `JSON_BODY_LIMIT`                                                    | Express JSON body size (default `12mb`; raise if you import very large site bundles).              |
+| `GRAPHQL_RATE_LIMIT_MAX`, `GRAPHQL_RATE_LIMIT_WINDOW_MS`               | Per-IP GraphQL rate limit (default 400 requests / 15 minutes).                                    |
+| `MCP_RATE_LIMIT_MAX`, `MCP_RATE_LIMIT_WINDOW_MS`                     | Per-IP MCP endpoint limit (default 120 / 15 minutes).                                               |
+| `CSP_CONNECT_SRC_EXTRA`                                              | Optional space- or comma-separated extra `connect-src` tokens for the **web** container CSP (e.g. another API origin). Used when generating `serve.json` at container start. |
+
+The web image runs [`serve`](https://github.com/vercel/serve) with a generated **`serve.json`** that sets **Content-Security-Policy** and related headers. Tighten `connect-src` by setting `NOTECMS_GRAPHQL_URL` and/or `PUBLIC_URL` so the API origin is explicit; with only `NOTECMS_GRAPHQL_PORT`, the CSP allows `http:` and `https:` for API calls (different port than the SPA).
 
 
 ## Local smoke test (build images without GHCR)

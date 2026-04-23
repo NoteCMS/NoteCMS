@@ -15,17 +15,14 @@ Open-source, multi-site headless CMS with a clean admin UI, GraphQL API, and an 
 
 NoteCMS follows a hybrid workflow inspired by WordPress custom post types plus advanced custom fields, but built as a headless system.
 
-1. **Define a content type**  
-   Think of this like creating a custom post type (`Pages`, `Blog posts`, `Team members`, etc).
-
-2. **Design fields for that type**  
-   Add structured fields (text, rich text, number, image, repeater, relations, etc), similar to an advanced custom fields setup.
-
-3. **Create entries from that schema**  
-   Editors fill in a generated form that matches your field definitions. Validation and visibility rules are schema-driven.
-
-4. **Deliver content through API/SDK**  
-   Your frontend (Next.js, SvelteKit, Astro, static pipeline, etc) reads the content through GraphQL or `@notecms/sdk`.
+1. **Define a content type**
+  Think of this like creating a custom post type (`Pages`, `Blog posts`, `Team members`, etc).
+2. **Design fields for that type**
+  Add structured fields (text, rich text, number, image, repeater, relations, etc), similar to an advanced custom fields setup.
+3. **Create entries from that schema**
+  Editors fill in a generated form that matches your field definitions. Validation and visibility rules are schema-driven.
+4. **Deliver content through API/SDK**
+  Your frontend (Next.js, SvelteKit, Astro, static pipeline, etc) reads the content through GraphQL or `@notecms/sdk`.
 
 The benefit is a flexible editor experience for non-developers, while developers keep strongly structured content and predictable API output.
 
@@ -48,13 +45,13 @@ The benefit is a flexible editor experience for non-developers, while developers
 1. Clone and enter the repo.
 2. Create env file: `cp .env.example .env`
 3. Set at least:
-   - `JWT_SECRET` (for local dev any non-empty string is fine)
-   - `BOOTSTRAP_ADMIN_EMAIL` (for first admin login)
+  - `JWT_SECRET` (for local dev any non-empty string is fine)
+  - `BOOTSTRAP_ADMIN_EMAIL` (for first admin login)
 4. Install dependencies: `npm install`
 5. Start MongoDB (local service or Docker)
 6. Run apps:
-   - `npm run dev -w @note/api`
-   - `npm run dev -w @note/web`
+  - `npm run dev -w @note/api`
+  - `npm run dev -w @note/web`
 7. Open `http://localhost:5173`
 
 ## First login
@@ -97,9 +94,9 @@ Use `deploy/docker-compose.yml` with published images. Full guide:
 ## API and MCP docs
 
 - GraphQL + scoped API keys + MCP details:
-  - [`apps/api/docs/mcp-and-scoped-keys.md`](apps/api/docs/mcp-and-scoped-keys.md)
+  - `[apps/api/docs/mcp-and-scoped-keys.md](apps/api/docs/mcp-and-scoped-keys.md)`
 - SDK usage:
-  - [`packages/notecms-sdk/README.md`](packages/notecms-sdk/README.md)
+  - `[packages/notecms-sdk/README.md](packages/notecms-sdk/README.md)`
 
 ## Scripts (root)
 
@@ -113,4 +110,4 @@ Use `deploy/docker-compose.yml` with published images. Full guide:
 
 ## Contributing
 
-Small improvements and bug fixes are welcome. See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+Small improvements and bug fixes are welcome. See `[CONTRIBUTING.md](CONTRIBUTING.md)`.
