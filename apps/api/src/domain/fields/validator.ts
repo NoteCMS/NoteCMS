@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { EntryFieldValidationError } from './entry-field-validation-error.js';
 import type { FieldDefinition } from './types.js';
 
 type ConditionOperator =
@@ -171,12 +172,18 @@ export function validateFieldDefinitions(fields: unknown): FieldDefinition[] {
   return parsed;
 }
 
-function validateSingleValue(field: FieldDefinition, value: unknown, visibilityData: Record<string, unknown>) {
+function validateSingleValue(
+  field: FieldDefinition,
+  value: unknown,
+  visibilityData: Record<string, unknown>,
+  pathPrefix: string[],
+) {
+  const path = [...pathPrefix, field.key];
   const isEntriesLatest = field.type === 'entries' && (field.config as Record<string, unknown> | undefined)?.mode === 'latest';
   const effectiveRequired =
     Boolean(field.required) && isFieldVisibleForEntryData(field, visibilityData) && !isEntriesLatest;
   if ((value === undefined || value === null || value === '') && effectiveRequired) {
-    throw new Error(`Field ${field.key} is required`);
+    throw new EntryFieldValidationError(`Field ${field.key} is required`, path);
   }
   if (value === undefined || value === null) return;
 
@@ -185,48 +192,52 @@ function validateSingleValue(field: FieldDefinition, value: unknown, visibilityD
     case 'textarea':
     case 'wysiwyg':
     case 'date':
-      if (typeof value !== 'string') throw new Error(`Field ${field.key} must be string`);
+      if (typeof value !== 'string') throw new EntryFieldValidationError(`Field ${field.key} must be string`, path);
       break;
     case 'url':
-      if (typeof value !== 'string') throw new Error(`Field ${field.key} must be string`);
-      if (!isValidUrlValue(value)) throw new Error(`Field ${field.key} must be an absolute URL or site-relative path`);
+      if (typeof value !== 'string') throw new EntryFieldValidationError(`Field ${field.key} must be string`, path);
+      if (!isValidUrlValue(value))
+        throw new EntryFieldValidationError(`Field ${field.key} must be an absolute URL or site-relative path`, path);
       break;
     case 'number':
-      if (typeof value !== 'number') throw new Error(`Field ${field.key} must be number`);
+      if (typeof value !== 'number') throw new EntryFieldValidationError(`Field ${field.key} must be number`, path);
       break;
     case 'boolean':
-      if (typeof value !== 'boolean') throw new Error(`Field ${field.key} must be boolean`);
+      if (typeof value !== 'boolean') throw new EntryFieldValidationError(`Field ${field.key} must be boolean`, path);
       break;
     case 'select': {
-      if (typeof value !== 'string') throw new Error(`Field ${field.key} must be string`);
+      if (typeof value !== 'string') throw new EntryFieldValidationError(`Field ${field.key} must be string`, path);
       const options = (field.config?.options as string[]) ?? [];
-      if (options.length && !options.includes(value)) throw new Error(`Field ${field.key} must match configured option`);
+      if (options.length && !options.includes(value))
+        throw new EntryFieldValidationError(`Field ${field.key} must match configured option`, path);
       break;
     }
     case 'repeater': {
-      if (!Array.isArray(value)) throw new Error(`Field ${field.key} must be an array`);
+      if (!Array.isArray(value)) throw new EntryFieldValidationError(`Field ${field.key} must be an array`, path);
       const nestedFields = validateFieldDefinitions(field.config?.fields ?? []);
-      for (const item of value) {
+      for (let i = 0; i < value.length; i++) {
+        const item = value[i];
         if (typeof item !== 'object' || item === null || Array.isArray(item)) {
-          throw new Error(`Repeater item in ${field.key} must be object`);
+          throw new EntryFieldValidationError(`Repeater item in ${field.key} must be object`, [...path, String(i)]);
         }
-        validateEntryData(nestedFields, item as Record<string, unknown>);
+        validateEntryData(nestedFields, item as Record<string, unknown>, [...path, String(i)]);
       }
       break;
     }
 
     case 'image': {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-        throw new Error(`Field ${field.key} must be image object`);
+        throw new EntryFieldValidationError(`Field ${field.key} must be image object`, path);
       }
       const assetId = (value as Record<string, unknown>).assetId;
-      if (typeof assetId !== 'string' || !assetId) throw new Error(`Field ${field.key} requires assetId`);
+      if (typeof assetId !== 'string' || !assetId)
+        throw new EntryFieldValidationError(`Field ${field.key} requires assetId`, path);
       const variant = (value as Record<string, unknown>).variant;
       if (
         variant !== undefined &&
         !['original', 'web', 'thumbnail', 'small', 'medium', 'large', 'xlarge'].includes(String(variant))
       ) {
-        throw new Error(`Field ${field.key} has invalid image variant`);
+        throw new EntryFieldValidationError(`Field ${field.key} has invalid image variant`, path);
       }
       break;
     }
@@ -242,24 +253,29 @@ function validateSingleValue(field: FieldDefinition, value: unknown, visibilityD
       if (mode === 'latest') {
         if (Array.isArray(value) && value.length === 0) return;
         if (value !== undefined && value !== null && !(Array.isArray(value) && value.length === 0)) {
-          throw new Error(
+          throw new EntryFieldValidationError(
             `Field ${field.key} uses latest mode — omit it or use an empty array in stored data (picked entries are resolved at read time).`,
+            path,
           );
         }
         return;
       }
 
-      if (!Array.isArray(value)) throw new Error(`Field ${field.key} must be an array of entry ids`);
+      if (!Array.isArray(value))
+        throw new EntryFieldValidationError(`Field ${field.key} must be an array of entry ids`, path);
       const ids = value.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
-      if (ids.length !== value.length) throw new Error(`Field ${field.key}: use only non-empty string ids`);
-      if (ids.length > maxItems) throw new Error(`Field ${field.key}: at most ${maxItems} entries`);
-      if (effectiveRequired && ids.length === 0) throw new Error(`Field ${field.key} is required`);
+      if (ids.length !== value.length)
+        throw new EntryFieldValidationError(`Field ${field.key}: use only non-empty string ids`, path);
+      if (ids.length > maxItems)
+        throw new EntryFieldValidationError(`Field ${field.key}: at most ${maxItems} entries`, path);
+      if (effectiveRequired && ids.length === 0)
+        throw new EntryFieldValidationError(`Field ${field.key} is required`, path);
       break;
     }
   }
 }
 
-export function validateEntryData(fields: FieldDefinition[], data: Record<string, unknown>) {
-  for (const field of fields) validateSingleValue(field, data[field.key], data);
+export function validateEntryData(fields: FieldDefinition[], data: Record<string, unknown>, pathPrefix: string[] = []) {
+  for (const field of fields) validateSingleValue(field, data[field.key], data, pathPrefix);
   return true;
 }

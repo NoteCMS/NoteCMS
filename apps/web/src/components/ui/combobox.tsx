@@ -37,6 +37,9 @@ type ComboboxProps = {
   emptyText?: string
   className?: string
   disabled?: boolean
+  invalid?: boolean
+  /** Called when the filter input receives focus (e.g. clear server-side field errors). */
+  onInputFocus?: () => void
 }
 
 function Combobox({
@@ -50,6 +53,8 @@ function Combobox({
   emptyText = "No results found.",
   className,
   disabled = false,
+  invalid = false,
+  onInputFocus,
 }: ComboboxProps) {
   const groupedOptions = groups?.filter((group) => group.options.length) ?? []
   const hasGroups = groupedOptions.length > 0
@@ -76,7 +81,9 @@ function Combobox({
         id={id}
         className={className}
         disabled={disabled}
+        invalid={invalid}
         placeholder={searchPlaceholder ?? placeholder}
+        onFocus={onInputFocus}
       />
       <ComboboxContent>
         <ComboboxEmpty>{emptyText}</ComboboxEmpty>
@@ -141,17 +148,21 @@ function ComboboxInput({
   className,
   children,
   disabled = false,
+  invalid = false,
   showTrigger = true,
   showClear = false,
   ...props
 }: ComboboxPrimitive.Input.Props & {
   showTrigger?: boolean
   showClear?: boolean
+  invalid?: boolean
 }) {
   return (
     <InputGroup className={cn("min-w-0 w-full", className)}>
       <ComboboxPrimitive.Input
-        render={<InputGroupInput disabled={disabled} />}
+        render={
+          <InputGroupInput disabled={disabled} aria-invalid={invalid ? true : undefined} />
+        }
         {...props}
       />
       <InputGroupAddon align="inline-end">

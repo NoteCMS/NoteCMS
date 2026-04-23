@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -301,6 +302,7 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
             open={createDialogOpen}
             onOpenChange={(open) => {
               setCreateDialogOpen(open);
+              if (open) setError('');
               if (!open) {
                 setName('');
                 setScopes(DEFAULT_NEW_KEY_SCOPES);
@@ -322,6 +324,18 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
                     trails and role checks).
                   </DialogDescription>
                 </DialogHeader>
+                {error && createDialogOpen ? (
+                  <LoadErrorAlert
+                    compact
+                    title={null}
+                    message={error}
+                    onRetry={
+                      error.startsWith('Select at least one scope') || error.startsWith('Choose an acting member')
+                        ? undefined
+                        : () => void loadKeys()
+                    }
+                  />
+                ) : null}
                 <div className="grid gap-4 py-2">
                   <Field>
                     <FieldLabel htmlFor="api-key-name">Name</FieldLabel>
@@ -403,7 +417,9 @@ export function ApiKeysPage({ token, workspaceSiteId, sites, canManage }: ApiKey
             </div>
           ) : null}
 
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
+          {error && !createDialogOpen ? (
+            <LoadErrorAlert title="API keys" message={error} onRetry={() => void loadKeys()} />
+          ) : null}
 
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Loading keys…</p>

@@ -33,6 +33,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { stableJsonStringify } from '@/lib/stable-json';
@@ -1420,7 +1421,9 @@ export function ContentTypesPage({ token, workspaceSiteId, sites }: ContentTypes
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
+          {error ? (
+            <LoadErrorAlert title="Content types" message={error} onRetry={() => void loadContentTypes()} />
+          ) : null}
 
           {!workspaceSiteId ? (
             <p className="text-sm text-muted-foreground">Select a workspace from the sidebar first.</p>
@@ -1584,6 +1587,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
   const [name, setName] = useState('');
   /** Immutable URL key after save; only used when editing an existing type */
   const [committedSlug, setCommittedSlug] = useState('');
@@ -1702,7 +1706,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
     return () => {
       cancelled = true;
     };
-  }, [workspaceSiteId, contentTypeId, isNew, token]);
+  }, [workspaceSiteId, contentTypeId, isNew, token, reloadKey]);
 
   async function handleSave() {
     if (!workspaceSiteId) return;
@@ -1854,7 +1858,16 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
         </CardHeader>
         <CardContent>
           {!workspaceSiteId ? <p className="text-sm text-muted-foreground">Select a workspace from the sidebar first.</p> : null}
-          {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
+          {error ? (
+            <LoadErrorAlert
+              title="Content type"
+              message={error}
+              onRetry={() => {
+                setError('');
+                setReloadKey((k) => k + 1);
+              }}
+            />
+          ) : null}
 
           {isLoading ? (
             <p className="text-sm text-muted-foreground">Loading content type…</p>

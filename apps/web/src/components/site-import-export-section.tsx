@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Download, Loader2, Upload } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -239,7 +240,9 @@ export function SiteImportExportSection({
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4">
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <LoadErrorAlert compact title={null} message={error} onRetry={() => void runExport()} />
+            ) : null}
             <FieldSet>
               <FieldLegend>Scope</FieldLegend>
               <FieldGroup data-slot="checkbox-group" className="gap-3">
@@ -322,7 +325,9 @@ export function SiteImportExportSection({
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-4">
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? (
+              <LoadErrorAlert compact title={null} message={error} onRetry={() => void runImport()} />
+            ) : null}
             <input
               ref={importFileRef}
               type="file"
@@ -337,7 +342,7 @@ export function SiteImportExportSection({
             <Button type="button" variant="secondary" onClick={() => importFileRef.current?.click()} disabled={busy}>
               Choose JSON file…
             </Button>
-            {parseError ? <p className="text-sm text-destructive">{parseError}</p> : null}
+            {parseError ? <LoadErrorAlert compact title="Invalid file" message={parseError} /> : null}
             {parsedBundle ? (
               <>
                 <Card className="border-border/80">

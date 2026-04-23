@@ -6,11 +6,16 @@ import { List, ListOrdered, Quote, Redo2, Undo2 } from 'lucide-react';
 import { Plate, PlateContent, PlateElement, PlateLeaf, type PlateElementProps, type PlateLeafProps, usePlateEditor } from 'platejs/react';
 import { Editor as SlateEditor, Element as SlateElement } from 'slate';
 import { Button } from '@/components/ui/button';
+import { cn } from '@/lib/utils';
 
 type MarkdownEditorProps = {
   markdown: string;
   onChange: (markdown: string) => void;
   placeholder?: string;
+  id?: string;
+  'aria-invalid'?: boolean;
+  /** Fires when the editor or toolbar receives focus (capture). */
+  onFocusCapture?: () => void;
 };
 
 function H1Element(props: PlateElementProps) {
@@ -53,7 +58,14 @@ function UnderlineLeaf(props: PlateLeafProps) {
   return <PlateLeaf as="u" className="underline" {...props} />;
 }
 
-export function MarkdownEditor({ markdown, onChange, placeholder = 'Write content…' }: MarkdownEditorProps) {
+export function MarkdownEditor({
+  markdown,
+  onChange,
+  placeholder = 'Write content…',
+  id,
+  'aria-invalid': ariaInvalid,
+  onFocusCapture,
+}: MarkdownEditorProps) {
   const editor = usePlateEditor({
     plugins: [
       BoldPlugin.withComponent(BoldLeaf),
@@ -117,7 +129,14 @@ export function MarkdownEditor({ markdown, onChange, placeholder = 'Write conten
   }, [editor, markdown]);
 
   return (
-    <div className="rounded-md border bg-background">
+    <div
+      id={id}
+      onFocusCapture={onFocusCapture}
+      className={cn(
+        'rounded-md border bg-background',
+        ariaInvalid && 'border-destructive ring-2 ring-destructive/20 dark:ring-destructive/35',
+      )}
+    >
       <Plate
         editor={editor}
         onChange={() => {
@@ -157,7 +176,11 @@ export function MarkdownEditor({ markdown, onChange, placeholder = 'Write conten
             U
           </Button>
         </div>
-        <PlateContent placeholder={placeholder} className="min-h-40 px-3 py-3 text-sm" />
+        <PlateContent
+          placeholder={placeholder}
+          className="min-h-40 px-3 py-3 text-sm"
+          aria-invalid={ariaInvalid || undefined}
+        />
       </Plate>
     </div>
   );

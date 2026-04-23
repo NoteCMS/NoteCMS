@@ -610,17 +610,17 @@ const DropzoneFileMessage = forwardRef<
     );
   }
 
-  const body =
-    context.fileStatus.status === "error"
-      ? String(context.fileStatus.error)
-      : children;
+  const isErr = context.fileStatus.status === "error";
+  const body = isErr ? String(context.fileStatus.error) : children;
   return (
     <p
       ref={ref}
       id={context.messageId}
       {...rest}
       className={cn(
-        "h-5 text-[0.8rem] font-medium text-destructive",
+        isErr
+          ? "min-h-0 rounded-lg border border-destructive/20 bg-destructive/5 px-2 py-1.5 text-[0.8rem] font-medium leading-snug text-foreground dark:border-destructive/35 dark:bg-destructive/10"
+          : "h-5 text-[0.8rem] font-medium text-muted-foreground",
         rest.className,
       )}
     >
@@ -640,6 +640,7 @@ const DropzoneMessage = forwardRef<HTMLParagraphElement, DropzoneMessageProps>(
       throw new Error("DropzoneRootMessage must be used within a Dropzone");
     }
 
+    const isErr = Boolean(context.rootError);
     const body = context.rootError ? String(context.rootError) : children;
     return (
       <p
@@ -647,7 +648,9 @@ const DropzoneMessage = forwardRef<HTMLParagraphElement, DropzoneMessageProps>(
         id={context.rootMessageId}
         {...rest}
         className={cn(
-          "h-5 text-[0.8rem] font-medium text-destructive",
+          isErr
+            ? "min-h-0 rounded-xl border border-destructive/20 bg-destructive/5 px-2.5 py-2 text-[0.8rem] font-medium leading-snug text-foreground dark:border-destructive/35 dark:bg-destructive/10"
+            : "h-5 text-[0.8rem] font-medium text-muted-foreground",
           rest.className,
         )}
       >

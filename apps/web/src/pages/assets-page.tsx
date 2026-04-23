@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, PointerEvent } from 'react';
 import { Crosshair, Ellipsis, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import {
@@ -245,9 +246,7 @@ export function AssetsPage({ token, workspaceSiteId, sites }: AssetsPageProps) {
       </div>
 
       {error ? (
-        <p className="text-sm text-destructive" aria-live="polite">
-          {error}
-        </p>
+        <LoadErrorAlert title="Assets couldn't load" message={error} onRetry={() => void loadAssets()} />
       ) : null}
 
       {!workspaceSiteId ? (

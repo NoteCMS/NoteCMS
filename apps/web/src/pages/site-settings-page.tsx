@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Globe, ImageIcon, Loader2, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -514,9 +515,7 @@ export function SiteSettingsPage({ token, workspaceSiteId, sites, onSitesChanged
 
         <CardContent className="space-y-8 px-6 py-6">
           {error ? (
-            <div className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-              {error}
-            </div>
+            <LoadErrorAlert title="Site settings" message={error} onRetry={() => void loadSettings()} />
           ) : null}
 
           {!canEdit ? (

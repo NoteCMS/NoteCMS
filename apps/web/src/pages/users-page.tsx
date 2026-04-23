@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import type { ColumnDef } from '@tanstack/react-table';
 import { SlidersHorizontal } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
@@ -143,6 +144,14 @@ export function UsersPage({ token, sites, workspaceSiteId, isGlobalAdmin }: User
                 <DialogTitle>Create Global User</DialogTitle>
                 <DialogDescription>Create a user first, then assign site access.</DialogDescription>
               </DialogHeader>
+              {usersError && createOpen ? (
+                <LoadErrorAlert
+                  compact
+                  title={null}
+                  message={usersError}
+                  onRetry={() => void loadUsers()}
+                />
+              ) : null}
               <form
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -206,7 +215,9 @@ export function UsersPage({ token, sites, workspaceSiteId, isGlobalAdmin }: User
           </Dialog>
         </CardHeader>
         <CardContent className="space-y-4">
-          {usersError ? <p className="text-sm text-destructive">{usersError}</p> : null}
+          {usersError && !createOpen && !manageOpen ? (
+            <LoadErrorAlert title="Users" message={usersError} onRetry={() => void loadUsers()} />
+          ) : null}
 
           <DataTable
             columns={columns}
@@ -307,6 +318,9 @@ export function UsersPage({ token, sites, workspaceSiteId, isGlobalAdmin }: User
             <DialogTitle>Manage Site Access</DialogTitle>
             <DialogDescription>{managedUser?.email ?? ''}</DialogDescription>
           </DialogHeader>
+          {usersError && manageOpen ? (
+            <LoadErrorAlert compact title={null} message={usersError} onRetry={() => void loadUsers()} />
+          ) : null}
 
           <div className="space-y-4">
             {!isGlobalAdmin ? (

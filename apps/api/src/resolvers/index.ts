@@ -24,7 +24,9 @@ import {
   hydrateRepeaterFields,
   type FieldDef,
 } from '../domain/fields/repeater-hydrate.js';
+import { EntryFieldValidationError } from '../domain/fields/entry-field-validation-error.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
+import { GraphQLError } from 'graphql';
 import { clampListArgs } from '../lib/list-args.js';
 import { escapeRegexLiteral } from '../lib/regex-escape.js';
 
@@ -55,7 +57,7 @@ async function assertEntryNameUnique(
   const filter: Record<string, unknown> = { siteId, contentTypeId, name };
   if (excludeEntryId) filter._id = { $ne: excludeEntryId };
   const clash = await EntryModel.findOne(filter).select({ _id: 1 }).lean();
-  if (clash) throw new Error('An entry with this name already exists for this content type.');
+  if (clash) badUserInput('An entry with this name already exists for this content type.', ['name']);
 }
 
 function resolveEntrySlug(
@@ -73,11 +75,24 @@ function resolveEntrySlug(
   const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? toSlug(displayName) : '';
   if (fromDisplayName) return fromDisplayName;
 
-  throw new Error('Slug is required for this content type');
+  badUserInput('Slug is required for this content type', ['slug']);
 }
 
 function toId(doc: any) {
   return { ...doc, id: String(doc._id), _id: undefined };
+}
+
+function badUserInput(message: string, fieldPath: string[]): never {
+  throw new GraphQLError(message, {
+    extensions: { code: 'BAD_USER_INPUT', fieldPath },
+  });
+}
+
+function rethrowEntryValidation(err: unknown): never {
+  if (err instanceof EntryFieldValidationError) {
+    badUserInput(err.message, err.fieldPath);
+  }
+  throw err;
 }
 
 async function entryDocumentToGql(entry: any) {
@@ -850,7 +865,11 @@ export const resolvers = {
       const displayName = normalizeEntryName(name);
       await assertEntryNameUnique(sid, contentTypeId, displayName);
       const hydratedFields = await hydrateRepeaterFields(sid, contentType.fields as FieldDef[]);
-      validateEntryData(hydratedFields as any, data as Record<string, unknown>);
+      try {
+        validateEntryData(hydratedFields as any, data as Record<string, unknown>);
+      } catch (e) {
+        rethrowEntryValidation(e);
+      }
       await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], data as Record<string, unknown>));
       await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], data as Record<string, unknown>);
       const resolvedSlug = resolveEntrySlug(contentType as any, data as Record<string, unknown>, slug, displayName);
@@ -885,7 +904,11 @@ export const resolvers = {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
         const hydratedFields = await hydrateRepeaterFields(sid, ct.fields as FieldDef[]);
-        validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
+        try {
+          validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
+        } catch (e) {
+          rethrowEntryValidation(e);
+        }
         await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
         await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], rest.data as Record<string, unknown>);
         if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {

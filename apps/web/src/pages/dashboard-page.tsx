@@ -13,6 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -220,9 +221,11 @@ export function DashboardPage({
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
       {error ? (
-        <p className="text-sm text-destructive" role="alert">
-          {error}
-        </p>
+        <LoadErrorAlert
+          title="Dashboard couldn't load"
+          message={error}
+          onRetry={() => void load()}
+        />
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-3">

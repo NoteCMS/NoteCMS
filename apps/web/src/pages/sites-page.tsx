@@ -3,6 +3,7 @@ import type { ColumnDef } from '@tanstack/react-table';
 import { Cog, Ellipsis, Plus } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { DataTable } from '@/components/data-table';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -207,11 +208,7 @@ export function SitesPage({ token, sites, isAdmin, onSitesChanged }: SitesPagePr
                   autoComplete="off"
                 />
               </div>
-              {error ? (
-                <p className="text-sm text-destructive" aria-live="polite">
-                  {error}
-                </p>
-              ) : null}
+              {error ? <LoadErrorAlert compact title={null} message={error} /> : null}
             </div>
             <DialogFooter className="gap-2 sm:justify-end">
               <Button type="button" variant="secondary" onClick={() => handleDialogOpenChange(false)}>

@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload, X } from 'lucide-react';
-import { gqlRequest } from '@/api/graphql';
+import { gqlRequest, GraphqlUserInputError } from '@/api/graphql';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { stableJsonStringify } from '@/lib/stable-json';
 import { DataTable } from '@/components/data-table';
@@ -14,7 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Dropzone, DropZoneArea, DropzoneMessage, DropzoneTrigger, useDropzone } from '@/components/ui/dropzone';
-import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
@@ -29,6 +30,7 @@ import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
+import { toast } from 'sonner';
 
 type EntriesPageProps = {
   token: string;
@@ -37,6 +39,44 @@ type EntriesPageProps = {
   forcedContentTypeSlug?: string;
   entryId?: string;
 };
+
+/** Dot path for `data` JSON (e.g. `blocks.0.title`) or top-level `name` / `slug`. */
+function joinEntryDataPath(prefix: string | undefined, ...segments: string[]): string {
+  const parts = [prefix, ...segments].filter((s): s is string => Boolean(s && s.length > 0));
+  return parts.join('.');
+}
+
+function fieldErrorsTouchRowPrefix(fieldErrors: Record<string, string>, rowPrefix: string): boolean {
+  return Object.keys(fieldErrors).some((k) => k === rowPrefix || k.startsWith(`${rowPrefix}.`));
+}
+
+/** Repeater row: stays open (and re-opens) while any `fieldErrors` key targets this row or a nested field. */
+function RepeaterRowCollapsible({
+  rowPrefix,
+  fieldErrors,
+  children,
+}: {
+  rowPrefix: string;
+  fieldErrors: Record<string, string>;
+  children: ReactNode;
+}) {
+  const hasErrorInRow = useMemo(() => fieldErrorsTouchRowPrefix(fieldErrors, rowPrefix), [fieldErrors, rowPrefix]);
+  const [userOpen, setUserOpen] = useState(true);
+  const open = hasErrorInRow || userOpen;
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(next) => {
+        if (hasErrorInRow && !next) return;
+        setUserOpen(next);
+      }}
+      className="group/row w-full"
+    >
+      {children}
+    </Collapsible>
+  );
+}
 
 async function fileToBase64(file: File): Promise<string> {
   const buffer = await file.arrayBuffer();
@@ -137,6 +177,8 @@ function EntriesFieldInput({
   entriesByTypeId,
   contentTypes,
   currentEntryId,
+  errorMessage,
+  onClearFieldError,
 }: {
   fieldId: string;
   field: ContentField;
@@ -145,6 +187,8 @@ function EntriesFieldInput({
   entriesByTypeId: Record<string, Entry[]>;
   contentTypes: ContentType[];
   currentEntryId?: string;
+  errorMessage?: string;
+  onClearFieldError?: () => void;
 }) {
   const refCtId = field.config?.contentTypeId ?? '';
   const mode = field.config?.mode === 'latest' ? 'latest' : 'manual';
@@ -158,9 +202,11 @@ function EntriesFieldInput({
     ? (value as unknown[]).filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
     : [];
 
+  const invalid = Boolean(errorMessage);
+
   if (mode === 'latest') {
     return (
-      <FieldDescription>
+      <FieldDescription className={cn(invalid && 'text-destructive')}>
         Shows the <span className="font-medium text-foreground">{limit}</span> most recent{' '}
         {refCt?.name ?? 'entries'} (by {sortLabel}). Nothing to pick here — the API fills entry ids when this entry is
         loaded.
@@ -199,7 +245,10 @@ function EntriesFieldInput({
                   type="button"
                   className="rounded-md p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
                   aria-label={`Remove ${entryRow?.name ?? id}`}
-                  onClick={() => onChange(selectedIds.filter((x) => x !== id))}
+                  onClick={() => {
+                    onClearFieldError?.();
+                    onChange(selectedIds.filter((x) => x !== id));
+                  }}
                 >
                   <X className="size-3.5 shrink-0" />
                 </button>
@@ -217,6 +266,7 @@ function EntriesFieldInput({
           onValueChange={(id) => {
             if (!id || selectedIds.includes(id)) return;
             if (selectedIds.length >= maxItems) return;
+            onClearFieldError?.();
             onChange([...selectedIds, id]);
           }}
           options={addOptions}
@@ -228,6 +278,8 @@ function EntriesFieldInput({
               : 'Link a content type on the schema first.'
           }
           className="w-full"
+          invalid={invalid}
+          onInputFocus={onClearFieldError}
         />
       ) : (
         <FieldDescription>Maximum selections reached ({maxItems}).</FieldDescription>
@@ -258,6 +310,10 @@ type FieldListProps = {
   fields: ContentField[];
   value: Record<string, unknown>;
   onChange: (next: Record<string, unknown>) => void;
+  /** Keys are dot paths (`hero`, `blocks.0.title`) matching API `fieldPath`. */
+  fieldErrors?: Record<string, string>;
+  fieldPathPrefix?: string;
+  onClearFieldError?: (path: string) => void;
 };
 
 /** Keyed by asset so `useDropzone` internal file state resets between selections (registry dropzone keeps a file list). */
@@ -326,7 +382,7 @@ function ImageFieldDropzonePreview({
           )}
         </DropzoneTrigger>
       </DropZoneArea>
-      <DropzoneMessage className="min-h-0 text-[10px] leading-tight break-words text-destructive" />
+      <DropzoneMessage className="min-h-0 max-w-[7.5rem] text-[10px] leading-tight break-words" />
     </Dropzone>
   );
 }
@@ -337,12 +393,16 @@ function ImageFieldInput({
   assets,
   onImageChange,
   uploadAsset,
+  invalid,
+  onClearFieldError,
 }: {
   fieldId: string;
   value: Partial<ImageFieldValue>;
   assets: Asset[];
   onImageChange: (next: Partial<ImageFieldValue>) => void;
   uploadAsset: (file: File) => Promise<Asset>;
+  invalid?: boolean;
+  onClearFieldError?: () => void;
 }) {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [libraryQuery, setLibraryQuery] = useState('');
@@ -383,7 +443,13 @@ function ImageFieldInput({
   );
 
   return (
-    <div className="flex flex-wrap items-start gap-3">
+    <div
+      className={cn(
+        'flex flex-wrap items-start gap-3',
+        invalid && 'rounded-lg border border-destructive/80 bg-destructive/5 p-2 ring-2 ring-destructive/15',
+      )}
+      onFocusCapture={onClearFieldError}
+    >
       <div className="flex w-24 shrink-0 flex-col gap-1">
         <ImageFieldDropzonePreview
           key={`${fieldId}-${value.assetId ?? 'none'}`}
@@ -608,6 +674,9 @@ function FieldList({
   fields,
   value,
   onChange,
+  fieldErrors = {},
+  fieldPathPrefix,
+  onClearFieldError,
 }: FieldListProps) {
   function cloneEntryValue<T>(input: T): T {
     return JSON.parse(JSON.stringify(input)) as T;
@@ -635,12 +704,15 @@ function FieldList({
 
   return (
     <FieldGroup>
-      {uploadError ? <p className="text-sm text-destructive">{uploadError}</p> : null}
+      {uploadError ? <LoadErrorAlert compact title={null} message={uploadError} /> : null}
       {fields.map((field) => {
         if (!shouldShowField(field, value)) return null;
 
         const fieldValue = value[field.key];
         const fieldId = `field-${field.key}`;
+        const dataPath = joinEntryDataPath(fieldPathPrefix, field.key);
+        const errMsg = fieldErrors[dataPath];
+        const clearThisField = () => onClearFieldError?.(dataPath);
 
         if (field.type === 'repeater') {
           const items = Array.isArray(fieldValue) ? (fieldValue as Record<string, unknown>[]) : [];
@@ -651,14 +723,17 @@ function FieldList({
           return (
             <Item key={field.key} variant="muted" className="w-full">
               <ItemContent className="flex w-full flex-col gap-3">
-                <Field>
+                <Field data-invalid={errMsg ? true : undefined}>
                   <FieldLabel>{field.label}</FieldLabel>
+                  {errMsg ? <FieldError>{errMsg}</FieldError> : null}
                 </Field>
 
                 {items.length ? (
                   <div className="space-y-3">
-                    {items.map((item, itemIndex) => (
-                      <Collapsible key={`${field.key}-${itemIndex}`} defaultOpen className="group/row w-full">
+                    {items.map((item, itemIndex) => {
+                      const rowPrefix = joinEntryDataPath(fieldPathPrefix, field.key, String(itemIndex));
+                      return (
+                      <RepeaterRowCollapsible key={`${field.key}-${itemIndex}`} rowPrefix={rowPrefix} fieldErrors={fieldErrors}>
                         <Card className="gap-0 overflow-hidden border-border bg-background p-0 shadow-sm">
                           <CardHeader className="relative mb-0 space-y-0 border-b border-border px-4 py-3 sm:px-5">
                             <CollapsibleTrigger asChild>
@@ -746,11 +821,15 @@ function FieldList({
                                 next[itemIndex] = nextItem;
                                 onChange({ ...value, [field.key]: next });
                               }}
+                              fieldErrors={fieldErrors}
+                              fieldPathPrefix={rowPrefix}
+                              onClearFieldError={onClearFieldError}
                             />
                           </CollapsibleContent>
                         </Card>
-                      </Collapsible>
-                    ))}
+                      </RepeaterRowCollapsible>
+                    );
+                    })}
                   </div>
                 ) : (
                   <p className="text-sm text-muted-foreground">Empty list.</p>
@@ -772,78 +851,108 @@ function FieldList({
         }
 
         if (field.type === 'entries') {
-          const fieldId = `field-${field.key}`;
+          const entriesFieldId = `field-${field.key}`;
           const entriesMode = field.config?.mode === 'latest' ? 'latest' : 'manual';
           return (
             <Item key={field.key} variant="muted" className="w-full">
               <ItemContent className="flex w-full flex-col gap-3">
-                <Field>
-                  <FieldLabel htmlFor={entriesMode === 'manual' ? fieldId : undefined}>{field.label}</FieldLabel>
+                <Field data-invalid={errMsg ? true : undefined}>
+                  <FieldLabel htmlFor={entriesMode === 'manual' ? entriesFieldId : undefined}>{field.label}</FieldLabel>
+                  <FieldContent>
+                    <EntriesFieldInput
+                      fieldId={entriesFieldId}
+                      field={field}
+                      value={fieldValue}
+                      onChange={(next) => onChange({ ...value, [field.key]: next })}
+                      entriesByTypeId={entriesByTypeId}
+                      contentTypes={contentTypes}
+                      currentEntryId={currentEntryId}
+                      errorMessage={errMsg}
+                      onClearFieldError={clearThisField}
+                    />
+                    {errMsg ? <FieldError>{errMsg}</FieldError> : null}
+                  </FieldContent>
                 </Field>
-                <div className="flex flex-col gap-3">
-                  <EntriesFieldInput
-                    fieldId={fieldId}
-                    field={field}
-                    value={fieldValue}
-                    onChange={(next) => onChange({ ...value, [field.key]: next })}
-                    entriesByTypeId={entriesByTypeId}
-                    contentTypes={contentTypes}
-                    currentEntryId={currentEntryId}
-                  />
-                </div>
               </ItemContent>
             </Item>
           );
         }
 
         return (
-          <Field key={field.key}>
+          <Field key={field.key} data-invalid={errMsg ? true : undefined}>
             <FieldLabel htmlFor={field.type === 'boolean' ? undefined : fieldId}>{field.label}</FieldLabel>
             <FieldContent>
-
               {field.type === 'textarea' || field.type === 'wysiwyg' ? (
                 <MarkdownEditor
+                  id={fieldId}
                   markdown={String(fieldValue ?? '')}
-                  onChange={(nextMarkdown) => onChange({ ...value, [field.key]: nextMarkdown })}
+                  onChange={(nextMarkdown) => {
+                    clearThisField();
+                    onChange({ ...value, [field.key]: nextMarkdown });
+                  }}
                   placeholder="Content (Markdown)"
+                  aria-invalid={Boolean(errMsg)}
+                  onFocusCapture={clearThisField}
                 />
               ) : field.type === 'boolean' ? (
                 <div className="flex items-center gap-2">
-                  <Checkbox checked={Boolean(fieldValue)} onCheckedChange={(next) => onChange({ ...value, [field.key]: Boolean(next) })} id={fieldId} />
+                  <Checkbox
+                    checked={Boolean(fieldValue)}
+                    onCheckedChange={(next) => {
+                      clearThisField();
+                      onChange({ ...value, [field.key]: Boolean(next) });
+                    }}
+                    id={fieldId}
+                    aria-invalid={errMsg ? true : undefined}
+                    onFocus={clearThisField}
+                  />
                   <Label htmlFor={fieldId}>Enabled</Label>
                 </div>
               ) : field.type === 'select' ? (
                 <Combobox
                   value={String(fieldValue ?? '')}
-                  onValueChange={(next) => onChange({ ...value, [field.key]: next })}
+                  onValueChange={(next) => {
+                    clearThisField();
+                    onChange({ ...value, [field.key]: next });
+                  }}
                   options={(field.config?.options ?? []).map((option) => ({ value: option, label: option }))}
                   placeholder="Select option"
                   searchPlaceholder="Search option..."
                   className="w-full"
+                  invalid={Boolean(errMsg)}
+                  onInputFocus={clearThisField}
                 />
               ) : field.type === 'image' ? (
                 <ImageFieldInput
                   fieldId={fieldId}
                   value={(fieldValue ?? {}) as Partial<ImageFieldValue>}
                   assets={assets}
-                  onImageChange={(next) =>
+                  onImageChange={(next) => {
+                    clearThisField();
                     onChange({
                       ...value,
                       [field.key]: { assetId: next.assetId ?? '' },
-                    })
-                  }
+                    });
+                  }}
                   uploadAsset={uploadFieldAsset}
+                  invalid={Boolean(errMsg)}
+                  onClearFieldError={clearThisField}
                 />
               ) : field.type === 'url' ? (
                 <Combobox
                   id={fieldId}
                   value={String(fieldValue ?? '')}
-                  onValueChange={(next) => onChange({ ...value, [field.key]: next })}
+                  onValueChange={(next) => {
+                    clearThisField();
+                    onChange({ ...value, [field.key]: next });
+                  }}
                   options={[]}
                   groups={internalUrlSuggestionGroups}
                   placeholder="https://example.com/page or /about"
                   searchPlaceholder="Search URLs..."
                   className="w-full"
+                  invalid={Boolean(errMsg)}
+                  onInputFocus={clearThisField}
                 />
               ) : (
                 <Input
@@ -851,12 +960,16 @@ function FieldList({
                   type={field.type === 'number' ? 'number' : field.type === 'date' ? 'date' : 'text'}
                   inputMode={field.type === 'number' ? 'decimal' : undefined}
                   value={String(fieldValue ?? '')}
+                  aria-invalid={errMsg ? true : undefined}
+                  onFocus={clearThisField}
                   onChange={(event) => {
+                    clearThisField();
                     const nextValue = field.type === 'number' ? (event.target.value === '' ? '' : Number(event.target.value)) : event.target.value;
                     onChange({ ...value, [field.key]: nextValue });
                   }}
                 />
               )}
+              {errMsg ? <FieldError>{errMsg}</FieldError> : null}
             </FieldContent>
           </Field>
         );
@@ -879,11 +992,21 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [isLoadingEntries, setIsLoadingEntries] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState('');
+  const [entryFieldErrors, setEntryFieldErrors] = useState<Record<string, string>>({});
   const [entryName, setEntryName] = useState('');
   const [slug, setSlug] = useState('');
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+
+  const clearEntryFieldError = useCallback((path: string) => {
+    setEntryFieldErrors((prev) => {
+      if (prev[path] === undefined) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+  }, []);
 
   const selectedType = useMemo(() => contentTypes.find((contentType) => contentType.id === selectedTypeId) ?? null, [contentTypes, selectedTypeId]);
   const requiresSlug = Boolean(selectedType?.options?.hasSlug);
@@ -1036,6 +1159,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   }, [selectedTypeId]);
 
   useEffect(() => {
+    setEntryFieldErrors({});
     if (!entryId) {
       setEntryName('');
       setSlug('');
@@ -1118,6 +1242,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   async function handleSaveEntry() {
     if (!workspaceSiteId || !selectedTypeId || !selectedType) return;
+    const wasNewEntry = !entryId || entryId === 'new';
     setIsSaving(true);
     setError('');
     const payloadData = pruneEntriesLatestFields(
@@ -1187,8 +1312,18 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       navigate(`${basePath}/${savedEntryId}`, { replace: true });
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
+      toast.success(wasNewEntry ? 'Entry created' : 'Entry updated');
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : 'Failed to save entry');
+      if (saveError instanceof GraphqlUserInputError) {
+        setError('');
+        setEntryFieldErrors({ [saveError.fieldPath.join('.')]: saveError.message });
+        toast.error('Could not save', { description: saveError.message });
+      } else {
+        setEntryFieldErrors({});
+        const msg = saveError instanceof Error ? saveError.message : 'Failed to save entry';
+        setError(msg);
+        toast.error(msg);
+      }
     } finally {
       setIsSaving(false);
     }
@@ -1209,8 +1344,11 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           setSavedSnapshot(null);
         });
         navigate(basePath);
+        toast.success('Entry deleted');
       } catch (deleteError) {
-        setError(deleteError instanceof Error ? deleteError.message : 'Failed to delete entry');
+        const msg = deleteError instanceof Error ? deleteError.message : 'Failed to delete entry';
+        setError(msg);
+        toast.error(msg);
       }
     },
     [workspaceSiteId, selectedTypeId, contentTypes, token, navigate, basePath],
@@ -1255,8 +1393,11 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         );
         await loadEntries(selectedTypeId);
         await loadEntriesIndex(contentTypes);
+        toast.success('Entry duplicated');
       } catch (dupError) {
-        setError(dupError instanceof Error ? dupError.message : 'Failed to duplicate entry');
+        const msg = dupError instanceof Error ? dupError.message : 'Failed to duplicate entry';
+        setError(msg);
+        toast.error(msg);
       }
     },
     [workspaceSiteId, selectedTypeId, selectedType, entries, contentTypes, token],
@@ -1343,6 +1484,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   );
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
+  const nameFieldError = entryFieldErrors['name'];
+  const slugFieldError = entryFieldErrors['slug'];
 
   const currentSnapshot = useMemo(
     () =>
@@ -1372,21 +1515,37 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             </Button>
           </CardHeader>
           <CardContent className="space-y-4">
-            {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
+            {error ? (
+              <LoadErrorAlert
+                title="Request failed"
+                message={error}
+                onRetry={() => {
+                  setError('');
+                  void loadContentTypes();
+                  if (selectedTypeId) void loadEntries(selectedTypeId);
+                }}
+              />
+            ) : null}
             {selectedType ? (
               <>
                 <Item variant="muted" className="w-full">
                   <ItemContent className="flex w-full flex-col gap-3">
-                    <Field>
+                    <Field data-invalid={nameFieldError ? true : undefined}>
                       <FieldLabel htmlFor="entry-display-name">Display name</FieldLabel>
                       <FieldContent>
                         <Input
                           id="entry-display-name"
                           value={entryName}
-                          onChange={(event) => setEntryName(event.target.value)}
+                          onChange={(event) => {
+                            clearEntryFieldError('name');
+                            setEntryName(event.target.value);
+                          }}
+                          onFocus={() => clearEntryFieldError('name')}
                           placeholder="Visible title in the admin and lists"
                           autoComplete="off"
+                          aria-invalid={nameFieldError ? true : undefined}
                         />
+                        {nameFieldError ? <FieldError>{nameFieldError}</FieldError> : null}
                       </FieldContent>
                     </Field>
                   </ItemContent>
@@ -1394,7 +1553,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                 {requiresSlug ? (
                   <Item variant="muted" className="w-full">
                     <ItemContent className="flex w-full flex-col gap-3">
-                      <Field>
+                      <Field data-invalid={slugFieldError ? true : undefined}>
                         <FieldLabel htmlFor="entry-slug">Slug</FieldLabel>
                         <FieldContent>
                           <InputGroup>
@@ -1409,12 +1568,16 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                               className="-translate-y-px"
                               value={slug}
                               onChange={(event) => {
+                                clearEntryFieldError('slug');
                                 setIsSlugManuallyEdited(true);
                                 setSlug(event.target.value);
                               }}
+                              onFocus={() => clearEntryFieldError('slug')}
                               placeholder="homepage-hero"
+                              aria-invalid={slugFieldError ? true : undefined}
                             />
                           </InputGroup>
+                          {slugFieldError ? <FieldError>{slugFieldError}</FieldError> : null}
                         </FieldContent>
                       </Field>
                     </ItemContent>
@@ -1433,6 +1596,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                   fields={selectedType.fields ?? []}
                   value={data}
                   onChange={setData}
+                  fieldErrors={entryFieldErrors}
+                  onClearFieldError={clearEntryFieldError}
                 />
                 <div className="flex gap-2">
                   {editingEntry ? (
@@ -1485,7 +1650,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          {error ? <p className="text-sm text-destructive" aria-live="polite">{error}</p> : null}
+          {error ? (
+            <LoadErrorAlert
+              title="Request failed"
+              message={error}
+              onRetry={() => {
+                setError('');
+                void loadContentTypes();
+                if (selectedTypeId) void loadEntries(selectedTypeId);
+              }}
+            />
+          ) : null}
           {selectedType ? (
             <DataTable
               columns={columns}

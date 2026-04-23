@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import { LoadErrorAlert } from '@/components/load-error-alert';
 import { ModeToggle } from '@/components/mode-toggle';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
@@ -102,7 +103,7 @@ export function LoginPage({
                   </p>
                 </div>
               ) : null}
-              {error ? <p className="text-sm text-destructive">{error}</p> : null}
+              {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
               <Button type="submit" className="w-full" disabled={isSubmitting}>
                 {isSubmitting ? 'Saving...' : 'Save password and continue'}
               </Button>
@@ -145,7 +146,7 @@ export function LoginPage({
                 Leave empty if you have not set a password yet (you will be asked to create one).
               </p>
             </div>
-            {error ? <p className="text-sm text-destructive">{error}</p> : null}
+            {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
             <Button type="submit" className="w-full" disabled={isSubmitting}>
               {isSubmitting ? 'Signing in...' : 'Sign in'}
             </Button>
