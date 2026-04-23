@@ -1,10 +1,10 @@
 # @notecms/sdk
 
-Headless TypeScript SDK for [NoteCMS](https://github.com/) GraphQL: **site API keys**, read-only content, optional **full-site snapshot** for static generation, and small **routing helpers**.
+Headless TypeScript SDK for [NoteCMS](https://github.com/NoteCMS/NoteCMS) GraphQL: site API keys, read-only content, optional full-site snapshot for static generation, and small routing helpers.
 
 ## Security
 
-- **Never** put the API key in `VITE_`*, `NEXT_PUBLIC_*`, or any env var that is injected into the **browser** bundle. Keys are read credentials.
+- **Never** put the API key in `VITE_*`, `NEXT_PUBLIC_*`, or any env var that is injected into the browser bundle. Keys are read credentials.
 - Use **server-only** modules: SvelteKit `$env/static/private` / `+page.server.ts`, Next.js **server** Components / Route Handlers, Node scripts, CI.
 
 ## Developing (live CMS + fast refresh)
@@ -38,7 +38,7 @@ Use `await cms.ensureSiteId()` if you need the workspace id before any other cal
 
 ### SvelteKit
 
-Prefer `**event.fetch`** in `load` if you want requests tied to the request lifecycle:
+Prefer `event.fetch` in `load` if you want requests tied to the request lifecycle:
 
 ```ts
 const cms = createDevNoteCmsClient({
@@ -73,13 +73,13 @@ const paths = listStaticPaths(snapshot);
 
 ### Snapshot semantics
 
-- `**snapshotFormatVersion**`: increment in the SDK when the JSON shape changes; check it in your pipeline if you cache snapshots.
+- `snapshotFormatVersion`: increment in the SDK when the JSON shape changes; check it in your pipeline if you cache snapshots.
 - **Ordering:** entries are **newest first** per content type (API `updatedAt` descending).
 - **Consistency:** pagination runs sequentially per type; during **concurrent CMS writes** a snapshot is **best-effort** (rare edge cases: skip/duplicate across pages).
 
 ### Privacy
 
-Entries include `**lastEditedBy.email`** as returned by the API. For public sites, consider whether that field should be stripped in your templates.
+Entries include `lastEditedBy.email` as returned by the API. For public sites, consider whether that field should be stripped in your templates.
 
 ## MCP (AI agents)
 
@@ -92,4 +92,4 @@ The API serves **Model Context Protocol** over **Streamable HTTP** at **`/api/mc
 
 ## Limits
 
-The SDK caps `entries` / `listAssets` `limit` at `**MAX_GRAPHQL_PAGE_SIZE**` (200) per request to reduce accidental overload. The NoteCMS API may still accept higher values from other clients.
+The SDK caps `entries` / `listAssets` `limit` at `MAX_GRAPHQL_PAGE_SIZE` (200) per request to reduce accidental overload. The NoteCMS API may still accept higher values from other clients.
