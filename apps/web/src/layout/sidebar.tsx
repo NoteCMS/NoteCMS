@@ -14,7 +14,7 @@ const links = [
 
 export function Sidebar() {
   return (
-    <aside className="sticky top-4 flex h-[calc(100vh-2rem)] w-72 flex-col rounded-xl border border-[var(--border)] bg-white p-4">
+    <aside className="sticky top-4 flex h-[calc(100vh-2rem)] w-72 flex-col rounded-xl border border-border bg-card p-4 text-card-foreground">
       <div className="mb-6 rounded-md bg-[var(--primary)] px-4 py-3 text-center font-bold text-[var(--primary-foreground)]">Note CMS</div>
 
       <nav className="flex-1 space-y-1">

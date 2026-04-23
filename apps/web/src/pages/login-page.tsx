@@ -1,4 +1,5 @@
 import type { FormEvent } from 'react';
+import { ModeToggle } from '@/components/mode-toggle';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -48,7 +49,10 @@ export function LoginPage({
 
   if (authStep === 'setPassword') {
     return (
-      <div className="flex min-h-svh items-center justify-center bg-background p-4">
+      <div className="relative flex min-h-svh items-center justify-center bg-background p-4">
+        <div className="absolute top-4 right-4 z-10">
+          <ModeToggle />
+        </div>
         <Card className="w-full max-w-sm">
           <CardHeader>
             <CardTitle>Set your password</CardTitle>
@@ -113,7 +117,10 @@ export function LoginPage({
   }
 
   return (
-    <div className="flex min-h-svh items-center justify-center bg-background p-4">
+    <div className="relative flex min-h-svh items-center justify-center bg-background p-4">
+      <div className="absolute top-4 right-4 z-10">
+        <ModeToggle />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>Login</CardTitle>

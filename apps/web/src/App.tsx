@@ -21,6 +21,7 @@ import { ApiKeysPage } from '@/pages/api-keys-page';
 import { SiteSettingsPage } from '@/pages/site-settings-page';
 import { UsersPage } from '@/pages/users-page';
 import { DashboardPage } from '@/pages/dashboard-page';
+import { ModeToggle } from '@/components/mode-toggle';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { ContentType } from '@/types/app';
@@ -133,7 +134,7 @@ export function App() {
 
   if (isValidatingSession) {
     return (
-      <div className="flex min-h-svh items-center justify-center bg-background p-4">
+      <div className="flex min-h-svh items-center justify-center bg-muted p-4">
         <div className="text-sm text-muted-foreground">Validating session...</div>
       </div>
     );
@@ -257,6 +258,9 @@ export function App() {
               ))}
             </BreadcrumbList>
           </Breadcrumb>
+          <div className="ml-auto flex items-center">
+            <ModeToggle />
+          </div>
         </header>
 
         <div className="flex flex-1 p-2 pt-0 overflow-hidden">
