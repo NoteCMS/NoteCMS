@@ -70,6 +70,8 @@ Back up both volumes for a full restore. S3-backed asset storage is not implemen
 | `GRAPHQL_RATE_LIMIT_MAX`, `GRAPHQL_RATE_LIMIT_WINDOW_MS`               | Per-IP GraphQL rate limit (default 400 requests / 15 minutes).                                    |
 | `MCP_RATE_LIMIT_MAX`, `MCP_RATE_LIMIT_WINDOW_MS`                     | Per-IP MCP endpoint limit (default 120 / 15 minutes).                                               |
 | `CSP_CONNECT_SRC_EXTRA`                                              | Optional space- or comma-separated extra `connect-src` tokens for the **web** container CSP (e.g. another API origin). Used when generating `serve.json` at container start. |
+| `PUBLIC_API_BASE_URL`                                                | Public origin of the **API** (no trailing slash), e.g. `https://api.example.com`. Used for GitHub **build completion** callback URLs and for **full preview-bundle links** in the admin UI. If unset, you can still use preview paths and compose URLs manually. See [PREVIEW_BUNDLES.md](./PREVIEW_BUNDLES.md). |
+| `PREVIEW_BUNDLE_RATE_LIMIT_*`, `MAX_ACTIVE_PREVIEW_BUNDLES_PER_SITE`, `PREVIEW_BUNDLE_MAX_TTL_MINUTES`, `PREVIEW_BUNDLE_INLINE_MAX_BYTES` | Optional tuning for **preview bundles** (`GET /api/preview/…`). Defaults are fine for most deployments; see [PREVIEW_BUNDLES.md](./PREVIEW_BUNDLES.md). |
 
 The web image runs [`serve`](https://github.com/vercel/serve) with a generated **`serve.json`** that sets **Content-Security-Policy** and related headers. Tighten `connect-src` by setting `NOTECMS_GRAPHQL_URL` and/or `PUBLIC_URL` so the API origin is explicit; with only `NOTECMS_GRAPHQL_PORT`, the CSP allows `http:` and `https:` for API calls (different port than the SPA).
 

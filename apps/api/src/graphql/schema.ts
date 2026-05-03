@@ -114,6 +114,35 @@ export const typeDefs = `#graphql
     publishLastReturnStatus: String
     publishLastReturnRunUrl: String
     publishLastReturnPayload: JSON
+    """Increments when entries, content types, site settings, or assets change."""
+    contentRevision: Int!
+    """Written when a successful build completion callback includes structured fields in the detail payload."""
+    lastPublishedWatermark: JSON
+  }
+
+  type PreviewBundleListItem {
+    publicId: ID!
+    expiresAt: String!
+    createdAt: String!
+    label: String
+    revoked: Boolean!
+    expired: Boolean!
+    sourceContentRevision: Int
+    byteLength: Int!
+    contentSha256: String!
+  }
+
+  type CreatePreviewBundlePayload {
+    publicId: ID!
+    """Use once: send Authorization Bearer secret when GETting the preview URL."""
+    secretToken: String!
+    expiresAt: String!
+    """Full URL when PUBLIC_API_BASE_URL is set on the API; otherwise null (use fetchPath on the same host)."""
+    fetchUrl: String
+    """Path only; for example /api/preview/ plus the public id."""
+    fetchPath: String!
+    contentSha256: String!
+    sourceContentRevision: Int
   }
 
   input PublishWebhookInput {
@@ -211,6 +240,8 @@ export const typeDefs = `#graphql
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID): SiteSettings!
     exportSiteBundle(siteId: ID, options: SiteBundlePartOptions!): JSON!
+    """Editor session only: list recent preview bundle links (no secrets)."""
+    listPreviewBundles(siteId: ID): [PreviewBundleListItem!]!
   }
 
   type Mutation {
@@ -261,5 +292,10 @@ export const typeDefs = `#graphql
     disablePublishReturnWebhook(siteId: ID!): SiteSettings!
 
     importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
+
+    """Editor session only: create a frozen full-site bundle; use fetchUrl + secretToken for server-side preview fetches."""
+    createPreviewBundle(siteId: ID, ttlMinutes: Int!, label: String): CreatePreviewBundlePayload!
+    """Editor session only: revoke a preview bundle by public id."""
+    revokePreviewBundle(siteId: ID, publicId: ID!): Boolean!
   }
 `;

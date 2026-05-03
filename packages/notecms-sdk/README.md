@@ -77,6 +77,73 @@ const paths = listStaticPaths(snapshot);
 - **Ordering:** entries are **newest first** per content type (API `updatedAt` descending).
 - **Consistency:** pagination runs sequentially per type; during **concurrent CMS writes** a snapshot is **best-effort** (rare edge cases: skip/duplicate across pages).
 
+### Preview bundles (unpublished content)
+
+Editors mint a **frozen** snapshot from the admin UI. Your app fetches it over REST — **not** GraphQL — using a **public id** (UUID) and a **Bearer secret** shown once at creation.
+
+**Important:** This JSON is **site export bundle `version: 1`** (same as workspace JSON export / `exportSiteBundle`). It is **not** the same object shape as **`fetchBuildSnapshot`** (`BuildSnapshot` with `entriesByTypeSlug`, etc.). Either reuse your **export-bundle importer** for previews or map the bundle fields yourself.
+
+**Full guide** (REST route, admin steps, env vars, watermark): `docs/PREVIEW_BUNDLES.md` at the **NoteCMS repository root** (monorepo — lives next to `apps/api`).
+
+#### Manual preview link (Builds panel)
+
+**Site settings → Builds → Preview unpublished content** — copy `GET` URL + secret once.
+
+#### “Open live site (preview)” from the entry editor
+
+For content types with a **public slug**, **Edit entry** includes **Open live site (preview)**. The CMS mints a bundle and opens:
+
+`{workspace site URL}/{slug}?notecms_preview_id=<uuid>&notecms_preview_token=<secret>`
+
+The SDK exports stable query key names and helpers:
+
+```ts
+import {
+  NOTECMS_PREVIEW_QUERY_ID,
+  NOTECMS_PREVIEW_QUERY_TOKEN,
+  parseNoteCmsPreviewQueryFromSearchParams,
+  fetchPreviewBundle,
+  buildUrlWithNoteCmsPreviewParams,
+} from '@notecms/sdk';
+
+// SSR: try preview query params first (then redirect without them)
+const preview = parseNoteCmsPreviewQueryFromSearchParams(url.searchParams);
+if (preview) {
+  const { bundle } = await fetchPreviewBundle(process.env.NOTECMS_API_BASE_URL!, preview.publicId, {
+    token: preview.token,
+  });
+  // render from bundle…
+}
+
+// Optional: build the same deep link yourself (e.g. tests)
+const editorOpenedUrl = buildUrlWithNoteCmsPreviewParams('https://example.com/about', publicId, secretToken);
+```
+
+- **`NOTECMS_PREVIEW_QUERY_ID`** / **`NOTECMS_PREVIEW_QUERY_TOKEN`** — same strings the CMS uses (safe to rely on in middleware).
+- After loading preview data, **strip those params** from the browser URL (`redirect` or `history.replaceState`) so the secret does not linger or leak via `Referer`.
+
+#### Env-driven preview (CI / staging)
+
+```ts
+import { fetchPreviewBundle, type SiteExportBundleV1 } from '@notecms/sdk';
+
+// Server or CI only — NEVER expose NOTECMS_PREVIEW_SECRET to the browser
+const apiBase = process.env.NOTECMS_API_BASE_URL!; // https://api.example.com — no `/graphql` suffix
+const publicId = process.env.NOTECMS_PREVIEW_PUBLIC_ID!;
+const { bundle, contentSha256 } = await fetchPreviewBundle(apiBase, publicId, {
+  token: process.env.NOTECMS_PREVIEW_SECRET!,
+});
+
+const siteExport = bundle as SiteExportBundleV1;
+// siteExport.version === 1
+```
+
+- **`fetchPreviewSiteBundle`** is the same function (alternate name).
+- Responses use `Cache-Control: private, no-store`. Do not put preview tokens in public env prefixes (`NEXT_PUBLIC_*`, `VITE_*`, …).
+- Prefer `Authorization: Bearer <token>` when calling `GET /api/preview/:id` yourself; entry-editor deep links use query params only for the **first hop** — still handle them server-side only.
+- Optional: compare `contentSha256` with the response header **`X-Content-SHA256`** for integrity.
+- Mint/list/revoke are **GraphQL + JWT editor** operations on the API; **`fetchPreviewBundle` is for consumers** that already have `publicId` + secret.
+
 ### Privacy
 
 Entries include `lastEditedBy.email` as returned by the API. For public sites, consider whether that field should be stripped in your templates.

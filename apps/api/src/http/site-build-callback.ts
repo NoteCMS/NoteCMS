@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
 import { SiteSettingsModel } from '../db/models/SiteSettings.js';
+import { parseLastPublishedWatermarkFromDetail } from '../site/publish-watermark-detail.js';
 import { verifyReturnWebhookToken } from '../site/publish-webhook-token.js';
 
 const ALLOWED_STATUS = new Set(['success', 'failure', 'cancelled']);
@@ -86,17 +87,19 @@ export async function siteBuildCallbackHandler(req: Request, res: Response): Pro
   const detail = (body as { detail?: unknown }).detail;
   const publishLastReturnPayload = detail !== undefined ? capJsonPayload(detail) : null;
 
-  await SiteSettingsModel.updateOne(
-    { siteId },
-    {
-      $set: {
-        publishLastReturnAt: new Date(),
-        publishLastReturnStatus: status,
-        publishLastReturnRunUrl: runUrl || null,
-        publishLastReturnPayload,
-      },
-    },
-  );
+  const baseSet: Record<string, unknown> = {
+    publishLastReturnAt: new Date(),
+    publishLastReturnStatus: status,
+    publishLastReturnRunUrl: runUrl || null,
+    publishLastReturnPayload,
+  };
+
+  if (status === 'success') {
+    const watermark = parseLastPublishedWatermarkFromDetail(detail);
+    if (watermark) baseSet.lastPublishedWatermark = watermark;
+  }
+
+  await SiteSettingsModel.updateOne({ siteId }, { $set: baseSet });
 
   res.status(204).end();
 }

@@ -85,9 +85,24 @@ export type SiteSettings = {
   siteTitle: string | null;
   /** When false, the API rejects MCP requests (`/api/mcp`) for this workspace. Omitted in older API responses (treat as true). */
   mcpEnabled?: boolean;
+  /** Monotonic revision bumped when exportable site data changes. Omitted on older APIs (treat as 0). */
+  contentRevision?: number;
+  /** Last structured watermark from a successful publish callback `detail`. */
+  lastPublishedWatermark?: Json;
   /** Raw slot key → entry id map from the API. Prefer {@link SiteSettings.menusResolved} for rendering. */
   menuEntries: Json;
   logo: SiteBrandingAsset | null;
   favicon: SiteBrandingAsset | null;
   menusResolved: MenuSlotResolved[];
+};
+
+/** Site bundle `version: 1` from `exportSiteBundle` / preview GET — portable JSON export shape. */
+export type SiteExportBundleV1 = {
+  version: 1;
+  exportedAt: string;
+  siteId: string;
+  contentTypes?: Json;
+  entries?: Json;
+  siteSettings?: Json;
+  assets?: Json;
 };

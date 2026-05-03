@@ -119,6 +119,8 @@ export const SITE_SETTINGS = /* GraphQL */ `
       faviconAssetId
       siteTitle
       mcpEnabled
+      contentRevision
+      lastPublishedWatermark
       menuEntries
       logo {
         id

@@ -304,6 +304,28 @@ function resolveEntrySlug(
   throw new Error('Slug is required for this content type');
 }
 
+/** Options for a full-site export (all content types, settings, assets). Used by preview snapshots and static pipelines. */
+export async function resolveFullSiteBundleExportOptions(siteId: string): Promise<SiteBundleOptions> {
+  const slugs = (
+    await ContentTypeModel.find({ siteId })
+      .select({ slug: 1 })
+      .lean()
+  )
+    .map((c) => (typeof c.slug === 'string' ? c.slug : ''))
+    .filter(Boolean);
+  return {
+    siteSettings: true,
+    contentTypes: true,
+    contentTypeSlugsForEntries: slugs,
+    assets: true,
+  };
+}
+
+export async function exportFullSiteBundle(siteId: string): Promise<Record<string, unknown>> {
+  const options = await resolveFullSiteBundleExportOptions(siteId);
+  return exportSiteBundleService(siteId, options);
+}
+
 export async function exportSiteBundleService(
   siteId: string,
   options: SiteBundleOptions,

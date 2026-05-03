@@ -1,7 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
 import { flushSync } from 'react-dom';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Check, ChevronDown, Copy, Ellipsis, Globe, Images, Plus, Trash2, Upload, X } from 'lucide-react';
+import {
+  Check,
+  ChevronDown,
+  Copy,
+  Ellipsis,
+  ExternalLink,
+  Globe,
+  Images,
+  Loader2,
+  Plus,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { gqlRequest, GraphqlUserInputError } from '@/api/graphql';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
@@ -31,6 +44,11 @@ import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
+import {
+  NOTECMS_PREVIEW_QUERY_ID,
+  NOTECMS_PREVIEW_QUERY_TOKEN,
+  buildUrlWithNoteCmsPreviewParams,
+} from '@notecms/sdk';
 
 type EntriesPageProps = {
   token: string;
@@ -76,6 +94,28 @@ function RepeaterRowCollapsible({
       {children}
     </Collapsible>
   );
+}
+
+function sitePublicBaseUrl(siteUrl: string): string | null {
+  const t = siteUrl.trim();
+  if (!t) return null;
+  const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
+  try {
+    const u = new URL(withScheme);
+    return u.toString().replace(/\/$/, '');
+  } catch {
+    return null;
+  }
+}
+
+/** Build public page URL using the same base as the slug hint (`Site.url` + entry slug path). */
+function buildLiveEntryPageUrl(siteUrl: string, slugPath: string): string | null {
+  const base = sitePublicBaseUrl(siteUrl);
+  if (!base) return null;
+  const seg = slugPath.trim().replace(/^\/+/, '');
+  if (!seg) return null;
+  const encodedPath = seg.split('/').map((s) => encodeURIComponent(s)).join('/');
+  return `${base}/${encodedPath}`;
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -998,6 +1038,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const [openingLivePreview, setOpeningLivePreview] = useState(false);
+
+  const canMintPreview =
+    activeSite?.role === 'editor' || activeSite?.role === 'owner';
 
   const clearEntryFieldError = useCallback((path: string) => {
     setEntryFieldErrors((prev) => {
@@ -1502,6 +1546,70 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   );
   const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
 
+  const handleOpenLiveSitePreview = useCallback(async () => {
+    if (!workspaceSiteId || !canMintPreview || !requiresSlug) return;
+    const baseUrl = activeSite?.url?.trim();
+    if (!baseUrl) {
+      toast.error('Set this workspace’s site URL in Site settings so we know where the live site lives.');
+      return;
+    }
+    const slugTrim = slug.trim();
+    if (!slugTrim) {
+      toast.error('Add a slug before opening the live site.');
+      return;
+    }
+    if (!entryId || entryId === 'new') {
+      toast.error('Save the entry first.');
+      return;
+    }
+    if (isDirty) {
+      toast.error('Save your changes first — preview uses the latest saved content from the CMS.');
+      return;
+    }
+    const pageUrl = buildLiveEntryPageUrl(baseUrl, slugTrim);
+    if (!pageUrl) {
+      toast.error('Could not build a URL from the workspace site address.');
+      return;
+    }
+    setOpeningLivePreview(true);
+    setError('');
+    try {
+      const res = await gqlRequest<{
+        createPreviewBundle: { publicId: string; secretToken: string };
+      }>(
+        token,
+        `mutation($siteId:ID!,$ttl:Int!,$label:String){
+          createPreviewBundle(siteId:$siteId,ttlMinutes:$ttl,label:$label){ publicId secretToken }
+        }`,
+        {
+          siteId: workspaceSiteId,
+          ttl: 240,
+          label: `Editor preview: ${selectedType?.slug ?? 'entry'} / ${slugTrim}`,
+        },
+      );
+      const { publicId, secretToken } = res.createPreviewBundle;
+      const target = buildUrlWithNoteCmsPreviewParams(pageUrl, publicId, secretToken);
+      window.open(target, '_blank', 'noopener,noreferrer');
+      toast.success('Opened preview in a new tab. Your site must read the preview query params (see docs).');
+    } catch (openErr) {
+      const msg = openErr instanceof Error ? openErr.message : 'Could not start preview';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setOpeningLivePreview(false);
+    }
+  }, [
+    workspaceSiteId,
+    canMintPreview,
+    requiresSlug,
+    activeSite?.url,
+    slug,
+    entryId,
+    isDirty,
+    token,
+    selectedType?.slug,
+  ]);
+
   if (isDetailView) {
     return (
       <>
@@ -1580,6 +1688,40 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                           {slugFieldError ? <FieldError>{slugFieldError}</FieldError> : null}
                         </FieldContent>
                       </Field>
+                      {canMintPreview && entryId !== 'new' ? (
+                        <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            className="w-fit"
+                            disabled={
+                              openingLivePreview ||
+                              !slug.trim() ||
+                              isDirty ||
+                              !activeSite?.url?.trim()
+                            }
+                            onClick={() => void handleOpenLiveSitePreview()}
+                          >
+                            {openingLivePreview ? (
+                              <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
+                            ) : (
+                              <ExternalLink className="mr-2 size-4" aria-hidden />
+                            )}
+                            Open live site (preview)
+                          </Button>
+                          <FieldDescription className="max-w-prose text-xs">
+                            Creates a fresh preview bundle (4&nbsp;h), then opens{' '}
+                            <span className="font-medium text-foreground">{`https://${activeSite?.url ?? '…'}/…`}</span>{' '}
+                            with query params{' '}
+                            <code className="rounded bg-muted px-1">{NOTECMS_PREVIEW_QUERY_ID}</code> and{' '}
+                            <code className="rounded bg-muted px-1">{NOTECMS_PREVIEW_QUERY_TOKEN}</code>. Your site should
+                            read them on the server, fetch the bundle via{' '}
+                            <code className="rounded bg-muted px-1">fetchPreviewBundle</code>, then redirect without those
+                            params. Save first — only saved content is included.
+                          </FieldDescription>
+                        </div>
+                      ) : null}
                     </ItemContent>
                   </Item>
                 ) : null}

@@ -15,6 +15,12 @@ import {
   triggerRepositoryDispatch,
 } from '../site/publish-webhook-service.js';
 import { generateReturnWebhookToken, hashReturnWebhookToken } from '../site/publish-webhook-token.js';
+import { bumpSiteContentRevision } from '../site/content-revision.js';
+import {
+  createPreviewBundleRecord,
+  listPreviewBundlesForSite,
+  revokePreviewBundleRecord,
+} from '../site/preview-bundle-service.js';
 import { exportSiteBundleService, importSiteBundleService } from '../site/site-bundle-service.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
@@ -357,6 +363,8 @@ function siteSettingsDocToGql(doc: {
   publishLastReturnStatus?: string | null;
   publishLastReturnRunUrl?: string | null;
   publishLastReturnPayload?: unknown;
+  contentRevision?: number | null;
+  lastPublishedWatermark?: unknown;
 }) {
   let publishWebhookPostUrl: string | null = null;
   try {
@@ -409,6 +417,14 @@ function siteSettingsDocToGql(doc: {
     publishLastReturnPayload:
       doc.publishLastReturnPayload && typeof doc.publishLastReturnPayload === 'object'
         ? doc.publishLastReturnPayload
+        : null,
+    contentRevision:
+      typeof doc.contentRevision === 'number' && Number.isFinite(doc.contentRevision)
+        ? Math.floor(doc.contentRevision)
+        : 0,
+    lastPublishedWatermark:
+      doc.lastPublishedWatermark != null && typeof doc.lastPublishedWatermark === 'object'
+        ? doc.lastPublishedWatermark
         : null,
   };
 }
@@ -700,6 +716,12 @@ export const resolvers = {
         assets: Boolean(options.assets),
       });
     },
+    listPreviewBundles: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      return listPreviewBundlesForSite(sid);
+    },
     siteSettings: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'site_settings:read');
@@ -712,6 +734,8 @@ export const resolvers = {
           siteTitle: null,
           menuEntries: {},
           mcpEnabled: true,
+          contentRevision: 0,
+          lastPublishedWatermark: null,
         });
       }
       return siteSettingsDocToGql(doc);
@@ -1001,6 +1025,7 @@ export const resolvers = {
           fields: safeFields,
           options,
         });
+        await bumpSiteContentRevision(sid);
         return toId(ct.toObject());
       } catch (error: unknown) {
         if (error && typeof error === 'object' && 'code' in error && (error as { code: number }).code === 11000) {
@@ -1028,6 +1053,7 @@ export const resolvers = {
       try {
         const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId: sid }, rest, { new: true });
         if (!ct) throw new Error('Content type not found');
+        await bumpSiteContentRevision(sid);
         return toId(ct.toObject());
       } catch (error: unknown) {
         if (error instanceof Error && error.message === 'Content type not found') throw error;
@@ -1043,6 +1069,7 @@ export const resolvers = {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'owner');
       await ContentTypeModel.deleteOne({ _id: id, siteId: sid });
+      await bumpSiteContentRevision(sid);
       return true;
     },
     createEntry: async (_: unknown, { siteId, contentTypeId, name, slug, data }: any, ctx: RequestContext) => {
@@ -1073,6 +1100,7 @@ export const resolvers = {
       });
       const raw = entry.toObject() as Record<string, unknown>;
       const enriched = await withResolvedLatestEntryFields(sid, raw);
+      await bumpSiteContentRevision(sid);
       return entryDocumentToGql(enriched);
     },
     updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
@@ -1113,6 +1141,7 @@ export const resolvers = {
       if (!entry) throw new Error('Entry not found');
       const raw = entry.toObject() as Record<string, unknown>;
       const enriched = await withResolvedLatestEntryFields(sid, raw);
+      await bumpSiteContentRevision(sid);
       return entryDocumentToGql(enriched);
     },
     deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
@@ -1124,6 +1153,7 @@ export const resolvers = {
         throw new Error('Entry is assigned to a menu slot in site settings. Unassign it first.');
       }
       await EntryModel.deleteOne({ _id: id, siteId: sid });
+      await bumpSiteContentRevision(sid);
       return true;
     },
     uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
@@ -1142,6 +1172,7 @@ export const resolvers = {
       });
       const asset = await AssetModel.findById(id).lean();
       if (!asset) throw new Error('Asset not found');
+      await bumpSiteContentRevision(sid);
       return toAsset(asset);
     },
     updateAssetMeta: async (_: unknown, { id, siteId, alt, title, focalX, focalY }: any, ctx: RequestContext) => {
@@ -1157,6 +1188,7 @@ export const resolvers = {
       if (!Object.keys($set).length) throw new Error('No fields to update');
       const asset = await AssetModel.findOneAndUpdate({ _id: id, siteId: sid }, { $set }, { new: true }).lean();
       if (!asset) throw new Error('Asset not found');
+      await bumpSiteContentRevision(sid);
       return toAsset(asset);
     },
     deleteAsset: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
@@ -1185,6 +1217,7 @@ export const resolvers = {
         asset.storageKeyXlarge,
       ].filter((key): key is string => Boolean(key));
       await Promise.all(keys.map((key) => storage.delete(key)));
+      await bumpSiteContentRevision(sid);
       return true;
     },
     createApiKey: async (
@@ -1314,6 +1347,7 @@ export const resolvers = {
         { upsert: true, new: true },
       ).lean();
       if (!updated) throw new Error('Failed to save site settings');
+      await bumpSiteContentRevision(sid);
       return siteSettingsDocToGql(updated);
     },
     updatePublishWebhook: async (
@@ -1512,7 +1546,7 @@ export const resolvers = {
       if (ctx.apiKey) requireApiKeyScope(ctx, 'bundles:write');
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'owner');
-      return await importSiteBundleService(sid, ctx.userId, bundle, {
+      const summary = await importSiteBundleService(sid, ctx.userId, bundle, {
         siteSettings: Boolean(options.siteSettings),
         contentTypes: Boolean(options.contentTypes),
         contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
@@ -1520,6 +1554,46 @@ export const resolvers = {
           : [],
         assets: Boolean(options.assets),
       });
+      await bumpSiteContentRevision(sid);
+      return summary;
+    },
+    createPreviewBundle: async (
+      _: unknown,
+      {
+        siteId,
+        ttlMinutes,
+        label,
+      }: { siteId?: string | null; ttlMinutes: number; label?: string | null },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const r = await createPreviewBundleRecord({
+        siteId: sid,
+        userId: ctx.userId,
+        ttlMinutes: Number(ttlMinutes),
+        label: label ?? null,
+      });
+      return {
+        publicId: r.publicId,
+        secretToken: r.secretToken,
+        expiresAt: r.expiresAt.toISOString(),
+        fetchUrl: r.fetchUrl,
+        fetchPath: r.fetchPath,
+        contentSha256: r.contentSha256,
+        sourceContentRevision: r.sourceContentRevision,
+      };
+    },
+    revokePreviewBundle: async (
+      _: unknown,
+      { siteId, publicId }: { siteId?: string | null; publicId: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      return revokePreviewBundleRecord(sid, String(publicId));
     },
   },
 };

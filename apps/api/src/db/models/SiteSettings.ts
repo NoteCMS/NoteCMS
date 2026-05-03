@@ -37,6 +37,11 @@ const siteSettingsSchema = new Schema(
     publishLastReturnStatus: { type: String, trim: true },
     publishLastReturnRunUrl: { type: String, trim: true },
     publishLastReturnPayload: { type: Schema.Types.Mixed },
+
+    /** Monotonic counter bumped when site content, types, settings, or assets change (preview + publish alignment). */
+    contentRevision: { type: Number, default: 0 },
+    /** Written when CI reports `success`; optional fields from workflow `detail` (contentRevision, bundleHash, builtAt, workflowRunId). */
+    lastPublishedWatermark: { type: Schema.Types.Mixed, default: null },
   },
   { timestamps: true },
 );

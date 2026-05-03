@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Globe, ImageIcon, Loader2, Pencil, Plus, Rocket, Save, Trash2, X } from 'lucide-react';
+import { Copy, Eye, Globe, ImageIcon, Loader2, Pencil, Plus, Rocket, Save, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
+import { getGraphqlEndpoint } from '@/lib/graphql-endpoint.js';
 import { DeploySheetErrorBoundary } from '@/components/deploy-sheet-error-boundary';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Button } from '@/components/ui/button';
@@ -108,6 +109,20 @@ type SiteSettingsGql = {
   publishLastReturnStatus: string | null;
   publishLastReturnRunUrl: string | null;
   publishLastReturnPayload: unknown;
+  contentRevision?: number;
+  lastPublishedWatermark?: unknown;
+};
+
+type PreviewBundleListRow = {
+  publicId: string;
+  expiresAt: string;
+  createdAt: string;
+  label: string | null;
+  revoked: boolean;
+  expired: boolean;
+  sourceContentRevision: number | null;
+  byteLength: number;
+  contentSha256: string;
 };
 
 const PUBLISH_SITE_SETTINGS_FIELDS = `
@@ -137,6 +152,18 @@ function siteUrlHref(url: string): string {
 /** Host/path for the URL field (no scheme) — matches the https:// prefix in the input group. */
 function siteUrlHostPart(url: string): string {
   return url.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+}
+
+/** API origin for REST routes (e.g. preview bundle), derived from the configured GraphQL URL. */
+function apiBaseUrlFromGraphqlEndpoint(graphqlUrl: string): string {
+  try {
+    const u = new URL(graphqlUrl);
+    const path = u.pathname.replace(/\/?graphql\/?$/i, '') || '';
+    const normalized = path.replace(/\/$/, '');
+    return normalized ? `${u.origin}${normalized}` : u.origin;
+  } catch {
+    return '';
+  }
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -304,6 +331,20 @@ export function SiteSettingsPage({
   const [returnCopyHint, setReturnCopyHint] = useState('');
   const [deploySheetOpen, setDeploySheetOpen] = useState(false);
 
+  const [siteContentRevision, setSiteContentRevision] = useState(0);
+  const [previewRows, setPreviewRows] = useState<PreviewBundleListRow[]>([]);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewCreating, setPreviewCreating] = useState(false);
+  const [previewRevokingId, setPreviewRevokingId] = useState<string | null>(null);
+  const [previewTtlMinutes, setPreviewTtlMinutes] = useState(1440);
+  const [previewLabel, setPreviewLabel] = useState('');
+  const [previewLastCreated, setPreviewLastCreated] = useState<{
+    publicId: string;
+    secretToken: string;
+    expiresAt: string;
+    displayFetchUrl: string;
+  } | null>(null);
+
   const logoFileRef = useRef<HTMLInputElement>(null);
   const faviconFileRef = useRef<HTMLInputElement>(null);
 
@@ -331,6 +372,7 @@ export function SiteSettingsPage({
         `query($siteId:ID!){
           siteSettings(siteId:$siteId){
             id siteId logoAssetId faviconAssetId siteTitle menuEntries
+            contentRevision lastPublishedWatermark
             logo { ${ASSET_PREVIEW_GQL} }
             favicon { ${ASSET_PREVIEW_GQL} }
             ${PUBLISH_SITE_SETTINGS_FIELDS}
@@ -357,6 +399,7 @@ export function SiteSettingsPage({
       setPublishLastReturnAt(s.publishLastReturnAt ?? null);
       setPublishLastReturnStatus(s.publishLastReturnStatus ?? null);
       setPublishLastReturnRunUrl(s.publishLastReturnRunUrl ?? null);
+      setSiteContentRevision(typeof s.contentRevision === 'number' ? s.contentRevision : 0);
       setPublishPatDraft('');
       setPublishPatClear(false);
     } catch (e) {
@@ -418,6 +461,31 @@ export function SiteSettingsPage({
   useEffect(() => {
     void loadEntries();
   }, [loadEntries]);
+
+  const loadPreviewBundles = useCallback(async () => {
+    if (!workspaceSiteId || !token) return;
+    setPreviewLoading(true);
+    try {
+      const res = await gqlRequest<{ listPreviewBundles: PreviewBundleListRow[] }>(
+        token,
+        `query($siteId:ID!){
+          listPreviewBundles(siteId:$siteId){
+            publicId expiresAt createdAt label revoked expired sourceContentRevision byteLength contentSha256
+          }
+        }`,
+        { siteId: workspaceSiteId },
+      );
+      setPreviewRows(res.listPreviewBundles);
+    } catch {
+      setPreviewRows([]);
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [token, workspaceSiteId]);
+
+  useEffect(() => {
+    if (deploySheetOpen && canEdit && workspaceSiteId) void loadPreviewBundles();
+  }, [deploySheetOpen, canEdit, workspaceSiteId, loadPreviewBundles]);
 
   const publishDispatchReady =
     publishEnabled &&
@@ -557,6 +625,73 @@ export function SiteSettingsPage({
       window.setTimeout(() => setReturnCopyHint(''), 2500);
     } catch {
       setReturnCopyHint('Could not copy.');
+    }
+  }
+
+  async function handleCreatePreviewBundle() {
+    if (!workspaceSiteId || !canEdit) return;
+    setPreviewCreating(true);
+    setDeploySheetError('');
+    try {
+      const res = await gqlRequest<{
+        createPreviewBundle: {
+          publicId: string;
+          secretToken: string;
+          expiresAt: string;
+          fetchUrl: string | null;
+          fetchPath: string;
+        };
+      }>(
+        token,
+        `mutation($siteId:ID!,$ttl:Int!,$label:String){
+          createPreviewBundle(siteId:$siteId,ttlMinutes:$ttl,label:$label){
+            publicId secretToken expiresAt fetchUrl fetchPath
+          }
+        }`,
+        {
+          siteId: workspaceSiteId,
+          ttl: previewTtlMinutes,
+          label: previewLabel.trim() || null,
+        },
+      );
+      const r = res.createPreviewBundle;
+      const base = apiBaseUrlFromGraphqlEndpoint(getGraphqlEndpoint());
+      const displayFetchUrl = r.fetchUrl ?? (base ? `${base}${r.fetchPath}` : r.fetchPath);
+      setPreviewLastCreated({
+        publicId: r.publicId,
+        secretToken: r.secretToken,
+        expiresAt: r.expiresAt,
+        displayFetchUrl,
+      });
+      await loadPreviewBundles();
+      toast.success('Preview created — copy the secret now; it is not stored in the dashboard.');
+    } catch (e) {
+      setDeploySheetError(e instanceof Error ? e.message : 'Failed to create preview bundle');
+    } finally {
+      setPreviewCreating(false);
+    }
+  }
+
+  async function handleRevokePreviewBundle(publicId: string) {
+    if (!workspaceSiteId || !canEdit) return;
+    setPreviewRevokingId(publicId);
+    setDeploySheetError('');
+    try {
+      const res = await gqlRequest<{ revokePreviewBundle: boolean }>(
+        token,
+        `mutation($siteId:ID!,$publicId:ID!){ revokePreviewBundle(siteId:$siteId,publicId:$publicId) }`,
+        { siteId: workspaceSiteId, publicId },
+      );
+      if (res.revokePreviewBundle) {
+        toast.success('Preview link revoked');
+        await loadPreviewBundles();
+      } else {
+        toast.error('Could not revoke (already revoked or missing)');
+      }
+    } catch (e) {
+      setDeploySheetError(e instanceof Error ? e.message : 'Failed to revoke preview');
+    } finally {
+      setPreviewRevokingId(null);
     }
   }
 
@@ -1267,6 +1402,148 @@ export function SiteSettingsPage({
                         : 'Ask a site owner to connect GitHub before you can run a deploy.'}
                     </p>
                   ) : null}
+                </ItemContent>
+              </Item>
+
+              <Item variant="muted" className="w-full flex-col items-stretch gap-4">
+                <ItemContent className="w-full gap-4">
+                  <div className="flex items-start gap-2">
+                    <Eye className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden />
+                    <div className="min-w-0 flex-1 space-y-3">
+                      <div>
+                        <p className="text-sm font-medium">Preview unpublished content</p>
+                        <p className="text-xs text-muted-foreground">
+                          Frozen full-site JSON (same as workspace export). Use{' '}
+                          <span className="font-medium text-foreground">server-side or CI</span> only:{' '}
+                          <code className="rounded bg-muted px-1">Authorization: Bearer</code> with the secret below.
+                          Anyone with the URL and secret sees current workspace data. Content revision:{' '}
+                          {siteContentRevision}.
+                        </p>
+                      </div>
+                      {canEdit ? (
+                        <>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <Field>
+                              <FieldLabel className="text-xs">Expires after</FieldLabel>
+                              <FieldContent>
+                                <select
+                                  className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                  value={previewTtlMinutes}
+                                  disabled={previewCreating}
+                                  onChange={(e) => setPreviewTtlMinutes(Number(e.target.value))}
+                                >
+                                  <option value={60}>1 hour</option>
+                                  <option value={360}>6 hours</option>
+                                  <option value={1440}>24 hours</option>
+                                  <option value={4320}>3 days</option>
+                                  <option value={10080}>7 days</option>
+                                </select>
+                              </FieldContent>
+                            </Field>
+                            <Field>
+                              <FieldLabel className="text-xs">Label (optional)</FieldLabel>
+                              <FieldContent>
+                                <Input
+                                  value={previewLabel}
+                                  onChange={(e) => setPreviewLabel(e.target.value)}
+                                  placeholder="e.g. hero copy review"
+                                  disabled={previewCreating}
+                                  maxLength={200}
+                                />
+                              </FieldContent>
+                            </Field>
+                          </div>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={previewCreating || loading}
+                            onClick={() => void handleCreatePreviewBundle()}
+                          >
+                            {previewCreating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                            Generate preview bundle
+                          </Button>
+                          {previewLastCreated ? (
+                            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
+                              <p className="font-medium text-foreground">Copy these values now</p>
+                              <p className="mt-1 break-all text-muted-foreground">
+                                <span className="font-medium text-foreground">GET</span> {previewLastCreated.displayFetchUrl}
+                              </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-2">
+                                <code className="max-w-full flex-1 truncate rounded bg-background/80 px-2 py-1 font-mono">
+                                  {previewLastCreated.secretToken}
+                                </code>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  className="shrink-0"
+                                  onClick={async () => {
+                                    try {
+                                      await navigator.clipboard.writeText(previewLastCreated.secretToken);
+                                      toast.success('Secret copied');
+                                    } catch {
+                                      toast.error('Could not copy');
+                                    }
+                                  }}
+                                >
+                                  <Copy className="size-3.5" />
+                                </Button>
+                              </div>
+                              <p className="mt-1 text-muted-foreground">
+                                Expires {new Date(previewLastCreated.expiresAt).toLocaleString()}
+                              </p>
+                            </div>
+                          ) : null}
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-foreground">Recent previews</p>
+                            {previewLoading ? (
+                              <p className="text-xs text-muted-foreground">Loading…</p>
+                            ) : previewRows.length === 0 ? (
+                              <p className="text-xs text-muted-foreground">None yet.</p>
+                            ) : (
+                              <ul className="max-h-48 space-y-2 overflow-auto text-xs">
+                                {previewRows.map((row) => (
+                                  <li
+                                    key={row.publicId}
+                                    className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-background/50 px-2 py-2"
+                                  >
+                                    <div className="min-w-0">
+                                      <p className="truncate font-mono text-[11px] text-muted-foreground">{row.publicId}</p>
+                                      <p className="text-muted-foreground">
+                                        {row.label ? `${row.label} · ` : ''}
+                                        {new Date(row.expiresAt).toLocaleString()}
+                                        {row.revoked ? ' · revoked' : ''}
+                                        {row.expired && !row.revoked ? ' · expired' : ''}
+                                      </p>
+                                    </div>
+                                    {!row.revoked && !row.expired ? (
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-8 shrink-0 text-destructive hover:text-destructive"
+                                        disabled={previewRevokingId === row.publicId}
+                                        onClick={() => void handleRevokePreviewBundle(row.publicId)}
+                                      >
+                                        {previewRevokingId === row.publicId ? (
+                                          <Loader2 className="size-3.5 animate-spin" />
+                                        ) : (
+                                          'Revoke'
+                                        )}
+                                      </Button>
+                                    ) : null}
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Editors can create preview links here.</p>
+                      )}
+                    </div>
+                  </div>
                 </ItemContent>
               </Item>
 
