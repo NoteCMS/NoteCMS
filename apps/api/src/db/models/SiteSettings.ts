@@ -1,4 +1,4 @@
-import { Schema, model, type InferSchemaType } from 'mongoose';
+import { Schema, model } from 'mongoose';
 
 /** `menuEntries` keys: slug-like identifiers (e.g. `header`, `footer_nav`). */
 export const MENU_SLOT_KEY_PATTERN = /^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/;
@@ -41,5 +41,4 @@ const siteSettingsSchema = new Schema(
   { timestamps: true },
 );
 
-export type SiteSettingsDoc = InferSchemaType<typeof siteSettingsSchema> & { _id: string };
 export const SiteSettingsModel = model('SiteSettings', siteSettingsSchema);

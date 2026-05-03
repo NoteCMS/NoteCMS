@@ -1,4 +1,4 @@
-import { Schema, model, type InferSchemaType } from 'mongoose';
+import { Schema, model } from 'mongoose';
 
 const siteSchema = new Schema(
   {
@@ -9,5 +9,4 @@ const siteSchema = new Schema(
   { timestamps: true },
 );
 
-export type SiteDoc = InferSchemaType<typeof siteSchema> & { _id: string };
 export const SiteModel = model('Site', siteSchema);

@@ -3,7 +3,7 @@ import { UserModel } from '../db/models/User.js';
 import { apiKeyHasScope, type ApiKeyScope } from './api-key-scopes.js';
 import type { RequestContext } from './types.js';
 
-export type { RequestContext, ApiKeyPrincipal } from './types.js';
+export type { RequestContext } from './types.js';
 
 const rank: Record<Role, number> = {
   viewer: 1,

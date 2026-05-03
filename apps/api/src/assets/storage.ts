@@ -1,5 +1,3 @@
-export type AssetVariant = 'original' | 'web' | 'thumbnail' | 'small' | 'medium' | 'large' | 'xlarge';
-
 export interface StorageAdapter {
   put(key: string, data: Buffer, contentType: string): Promise<void>;
   getBuffer(key: string): Promise<Buffer>;
