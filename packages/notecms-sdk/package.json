@@ -1,6 +1,6 @@
 {
   "name": "@notecms/sdk",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": false,
   "description": "NoteCMS headless SDK: GraphQL client (API key), build snapshots, preview bundle fetch + query helpers, and path helpers for static sites.",
   "type": "module",
