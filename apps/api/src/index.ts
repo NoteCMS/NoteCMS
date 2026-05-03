@@ -19,6 +19,7 @@ import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
 import { assertMcpEndpointEnabledForContext } from './mcp/mcp-site-gate.js';
+import { siteBuildCallbackHandler } from './http/site-build-callback.js';
 
 const DEFAULT_JWT_SECRET = 'change-me';
 if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
@@ -65,8 +66,27 @@ const mcpLimiter = rateLimit({
   message: { message: 'Too many MCP requests; try again later.' },
 });
 
+const hooksLimiter = rateLimit({
+  windowMs: env.hooksRateLimitWindowMs,
+  limit: env.hooksRateLimitMax,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { message: 'Too many requests; try again later.' },
+});
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.post('/hooks/site-build/:siteId', hooksLimiter, async (req, res) => {
+  try {
+    await siteBuildCallbackHandler(req, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      console.error('[hooks/site-build]', err);
+      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
+    }
+  }
 });
 
 app.use(

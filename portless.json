@@ -1,0 +1,6 @@
+{
+  "apps": {
+    "apps/web": { "name": "web.notecms" },
+    "apps/api": { "name": "api.notecms" }
+  }
+}

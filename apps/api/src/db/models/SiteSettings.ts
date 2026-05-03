@@ -17,6 +17,26 @@ const siteSettingsSchema = new Schema(
     },
     /** When false, `/api/mcp` rejects requests scoped to this site (API key or JWT with siteId). Default true. */
     mcpEnabled: { type: Boolean, default: true },
+
+    /** Outbound GitHub `repository_dispatch` (PAT encrypted at rest). */
+    publishEnabled: { type: Boolean, default: false },
+    publishGithubOwner: { type: String, trim: true },
+    publishGithubRepo: { type: String, trim: true },
+    publishEventType: { type: String, trim: true },
+    publishGithubPatEnc: { type: String },
+
+    /** SHA-256 hex digest of bearer token for `POST /hooks/site-build/:siteId`. */
+    publishReturnTokenHash: { type: String },
+
+    publishLastTriggerAt: { type: Date },
+    publishLastTriggerOk: { type: Boolean },
+    publishLastTriggerStatusCode: { type: Number },
+    publishLastTriggerMessage: { type: String, trim: true },
+
+    publishLastReturnAt: { type: Date },
+    publishLastReturnStatus: { type: String, trim: true },
+    publishLastReturnRunUrl: { type: String, trim: true },
+    publishLastReturnPayload: { type: Schema.Types.Mixed },
   },
   { timestamps: true },
 );

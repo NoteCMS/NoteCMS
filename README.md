@@ -74,16 +74,20 @@ This starts Mongo, API, and web together for local development.
 
 ## Portless local HTTPS hostnames (optional)
 
-If you use [Portless](https://github.com/doyouevenport/portless) for stable local hostnames:
+If you use [Portless](https://github.com/doyouevenport/portless) for stable local hostnames, use the **project** CLI (no global install needed): `npx portless …` from the repo root, or **`npm run portless:proxy`** to start the HTTPS proxy.
 
 ```bash
 npm run dev:portless
 ```
 
-This gives you local URLs like:
+Open the admin UI at **`https://web.notecms.localhost`** (not `127.0.0.1` alone). The web app uses `vite --mode portless` so [`apps/web/.env.portless`](apps/web/.env.portless) wires same-origin `/graphql` → the API proxy even when your shell does not forward env vars through Portless.
 
-- `https://web.notecms.localhost`
-- `https://api.notecms.localhost`
+Root [`portless.json`](portless.json) registers workspace apps so names stay aligned with `web.notecms` / `api.notecms`. If Portless shows 404 or “cannot find the app”, confirm Vite is listening on the assigned port: `portless list`, then `curl -sS -o /dev/null -w "%{http_code}" http://127.0.0.1:<port>/` should return `200`.
+
+Local URLs:
+
+- `https://web.notecms.localhost` — admin (Vite + proxy)
+- `https://api.notecms.localhost` — API (`/graphql`, `/api/mcp`, `/hooks/…`)
 
 ## Self-hosting / production
 
@@ -97,6 +101,30 @@ Use `deploy/docker-compose.yml` with published images. Full guide:
   - `[apps/api/docs/mcp-and-scoped-keys.md](apps/api/docs/mcp-and-scoped-keys.md)`
 - SDK usage:
   - `[packages/notecms-sdk/README.md](packages/notecms-sdk/README.md)`
+
+## Deploy webhooks (GitHub Actions)
+
+Per-workspace **outbound** webhooks call GitHub’s [`repository_dispatch`](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event) API when an editor (or owner) runs a build from **Site settings**. **Inbound** completion is optional: GitHub Actions can `POST` back to the API when a workflow finishes so the CMS records last status.
+
+**Environment (API)**
+
+- GitHub PATs at rest are encrypted with the same key material as **`JWT_SECRET`** unless you set optional **`PUBLISH_WEBHOOK_ENCRYPTION_KEY`** (use that only if you want PAT ciphertext isolated from JWT rotation).
+- `PUBLIC_API_BASE_URL` — public origin of this API with no trailing slash (for example `https://api.example.com`). Required so the admin UI can generate the completion callback URL (`POST /hooks/site-build/:siteId` with `?token=`).
+- Optional: `HOOKS_RATE_LIMIT_MAX`, `HOOKS_RATE_LIMIT_WINDOW_MS` — rate limit for the public callback route (per IP).
+
+**GitHub workflow**
+
+1. Add `on: repository_dispatch: types: [your_event_type]` matching the event type configured in the CMS.
+2. From the CMS, generate a **completion callback URL** (owner or platform admin). It includes the signing secret in the query string — store that entire URL as one repository secret (for example `CMS_BUILD_CALLBACK_URL`).
+3. At the end of the workflow (success or failure), POST JSON to that URL (no separate Bearer secret needed):
+
+```bash
+curl -sS -X POST "$CMS_BUILD_CALLBACK_URL" \
+  -H "Content-Type: application/json" \
+  -d '{"status":"success","runUrl":"'"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"'"}'
+```
+
+Allowed `status` values: `success`, `failure`, `cancelled`. Optional fields: `runUrl` (string), `detail` (JSON, capped server-side).
 
 ## Scripts (root)
 

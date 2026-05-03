@@ -94,6 +94,53 @@ export const typeDefs = `#graphql
     logo: Asset
     favicon: Asset
     menusResolved: [MenuSlotResolved!]!
+
+    """Outbound GitHub repository_dispatch."""
+    publishEnabled: Boolean!
+    publishGithubOwner: String
+    publishGithubRepo: String
+    """Canonical https://github.com/owner/repo when both are set."""
+    publishGithubRepoUrl: String
+    publishEventType: String
+    hasPublishPat: Boolean!
+    """POST URL for workflow completion (same host as PUBLIC_API_BASE_URL)."""
+    publishWebhookPostUrl: String
+    hasPublishReturnToken: Boolean!
+    publishLastTriggerAt: String
+    publishLastTriggerOk: Boolean
+    publishLastTriggerStatusCode: Int
+    publishLastTriggerMessage: String
+    publishLastReturnAt: String
+    publishLastReturnStatus: String
+    publishLastReturnRunUrl: String
+    publishLastReturnPayload: JSON
+  }
+
+  input PublishWebhookInput {
+    publishEnabled: Boolean
+    """Paste a repo URL (https://github.com/org/repo) or org/repo. Sets owner + repo; overrides separate owner/repo fields when sent."""
+    githubRepoUrl: String
+    publishGithubOwner: String
+    publishGithubRepo: String
+    publishEventType: String
+    """Plaintext PAT; omit to keep existing. Pass empty string to remove stored token."""
+    githubPat: String
+  }
+
+  type PublishTriggerResult {
+    ok: Boolean!
+    statusCode: Int
+    message: String!
+    triggeredAt: String!
+  }
+
+  type PublishReturnWebhookSetup {
+    """
+    POST this URL from GitHub Actions when the build finishes (JSON body).
+    The signing secret is embedded in the query string — store the whole URL as one repository secret (shown only once).
+    Authorization: Bearer is optional when using this URL.
+    """
+    callbackUrl: String!
   }
 
   input SiteSettingsInput {
@@ -203,6 +250,16 @@ export const typeDefs = `#graphql
     revokeApiKey(id: ID!, siteId: ID!): Boolean!
 
     updateSiteSettings(siteId: ID, input: SiteSettingsInput!): SiteSettings!
+
+    """Site owner or platform admin: configure outbound GitHub dispatch + optional return webhook."""
+    updatePublishWebhook(siteId: ID, input: PublishWebhookInput!): SiteSettings!
+    """Editor or higher: trigger repository_dispatch for this workspace."""
+    triggerPublishWebhook(siteId: ID!): PublishTriggerResult!
+    """Site owner or platform admin: generate a completion callback URL with embedded secret (invalidates previous)."""
+    rotatePublishReturnWebhook(siteId: ID!): PublishReturnWebhookSetup!
+    """Site owner or platform admin: disable inbound return webhook."""
+    disablePublishReturnWebhook(siteId: ID!): SiteSettings!
+
     importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
   }
 `;

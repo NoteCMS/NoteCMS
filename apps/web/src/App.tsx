@@ -337,7 +337,13 @@ export function App() {
           ) : path === '/assets' ? (
             <AssetsPage token={token} workspaceSiteId={activeSiteId} sites={sites} />
           ) : path === '/site-settings' ? (
-            <SiteSettingsPage token={token} workspaceSiteId={activeSiteId} sites={sites} onSitesChanged={refreshSites} />
+            <SiteSettingsPage
+              token={token}
+              workspaceSiteId={activeSiteId}
+              sites={sites}
+              onSitesChanged={refreshSites}
+              isGlobalAdmin={isAdmin}
+            />
           ) : path === '/admin/api-keys' ? (
             <ApiKeysPage token={token} workspaceSiteId={activeSiteId} sites={sites} canManage={showSiteAdminTools} />
           ) : path === '/account' ? (

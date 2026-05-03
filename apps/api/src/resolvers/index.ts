@@ -4,8 +4,17 @@ import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../au
 import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
 import { LEGACY_API_KEY_SCOPES, normalizeAndValidateScopes, requireApiKeyScope, resolveSiteId, scopesRequireActingUser } from '../auth/api-key-scopes.js';
 import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
+import { encryptPublishPat } from '../auth/publish-webhook-crypto.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
 import { env } from '../config/env.js';
+import {
+  assertPublishGithubIds,
+  buildPublishCompletionCallbackUrl,
+  buildPublishWebhookPostUrl,
+  parseGithubRepoUrl,
+  triggerRepositoryDispatch,
+} from '../site/publish-webhook-service.js';
+import { generateReturnWebhookToken, hashReturnWebhookToken } from '../site/publish-webhook-token.js';
 import { exportSiteBundleService, importSiteBundleService } from '../site/site-bundle-service.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
@@ -103,6 +112,12 @@ async function actorIsGlobalAdmin(ctx: RequestContext): Promise<boolean> {
   if (!ctx.userId) return false;
   const actor = await UserModel.findById(ctx.userId).select({ isAdmin: 1 }).lean();
   return Boolean(actor?.isAdmin);
+}
+
+async function assertCanConfigurePublishWebhook(ctx: RequestContext, siteId: string) {
+  if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+  if (await actorIsGlobalAdmin(ctx)) return;
+  await requireRole(ctx.userId, siteId, 'owner');
 }
 
 async function entryDocumentToGql(entry: any) {
@@ -321,22 +336,80 @@ async function assetReferencedBySiteSettings(siteId: string, assetId: string): P
 }
 
 function siteSettingsDocToGql(doc: {
-  _id: unknown;
+  _id?: unknown;
   siteId: unknown;
   logoAssetId?: unknown;
   faviconAssetId?: unknown;
   siteTitle?: string | null;
   menuEntries?: unknown;
   mcpEnabled?: boolean | null;
+  publishEnabled?: boolean | null;
+  publishGithubOwner?: string | null;
+  publishGithubRepo?: string | null;
+  publishEventType?: string | null;
+  publishGithubPatEnc?: string | null;
+  publishReturnTokenHash?: string | null;
+  publishLastTriggerAt?: Date | null;
+  publishLastTriggerOk?: boolean | null;
+  publishLastTriggerStatusCode?: number | null;
+  publishLastTriggerMessage?: string | null;
+  publishLastReturnAt?: Date | null;
+  publishLastReturnStatus?: string | null;
+  publishLastReturnRunUrl?: string | null;
+  publishLastReturnPayload?: unknown;
 }) {
+  let publishWebhookPostUrl: string | null = null;
+  try {
+    publishWebhookPostUrl = buildPublishWebhookPostUrl(String(doc.siteId));
+  } catch {
+    publishWebhookPostUrl = null;
+  }
+  const patEnc = typeof doc.publishGithubPatEnc === 'string' ? doc.publishGithubPatEnc.trim() : '';
+  const retHash = typeof doc.publishReturnTokenHash === 'string' ? doc.publishReturnTokenHash.trim() : '';
   return {
-    id: String(doc._id),
+    id: doc._id != null && doc._id !== undefined ? String(doc._id) : null,
     siteId: String(doc.siteId),
     logoAssetId: doc.logoAssetId ? String(doc.logoAssetId) : null,
     faviconAssetId: doc.faviconAssetId ? String(doc.faviconAssetId) : null,
     siteTitle: typeof doc.siteTitle === 'string' && doc.siteTitle.trim() ? doc.siteTitle.trim() : null,
     menuEntries: menuEntriesToObject(doc.menuEntries),
     mcpEnabled: doc.mcpEnabled !== false,
+    publishEnabled: Boolean(doc.publishEnabled),
+    publishGithubOwner:
+      typeof doc.publishGithubOwner === 'string' && doc.publishGithubOwner.trim() ? doc.publishGithubOwner.trim() : null,
+    publishGithubRepo:
+      typeof doc.publishGithubRepo === 'string' && doc.publishGithubRepo.trim() ? doc.publishGithubRepo.trim() : null,
+    publishGithubRepoUrl: (() => {
+      const o = typeof doc.publishGithubOwner === 'string' ? doc.publishGithubOwner.trim() : '';
+      const r = typeof doc.publishGithubRepo === 'string' ? doc.publishGithubRepo.trim() : '';
+      return o && r ? `https://github.com/${o}/${r}` : null;
+    })(),
+    publishEventType:
+      typeof doc.publishEventType === 'string' && doc.publishEventType.trim() ? doc.publishEventType.trim() : null,
+    hasPublishPat: Boolean(patEnc),
+    publishWebhookPostUrl,
+    hasPublishReturnToken: Boolean(retHash),
+    publishLastTriggerAt: doc.publishLastTriggerAt ? new Date(doc.publishLastTriggerAt).toISOString() : null,
+    publishLastTriggerOk: typeof doc.publishLastTriggerOk === 'boolean' ? doc.publishLastTriggerOk : null,
+    publishLastTriggerStatusCode:
+      typeof doc.publishLastTriggerStatusCode === 'number' ? doc.publishLastTriggerStatusCode : null,
+    publishLastTriggerMessage:
+      typeof doc.publishLastTriggerMessage === 'string' && doc.publishLastTriggerMessage.trim()
+        ? doc.publishLastTriggerMessage.trim()
+        : null,
+    publishLastReturnAt: doc.publishLastReturnAt ? new Date(doc.publishLastReturnAt).toISOString() : null,
+    publishLastReturnStatus:
+      typeof doc.publishLastReturnStatus === 'string' && doc.publishLastReturnStatus.trim()
+        ? doc.publishLastReturnStatus.trim()
+        : null,
+    publishLastReturnRunUrl:
+      typeof doc.publishLastReturnRunUrl === 'string' && doc.publishLastReturnRunUrl.trim()
+        ? doc.publishLastReturnRunUrl.trim()
+        : null,
+    publishLastReturnPayload:
+      doc.publishLastReturnPayload && typeof doc.publishLastReturnPayload === 'object'
+        ? doc.publishLastReturnPayload
+        : null,
   };
 }
 
@@ -632,15 +705,14 @@ export const resolvers = {
       await requireReadSite(ctx, sid, 'site_settings:read');
       const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
       if (!doc) {
-        return {
-          id: null,
+        return siteSettingsDocToGql({
           siteId: sid,
           logoAssetId: null,
           faviconAssetId: null,
           siteTitle: null,
           menuEntries: {},
           mcpEnabled: true,
-        };
+        });
       }
       return siteSettingsDocToGql(doc);
     },
@@ -1243,6 +1315,193 @@ export const resolvers = {
       ).lean();
       if (!updated) throw new Error('Failed to save site settings');
       return siteSettingsDocToGql(updated);
+    },
+    updatePublishWebhook: async (
+      _: unknown,
+      {
+        siteId,
+        input,
+      }: {
+        siteId?: string | null;
+        input: {
+          publishEnabled?: boolean | null;
+          githubRepoUrl?: string | null;
+          publishGithubOwner?: string | null;
+          publishGithubRepo?: string | null;
+          publishEventType?: string | null;
+          githubPat?: string | null;
+        };
+      },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+
+      const existing = await SiteSettingsModel.findOne({ siteId: sid }).lean();
+      const $set: Record<string, unknown> = {};
+      const $unset: Record<string, ''> = {};
+
+      if (input.publishEnabled !== undefined && input.publishEnabled !== null) {
+        $set.publishEnabled = Boolean(input.publishEnabled);
+      }
+      if (Object.prototype.hasOwnProperty.call(input, 'githubRepoUrl')) {
+        const gru = input.githubRepoUrl;
+        if (gru == null || (typeof gru === 'string' && gru.trim() === '')) {
+          $set.publishGithubOwner = null;
+          $set.publishGithubRepo = null;
+        } else {
+          const parsed = parseGithubRepoUrl(String(gru));
+          $set.publishGithubOwner = parsed.owner;
+          $set.publishGithubRepo = parsed.repo;
+        }
+      } else {
+        if (input.publishGithubOwner !== undefined && input.publishGithubOwner !== null) {
+          $set.publishGithubOwner = String(input.publishGithubOwner).trim() || null;
+        }
+        if (input.publishGithubRepo !== undefined && input.publishGithubRepo !== null) {
+          $set.publishGithubRepo = String(input.publishGithubRepo).trim() || null;
+        }
+      }
+      if (input.publishEventType !== undefined && input.publishEventType !== null) {
+        $set.publishEventType = String(input.publishEventType).trim() || null;
+      }
+
+      if (Object.prototype.hasOwnProperty.call(input, 'githubPat')) {
+        const raw = input.githubPat;
+        if (raw === null || raw === undefined) {
+          /* keep existing */
+        } else if (String(raw).trim() === '') {
+          $unset.publishGithubPatEnc = '';
+        } else {
+          try {
+            $set.publishGithubPatEnc = encryptPublishPat(String(raw).trim());
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            throw new Error(
+              msg.includes('JWT_SECRET') || msg.includes('PUBLISH_WEBHOOK_ENCRYPTION_KEY')
+                ? 'Server encryption keys are not configured; set JWT_SECRET (or optionally PUBLISH_WEBHOOK_ENCRYPTION_KEY) on the API.'
+                : msg,
+            );
+          }
+        }
+      }
+
+      const nextEnabled =
+        $set.publishEnabled !== undefined ? Boolean($set.publishEnabled) : Boolean(existing?.publishEnabled);
+      const nextOwner =
+        $set.publishGithubOwner !== undefined
+          ? ($set.publishGithubOwner as string | null)
+          : typeof existing?.publishGithubOwner === 'string'
+            ? existing.publishGithubOwner.trim()
+            : '';
+      const nextRepo =
+        $set.publishGithubRepo !== undefined
+          ? ($set.publishGithubRepo as string | null)
+          : typeof existing?.publishGithubRepo === 'string'
+            ? existing.publishGithubRepo.trim()
+            : '';
+      const nextEvent =
+        $set.publishEventType !== undefined
+          ? ($set.publishEventType as string | null)
+          : typeof existing?.publishEventType === 'string'
+            ? existing.publishEventType.trim()
+            : '';
+      let nextPatEnc =
+        $set.publishGithubPatEnc !== undefined
+          ? ($set.publishGithubPatEnc as string)
+          : typeof existing?.publishGithubPatEnc === 'string'
+            ? existing.publishGithubPatEnc.trim()
+            : '';
+      if ($unset.publishGithubPatEnc !== undefined) nextPatEnc = '';
+
+      if (nextEnabled) {
+        if (!nextOwner || !nextRepo || !nextEvent) {
+          throw new Error(
+            'When builds are enabled, add a repository link, workflow trigger name, and token—or turn builds off.',
+          );
+        }
+        assertPublishGithubIds(nextOwner, nextRepo, nextEvent);
+        if (!nextPatEnc) {
+          throw new Error('When publish is enabled, a GitHub token is required (paste a new PAT or keep an existing one).');
+        }
+      }
+
+      const update: Record<string, unknown> = {};
+      if (Object.keys($set).length) update.$set = $set;
+      if (Object.keys($unset).length) update.$unset = $unset;
+      if (!Object.keys(update).length) {
+        const cur = await SiteSettingsModel.findOne({ siteId: sid }).lean();
+        return siteSettingsDocToGql(cur ?? { siteId: sid, menuEntries: {}, mcpEnabled: true });
+      }
+
+      const updated = await SiteSettingsModel.findOneAndUpdate({ siteId: sid }, update, {
+        new: true,
+        upsert: true,
+        setDefaultsOnInsert: true,
+      }).lean();
+      if (!updated) throw new Error('Failed to save publish webhook settings');
+      return siteSettingsDocToGql(updated);
+    },
+    triggerPublishWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      const sid = resolveSiteId(ctx, siteId);
+      await requireRole(ctx.userId, sid, 'editor');
+      const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
+      if (!doc) {
+        return {
+          ok: false,
+          statusCode: 0,
+          message: 'Workspace settings were not found.',
+          triggeredAt: new Date().toISOString(),
+        };
+      }
+      const triggeredAt = new Date().toISOString();
+      const result = await triggerRepositoryDispatch({
+        siteId: sid,
+        triggeredByUserId: ctx.userId,
+        settings: doc,
+      });
+      return {
+        ok: result.ok,
+        statusCode: result.statusCode,
+        message: result.message,
+        triggeredAt,
+      };
+    },
+    rotatePublishReturnWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      const token = generateReturnWebhookToken();
+      const hash = hashReturnWebhookToken(token);
+      const callbackUrl = buildPublishCompletionCallbackUrl(sid, token);
+      await SiteSettingsModel.findOneAndUpdate(
+        { siteId: sid },
+        { $set: { publishReturnTokenHash: hash }, $setOnInsert: { siteId: sid } },
+        { upsert: true, new: true },
+      );
+      return { callbackUrl };
+    },
+    disablePublishReturnWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      await SiteSettingsModel.findOneAndUpdate(
+        { siteId: sid },
+        {
+          $unset: {
+            publishReturnTokenHash: '',
+            publishLastReturnAt: '',
+            publishLastReturnStatus: '',
+            publishLastReturnRunUrl: '',
+            publishLastReturnPayload: '',
+          },
+        },
+        { upsert: false },
+      );
+      const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
+      if (!doc) {
+        return siteSettingsDocToGql({ siteId: sid, menuEntries: {}, mcpEnabled: true });
+      }
+      return siteSettingsDocToGql(doc);
     },
     importSiteBundle: async (
       _: unknown,
