@@ -48,11 +48,8 @@ export const env = {
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL?.trim().replace(/\/$/, '') || undefined,
   hooksRateLimitMax: Number(process.env.HOOKS_RATE_LIMIT_MAX ?? 120),
   hooksRateLimitWindowMs: Number(process.env.HOOKS_RATE_LIMIT_WINDOW_MS ?? 900_000),
-  /** GET /api/preview/:publicId — bundle fetch rate limit per IP. */
-  previewBundleRateLimitMax: Number(process.env.PREVIEW_BUNDLE_RATE_LIMIT_MAX ?? 120),
-  previewBundleRateLimitWindowMs: Number(process.env.PREVIEW_BUNDLE_RATE_LIMIT_WINDOW_MS ?? 900_000),
-  maxActivePreviewBundlesPerSite: Number(process.env.MAX_ACTIVE_PREVIEW_BUNDLES_PER_SITE ?? 10),
-  previewBundleMaxTtlMinutes: Number(process.env.PREVIEW_BUNDLE_MAX_TTL_MINUTES ?? 10_080),
-  /** Stored inline when JSON bytes are at or below this threshold; larger payloads use GridFS. */
-  previewBundleInlineMaxBytes: Number(process.env.PREVIEW_BUNDLE_INLINE_MAX_BYTES ?? 12_582_912),
+  /** When set, POST JSON `{ event, idempotencyKey, at, ...payload }` on entry publish/unpublish/delete/restore/rollback. */
+  contentWebhookUrl: process.env.CONTENT_WEBHOOK_URL?.trim() || undefined,
+  /** Optional HMAC-SHA256 secret; when set, `X-NoteCMS-Signature: sha256=<hex>` is sent for the raw body. */
+  contentWebhookSecret: process.env.CONTENT_WEBHOOK_SECRET?.trim() || undefined,
 };

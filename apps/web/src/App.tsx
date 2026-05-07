@@ -7,6 +7,22 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { gqlRequest } from '@/api/graphql';
@@ -22,10 +38,99 @@ import { SiteSettingsPage } from '@/pages/site-settings-page';
 import { PlatformUsersPage, WorkspaceUsersPage } from '@/pages/users-page';
 import { DashboardPage } from '@/pages/dashboard-page';
 import { AccountSettingsPage } from '@/pages/account-settings-page';
-import { ModeToggle } from '@/components/mode-toggle';
+import { EntryEditorToolbarProvider, useEntryEditorToolbarState } from '@/context/entry-editor-toolbar';
+import { ArrowLeft, History, Loader2, Settings2, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { ContentType } from '@/types/app';
+
+function EntryToolbarHeaderActions() {
+  const cfg = useEntryEditorToolbarState();
+  if (!cfg) return null;
+  const menu = cfg.entryActionsMenu;
+  const del = cfg.deleteConfirmation;
+  return (
+    <>
+      {del ? (
+        <Dialog open={del.open} onOpenChange={del.onOpenChange}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Move entry to trash?</DialogTitle>
+              <DialogDescription>
+                This soft-deletes the entry. You can recover it from the entries table while “Show deleted” is enabled.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter className="gap-2 sm:justify-end">
+              <Button type="button" variant="secondary" onClick={() => del.onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button type="button" variant="destructive" onClick={del.onConfirm}>
+                Move to trash
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        {menu ? (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Entry actions"
+                title="Entry actions"
+              >
+                <Settings2 className="size-4" aria-hidden />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-52">
+              <DropdownMenuItem
+                onSelect={() => {
+                  menu.onOpenRevisions();
+                }}
+              >
+                {menu.revisionsLoading ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <History />
+                )}
+                Revision history
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={menu.publishItem.disabled} onSelect={menu.publishItem.onSelect}>
+                {menu.publishItem.label}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                variant="destructive"
+                onSelect={() => {
+                  menu.onRequestDelete();
+                }}
+              >
+                <Trash2 />
+                Delete entry
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        ) : cfg.secondary.kind === 'delete' ? (
+          <Button variant="outline" size="sm" type="button" onClick={cfg.secondary.onClick}>
+            Delete
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" type="button" onClick={cfg.secondary.onClick}>
+            Cancel
+          </Button>
+        )}
+        <Button type="button" size="sm" disabled={cfg.saveDisabled} onClick={cfg.onSave}>
+          {cfg.isSaving ? 'Saving…' : 'Save'}
+        </Button>
+      </div>
+    </>
+  );
+}
 
 export function App() {
   const {
@@ -185,6 +290,16 @@ export function App() {
   const contentRouteEntryId = contentRouteParts[1] ?? null;
   const entriesRouteEntryId = path.startsWith('/entries/') ? path.replace('/entries/', '') : null;
 
+  /** Entry editor (not list): show sticky header control to return to the type table. */
+  const showEntriesBackToTable =
+    (path.startsWith('/entries/') && Boolean(entriesRouteEntryId?.trim())) ||
+    (path.startsWith('/content/') &&
+      contentRouteParts.length >= 2 &&
+      Boolean(contentRouteParts[1]?.trim()));
+  const entriesBackToTablePath = path.startsWith('/entries/')
+    ? '/entries'
+    : `/content/${contentRouteParts[0] ?? ''}`;
+
   const contentRouteType = sidebarContentTypes.find((item) => item.slug === contentRouteSlug);
 
   const breadcrumbs = (() => {
@@ -271,33 +386,48 @@ export function App() {
         showPlatformUsersNav={isAdmin}
       />
       <SidebarInset className="bg-muted">
-        <header className="flex h-14 shrink-0 items-center gap-2 px-4">
-          <SidebarTrigger className="hover:bg-muted/90" />
-          <Separator orientation="vertical" className="mr-2 data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center" />
-          <Breadcrumb>
-            <BreadcrumbList>
-              {breadcrumbs.map((item, index) => (
-                <Fragment key={`${item.label}-${index}`}>
-                  {index > 0 ? <BreadcrumbSeparator /> : null}
-                  <BreadcrumbItem>
-                    {item.href ? (
-                      <BreadcrumbLink asChild>
-                        <Link to={item.href}>{item.label}</Link>
-                      </BreadcrumbLink>
-                    ) : (
-                      <BreadcrumbPage>{item.label}</BreadcrumbPage>
-                    )}
-                  </BreadcrumbItem>
-                </Fragment>
-              ))}
-            </BreadcrumbList>
-          </Breadcrumb>
-          <div className="ml-auto flex items-center">
-            <ModeToggle />
-          </div>
-        </header>
+        <EntryEditorToolbarProvider>
+          <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/95 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-muted/80 dark:border-border/40 dark:bg-muted/90 dark:supports-[backdrop-filter]:bg-muted/75">
+            <SidebarTrigger className="hover:bg-muted/90" />
+            <Separator orientation="vertical" className="data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center" />
+            {showEntriesBackToTable ? (
+              <>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="shrink-0"
+                  type="button"
+                  aria-label="Back to table"
+                  title="Back to table"
+                  onClick={() => navigate(entriesBackToTablePath)}
+                >
+                  <ArrowLeft />
+                </Button>
+                <Separator orientation="vertical" className="data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center" />
+              </>
+            ) : null}
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList>
+                {breadcrumbs.map((item, index) => (
+                  <Fragment key={`${item.label}-${index}`}>
+                    {index > 0 ? <BreadcrumbSeparator /> : null}
+                    <BreadcrumbItem>
+                      {item.href ? (
+                        <BreadcrumbLink asChild>
+                          <Link to={item.href}>{item.label}</Link>
+                        </BreadcrumbLink>
+                      ) : (
+                        <BreadcrumbPage>{item.label}</BreadcrumbPage>
+                      )}
+                    </BreadcrumbItem>
+                  </Fragment>
+                ))}
+              </BreadcrumbList>
+            </Breadcrumb>
+            <EntryToolbarHeaderActions />
+          </header>
 
-        <div className="flex flex-1 p-2 pt-0 overflow-hidden">
+          <div className="flex flex-1 p-2 pt-0 overflow-hidden">
           {path === '/users' ? (
             <WorkspaceUsersPage
               token={token}
@@ -366,7 +496,8 @@ export function App() {
           ) : (
             <div className="text-sm text-muted-foreground">Page under construction.</div>
           )}
-        </div>
+          </div>
+        </EntryEditorToolbarProvider>
       </SidebarInset>
     </SidebarProvider>
   );

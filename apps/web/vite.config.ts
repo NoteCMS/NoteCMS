@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'node:path';
 
+/** UI primitives: prefer **Radix** for new work; **Base UI** remains for existing surfaces until migrated. */
 /** Dev / preview: HMR needs unsafe-eval; connect allows local + TLS .localhost (e.g. portless). */
 const spaSecurityHeaders = {
   'Content-Security-Policy': [

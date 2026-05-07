@@ -102,28 +102,9 @@ Use `deploy/docker-compose.yml` with published images. Full guide:
 - SDK usage:
   - `[packages/notecms-sdk/README.md](packages/notecms-sdk/README.md)`
 
-## Preview bundles (pre-publish sites)
+## Static site snapshots
 
-Editors can create **short-lived frozen JSON exports** of a workspace before GitHub CI finishes — useful for staging builds or QA against unpublished edits.
-
-- **Full integration guide** (REST route, env vars, security, bundle shape vs `fetchBuildSnapshot`, frontend middleware): **[docs/PREVIEW_BUNDLES.md](docs/PREVIEW_BUNDLES.md)**
-- **SDK helper:** `fetchPreviewBundle` in `@notecms/sdk` (server/CI only; never expose preview secrets to the browser).
-- **Admin UI (manual link):** Site settings → **Builds** sheet → **Preview unpublished content** — generate a bundle, copy URL + secret once.
-- **API:** `GET /api/preview/:publicId` with `Authorization: Bearer …`; mint/list/revoke via GraphQL (**JWT editors**, not API keys). Set **`PUBLIC_API_BASE_URL`** on the API so minted links show a complete URL.
-
-### Open live site from the entry editor
-
-For content types that use a **public slug** (`hasSlug`), the **Edit entry** screen shows **Open live site (preview)** (owners and editors).
-
-1. Set the workspace **Site URL** in **Site settings** (same base URL shown next to the slug field when editing an entry).
-2. **Save** the entry — preview always reflects **saved** CMS content, not unsaved drafts.
-3. Click **Open live site (preview)**. NoteCMS mints a preview bundle (4‑hour TTL) and opens a new browser tab to:
-
-   `{Site URL}/{entry slug}?notecms_preview_id=<uuid>&notecms_preview_token=<secret>`
-
-Your **public site** must handle those query parameters on the server: fetch the bundle with `fetchPreviewBundle` (or `GET /api/preview/:id` + `Authorization: Bearer`), render the page, then **strip the params** from the URL (redirect or `history.replaceState`) so the secret does not stay in the address bar. Details and caveats are in **[docs/PREVIEW_BUNDLES.md](docs/PREVIEW_BUNDLES.md)**.
-
-Optional: successful **`POST /hooks/site-build/:siteId`** callbacks can include structured **`detail`** (`contentRevision`, `bundleHash`, `builtAt`, `workflowRunId`) — see the preview doc and the “Deploy webhooks” section below.
+Consumers integrate via **`fetchBuildSnapshot`** in `@notecms/sdk` during CI/static builds (between publishes). Use **`createDevNoteCmsClient`** in dev when you want live CMS reads without waiting for a build.
 
 ## Deploy webhooks (GitHub Actions)
 
@@ -149,7 +130,7 @@ curl -sS -X POST "$CMS_BUILD_CALLBACK_URL" \
 
 Allowed `status` values: `success`, `failure`, `cancelled`. Optional fields: `runUrl` (string), `detail` (JSON, capped server-side).
 
-When `status` is **`success`**, the API may persist **`lastPublishedWatermark`** on site settings if `detail` includes fields such as **`contentRevision`**, **`bundleHash`**, **`builtAt`**, **`workflowRunId`** — useful to align “what shipped” with CMS revisions. See **[docs/PREVIEW_BUNDLES.md](docs/PREVIEW_BUNDLES.md)**.
+When `status` is **`success`**, the API may persist **`lastPublishedWatermark`** on site settings if `detail` includes fields such as **`contentRevision`**, **`bundleHash`**, **`builtAt`**, **`workflowRunId`** — useful to align “what shipped” with CMS revisions.
 
 ## Scripts (root)
 

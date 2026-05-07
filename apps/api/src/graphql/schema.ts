@@ -8,7 +8,32 @@ export const typeDefs = `#graphql
   type GlobalUser { id: ID!, email: String!, status: String!, isAdmin: Boolean!, access: [SiteAccess!]! }
   type ContentType { id: ID!, siteId: ID!, name: String!, slug: String!, fields: JSON!, options: JSON! }
   type EntryEditor { id: ID!, email: String! }
-  type Entry { id: ID!, siteId: ID!, contentTypeId: ID!, name: String!, slug: String, data: JSON!, updatedAt: String!, lastEditedBy: EntryEditor }
+  type EntryRevision {
+    id: ID!
+    entryId: ID!
+    siteId: ID!
+    revisionNumber: Int!
+    kind: String!
+    createdAt: String!
+    createdById: ID
+    payload: JSON!
+  }
+  type Entry {
+    id: ID!
+    siteId: ID!
+    contentTypeId: ID!
+    name: String!
+    slug: String
+    data: JSON!
+    lifecycleStatus: String!
+    publishedAt: String
+    scheduledPublishAt: String
+    scheduledUnpublishAt: String
+    deletedAt: String
+    hasUnpublishedChanges: Boolean!
+    updatedAt: String!
+    lastEditedBy: EntryEditor
+  }
   type AuthPayload { token: String!, user: User! }
 
   type LoginPayload {
@@ -120,31 +145,6 @@ export const typeDefs = `#graphql
     lastPublishedWatermark: JSON
   }
 
-  type PreviewBundleListItem {
-    publicId: ID!
-    expiresAt: String!
-    createdAt: String!
-    label: String
-    revoked: Boolean!
-    expired: Boolean!
-    sourceContentRevision: Int
-    byteLength: Int!
-    contentSha256: String!
-  }
-
-  type CreatePreviewBundlePayload {
-    publicId: ID!
-    """Use once: send Authorization Bearer secret when GETting the preview URL."""
-    secretToken: String!
-    expiresAt: String!
-    """Full URL when PUBLIC_API_BASE_URL is set on the API; otherwise null (use fetchPath on the same host)."""
-    fetchUrl: String
-    """Path only; for example /api/preview/ plus the public id."""
-    fetchPath: String!
-    contentSha256: String!
-    sourceContentRevision: Int
-  }
-
   input PublishWebhookInput {
     publishEnabled: Boolean
     """Paste a repo URL (https://github.com/org/repo) or org/repo. Sets owner + repo; overrides separate owner/repo fields when sent."""
@@ -231,17 +231,29 @@ export const typeDefs = `#graphql
     apiKeyInfo: ApiKeyInfo!
     contentTypes(siteId: ID): [ContentType!]!
     workspaceOverview(siteId: ID): WorkspaceOverview!
-    """limit and offset are capped server-side (see API docs / list limits)."""
-    entries(siteId: ID, contentTypeId: ID!, limit: Int, offset: Int): [Entry!]!
+    """
+    limit and offset are capped server-side (see API docs / list limits).
+    Incremental sync: pass updatedSince (ISO 8601) to return only rows with updatedAt greater than that time (published consumer lists still respect lifecycle; combine with pagination as usual).
+    Search is not implemented in the API; index content out-of-band (e.g. from content webhooks or batch export) when you need search.
+    """
+    entries(
+      siteId: ID
+      contentTypeId: ID!
+      limit: Int
+      offset: Int
+      includeDrafts: Boolean
+      includeDeleted: Boolean
+      updatedSince: String
+    ): [Entry!]!
     entry(id: ID!, siteId: ID): Entry
     entryBySlug(siteId: ID, contentTypeSlug: String!, slug: String!): Entry
+    entryRevisions(entryId: ID!, siteId: ID, limit: Int, offset: Int): [EntryRevision!]!
+    entryRevision(id: ID!, siteId: ID): EntryRevision
     """The query argument matches filename as a case-insensitive substring (not a regex). limit/offset are capped."""
     listAssets(siteId: ID, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID): SiteSettings!
     exportSiteBundle(siteId: ID, options: SiteBundlePartOptions!): JSON!
-    """Editor session only: list recent preview bundle links (no secrets)."""
-    listPreviewBundles(siteId: ID): [PreviewBundleListItem!]!
   }
 
   type Mutation {
@@ -271,7 +283,16 @@ export const typeDefs = `#graphql
 
     createEntry(siteId: ID, contentTypeId: ID!, name: String!, slug: String, data: JSON!): Entry!
     updateEntry(id: ID!, siteId: ID, name: String, slug: String, data: JSON): Entry!
+    """Soft-delete: sets deletedAt. Use restoreEntry to undo."""
     deleteEntry(id: ID!, siteId: ID): Boolean!
+    publishEntry(id: ID!, siteId: ID): Entry!
+    unpublishEntry(id: ID!, siteId: ID): Entry!
+    restoreEntry(id: ID!, siteId: ID): Entry!
+    rollbackEntryToRevision(revisionId: ID!, siteId: ID): Entry!
+    schedulePublishEntry(id: ID!, siteId: ID, at: String!): Entry!
+    cancelScheduledPublish(id: ID!, siteId: ID): Entry!
+    scheduleUnpublishEntry(id: ID!, siteId: ID, at: String!): Entry!
+    cancelScheduledUnpublish(id: ID!, siteId: ID): Entry!
 
     uploadAsset(siteId: ID, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String): Asset!
     updateAssetMeta(id: ID!, siteId: ID, alt: String, title: String, focalX: Float, focalY: Float): Asset!
@@ -292,10 +313,5 @@ export const typeDefs = `#graphql
     disablePublishReturnWebhook(siteId: ID!): SiteSettings!
 
     importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
-
-    """Editor session only: create a frozen full-site bundle; use fetchUrl + secretToken for server-side preview fetches."""
-    createPreviewBundle(siteId: ID, ttlMinutes: Int!, label: String): CreatePreviewBundlePayload!
-    """Editor session only: revoke a preview bundle by public id."""
-    revokePreviewBundle(siteId: ID, publicId: ID!): Boolean!
   }
 `;

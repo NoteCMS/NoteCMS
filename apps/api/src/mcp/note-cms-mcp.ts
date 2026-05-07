@@ -44,15 +44,15 @@ async function graphqlTool<T>(run: () => Promise<T>, preface?: string) {
 const Q = {
   apiKeyInfo: `query { apiKeyInfo { siteId scopes name keyHint } }`,
   contentTypes: `query($siteId: ID) { contentTypes(siteId: $siteId) { id siteId name slug fields options } }`,
-  entries: `query($siteId: ID, $contentTypeId: ID!, $limit: Int, $offset: Int) {
-    entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit, offset: $offset) {
-      id siteId contentTypeId name slug data updatedAt lastEditedBy { id email }
+  entries: `query($siteId: ID, $contentTypeId: ID!, $limit: Int, $offset: Int, $includeDrafts: Boolean, $includeDeleted: Boolean, $updatedSince: String) {
+    entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit, offset: $offset, includeDrafts: $includeDrafts, includeDeleted: $includeDeleted, updatedSince: $updatedSince) {
+      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
     }
   }`,
-  entry: `query($id: ID!, $siteId: ID) { entry(id: $id, siteId: $siteId) { id siteId contentTypeId name slug data updatedAt lastEditedBy { id email } } }`,
+  entry: `query($id: ID!, $siteId: ID) { entry(id: $id, siteId: $siteId) { id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email } } }`,
   entryBySlug: `query($siteId: ID, $contentTypeSlug: String!, $slug: String!) {
     entryBySlug(siteId: $siteId, contentTypeSlug: $contentTypeSlug, slug: $slug) {
-      id siteId contentTypeId name slug data updatedAt lastEditedBy { id email }
+      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
     }
   }`,
   listAssets: `query($siteId: ID, $query: String, $limit: Int, $offset: Int) {
@@ -129,12 +129,18 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
     {
       title: 'List entries',
       description:
-        'Lists entries for one **contentTypeId** (newest first). Use **notecms_list_content_types** to resolve ids. Paginate with limit/offset.',
+        'Lists entries for one **contentTypeId** (newest first). Use **notecms_list_content_types** to resolve ids. Paginate with limit/offset. API keys without `entries:draft:read` only see **published** rows; use optional filters for incremental sync.',
       inputSchema: {
         siteId: siteIdOpt,
         contentTypeId: z.string().describe('Content type id from contentTypes.id'),
         limit: z.number().int().min(1).max(200).optional().describe('Page size (default 30, max 200)'),
         offset: z.number().int().min(0).optional().describe('Skip this many rows'),
+        includeDrafts: z.boolean().optional().describe('When true, request draft rows (requires API key scope entries:draft:read)'),
+        includeDeleted: z.boolean().optional().describe('When true, include soft-deleted entries'),
+        updatedSince: z
+          .string()
+          .optional()
+          .describe('ISO 8601 timestamp — only entries with updatedAt strictly after this time'),
       },
       annotations: { readOnlyHint: true },
     },
@@ -145,6 +151,9 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
           contentTypeId: args!.contentTypeId,
           limit: args?.limit ?? 30,
           offset: args?.offset ?? 0,
+          includeDrafts: args?.includeDrafts ?? null,
+          includeDeleted: args?.includeDeleted ?? null,
+          updatedSince: args?.updatedSince ?? null,
         }),
       ),
   );
@@ -395,8 +404,9 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
   server.registerTool(
     'notecms_delete_entry',
     {
-      title: 'Delete entry',
-      description: 'Permanently deletes one entry by id. Requires **entries:write**.',
+      title: 'Delete entry (soft)',
+      description:
+        'Soft-deletes one entry by id (`deletedAt` set). Restore with `restoreEntry` from the GraphQL API when permitted. Requires **entries:write**.',
       inputSchema: { id: z.string().describe('Entry id'), siteId: siteIdOpt },
       annotations: { readOnlyHint: false, destructiveHint: true },
     },
@@ -407,7 +417,7 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
             id: args!.id,
             siteId: args?.siteId ?? null,
           }),
-        'Deletion is permanent for this entry document.',
+        'Entry is soft-deleted; consumers and API keys no longer see it unless explicitly allowed.',
       ),
   );
 

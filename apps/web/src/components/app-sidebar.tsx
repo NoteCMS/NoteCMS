@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   ChevronUp,
   Home,
@@ -10,15 +11,22 @@ import {
   Image,
   KeyRound,
   Cog,
+  Palette,
   UserCog,
   User,
 } from 'lucide-react';
+import { useTheme } from 'next-themes';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -79,6 +87,10 @@ export function AppSidebar({
   showPlatformUsersNav = false,
 }: AppSidebarProps) {
   const activeSite = sites.find((site) => site.id === activeSiteId);
+  const [themePickerReady, setThemePickerReady] = useState(false);
+  const { theme, setTheme } = useTheme();
+
+  useEffect(() => setThemePickerReady(true), []);
 
   const adminItems = [
     adminItemsBase[0],
@@ -187,11 +199,33 @@ export function AppSidebar({
                   <ChevronUp className="ml-auto size-4" />
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent side="top" align="end" className="w-(--radix-dropdown-menu-trigger-width)">
+              <DropdownMenuContent
+                side="top"
+                align="end"
+                className="w-(--radix-dropdown-menu-trigger-width) min-w-56"
+              >
                 <DropdownMenuItem onClick={() => onNavigate('/account')}>
                   <User />
                   Your account
                 </DropdownMenuItem>
+                {themePickerReady ? (
+                  <>
+                    <DropdownMenuSeparator />
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger>
+                        <Palette />
+                        Appearance
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubContent sideOffset={6} alignOffset={-4} className="min-w-40">
+                        <DropdownMenuRadioGroup value={theme ?? 'system'} onValueChange={setTheme}>
+                          <DropdownMenuRadioItem value="light">Light</DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="dark">Dark</DropdownMenuRadioItem>
+                          <DropdownMenuRadioItem value="system">System</DropdownMenuRadioItem>
+                        </DropdownMenuRadioGroup>
+                      </DropdownMenuSubContent>
+                    </DropdownMenuSub>
+                  </>
+                ) : null}
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={onLogout}>
                   <LogOut />

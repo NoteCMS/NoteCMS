@@ -12,6 +12,8 @@ import {
 } from '../domain/fields/repeater-hydrate.js';
 import type { FieldDefinition } from '../domain/fields/types.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
+import mongoose from 'mongoose';
+import { appendEntryRevision } from './entry-revision-service.js';
 
 const BUNDLE_VERSION = 1;
 const MAX_EXPORT_ASSETS = 120;
@@ -94,15 +96,28 @@ function menuEntriesToObject(mapOrRecord: unknown): Record<string, string> {
 async function buildPortableMenuSlots(siteId: string, menu: Record<string, string>): Promise<PortableMenuSlot[]> {
   const slots: PortableMenuSlot[] = [];
   for (const [slotKey, entryId] of Object.entries(menu)) {
-    const entry = await EntryModel.findOne({ _id: entryId, siteId }).lean();
+    const entry = await EntryModel.findOne({ _id: entryId, siteId, deletedAt: null }).lean();
     if (!entry) continue;
     const ct = await ContentTypeModel.findOne({ _id: entry.contentTypeId, siteId }).lean();
     if (!ct) continue;
+    const pubSlug =
+      typeof (entry as { publishedSlug?: string | null }).publishedSlug === 'string' &&
+      (entry as { publishedSlug: string }).publishedSlug
+        ? (entry as { publishedSlug: string }).publishedSlug
+        : typeof entry.slug === 'string' && entry.slug
+          ? entry.slug
+          : null;
+    const pubName =
+      typeof (entry as { publishedName?: string | null }).publishedName === 'string'
+        ? (entry as { publishedName: string }).publishedName
+        : typeof entry.name === 'string'
+          ? entry.name
+          : null;
     slots.push({
       slotKey,
       contentTypeSlug: ct.slug,
-      entrySlug: typeof entry.slug === 'string' && entry.slug ? entry.slug : null,
-      entryName: typeof entry.name === 'string' ? entry.name : null,
+      entrySlug: pubSlug,
+      entryName: pubName,
     });
   }
   return slots;
@@ -304,7 +319,7 @@ function resolveEntrySlug(
   throw new Error('Slug is required for this content type');
 }
 
-/** Options for a full-site export (all content types, settings, assets). Used by preview snapshots and static pipelines. */
+/** Options for a full-site export (all content types, settings, assets). Used by static pipelines and JSON export/import. */
 export async function resolveFullSiteBundleExportOptions(siteId: string): Promise<SiteBundleOptions> {
   const slugs = (
     await ContentTypeModel.find({ siteId })
@@ -353,14 +368,34 @@ export async function exportSiteBundleService(
     for (const slug of options.contentTypeSlugsForEntries) {
       const ct = await ContentTypeModel.findOne({ siteId, slug }).lean();
       if (!ct) continue;
-      const entries = await EntryModel.find({ siteId, contentTypeId: ct._id }).limit(2000).lean();
+      const entries = await EntryModel.find({
+        siteId,
+        contentTypeId: ct._id,
+        lifecycleStatus: 'published',
+        deletedAt: null,
+      })
+        .limit(2000)
+        .lean();
       groups.push({
         contentTypeSlug: ct.slug,
-        items: entries.map((e) => ({
-          name: typeof e.name === 'string' ? e.name : '',
-          slug: typeof e.slug === 'string' ? e.slug : null,
-          data: e.data ?? {},
-        })),
+        items: entries.map((e) => {
+          const name =
+            typeof (e as { publishedName?: string | null }).publishedName === 'string'
+              ? (e as { publishedName: string }).publishedName
+              : typeof e.name === 'string'
+                ? e.name
+                : '';
+          const slug =
+            typeof (e as { publishedSlug?: string | null }).publishedSlug === 'string' ||
+            (e as { publishedSlug?: string | null }).publishedSlug === null
+              ? ((e as { publishedSlug: string | null }).publishedSlug ?? null)
+              : typeof e.slug === 'string'
+                ? e.slug
+                : null;
+          const dataRaw = (e as { publishedData?: unknown; data?: unknown }).publishedData ?? e.data ?? {};
+          const data = dataRaw && typeof dataRaw === 'object' && !Array.isArray(dataRaw) ? dataRaw : {};
+          return { name, slug, data };
+        }),
       });
     }
     bundle.entries = groups;
@@ -560,24 +595,72 @@ export async function importSiteBundleService(
             : { siteId, contentTypeId: ct._id, name: displayName },
         ).lean();
 
+        const publishedAt = new Date();
         if (existing) {
           await assertEntryNameUnique(siteId, ct._id, displayName, String(existing._id));
+          const prevRev = existing.lastPublishedRevisionId ? String(existing.lastPublishedRevisionId) : null;
           await EntryModel.findOneAndUpdate(
             { _id: existing._id, siteId },
-            { name: displayName, slug: resolvedSlug, data, updatedBy: userId },
+            {
+              name: displayName,
+              slug: resolvedSlug,
+              data,
+              updatedBy: userId,
+              lifecycleStatus: 'published',
+              publishedAt,
+              publishedName: displayName,
+              publishedSlug: resolvedSlug,
+              publishedData: data,
+              hasUnpublishedChanges: false,
+              deletedAt: null,
+              deletedBy: null,
+            },
             { new: true },
+          );
+          const { revisionId } = await appendEntryRevision({
+            entryId: String(existing._id),
+            siteId,
+            userId,
+            kind: 'publish',
+            payload: { name: displayName, slug: resolvedSlug, data },
+            previousRevisionId: prevRev,
+          });
+          await EntryModel.updateOne(
+            { _id: existing._id, siteId },
+            { $set: { lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId) } },
           );
           summary.entriesUpdated += 1;
         } else {
           await assertEntryNameUnique(siteId, ct._id, displayName);
-          await EntryModel.create({
+          const created = await EntryModel.create({
             siteId,
             contentTypeId: ct._id,
             name: displayName,
             slug: resolvedSlug,
             data,
             updatedBy: userId,
+            lifecycleStatus: 'published',
+            publishedAt,
+            publishedName: displayName,
+            publishedSlug: resolvedSlug,
+            publishedData: data,
+            hasUnpublishedChanges: false,
+            deletedAt: null,
+            deletedBy: null,
+            lastPublishedRevisionId: null,
           });
+          const { revisionId } = await appendEntryRevision({
+            entryId: String(created._id),
+            siteId,
+            userId,
+            kind: 'publish',
+            payload: { name: displayName, slug: resolvedSlug, data },
+            previousRevisionId: null,
+          });
+          await EntryModel.updateOne(
+            { _id: created._id, siteId },
+            { $set: { lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId) } },
+          );
           summary.entriesCreated += 1;
         }
       }

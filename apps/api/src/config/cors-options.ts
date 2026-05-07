@@ -38,4 +38,7 @@ export function buildCorsOptions(): CorsOptions {
   };
 }
 
+/**
+ * CORS headers we allow callers to send (for preflight).
+ */
 const corsAllowedHeaders = ['Content-Type', 'Authorization', 'X-Api-Key', 'mcp-session-id', 'Mcp-Session-Id'];

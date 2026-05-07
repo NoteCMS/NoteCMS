@@ -2,7 +2,14 @@ import mongoose from 'mongoose';
 import { GraphQLJSON } from 'graphql-scalars';
 import { formatApiKeyToken, generateApiKeySecret, hashApiKeySecret } from '../auth/api-key.js';
 import { requireReadSite, requireRole, type RequestContext } from '../auth/rbac.js';
-import { LEGACY_API_KEY_SCOPES, normalizeAndValidateScopes, requireApiKeyScope, resolveSiteId, scopesRequireActingUser } from '../auth/api-key-scopes.js';
+import {
+  apiKeyHasScope,
+  LEGACY_API_KEY_SCOPES,
+  normalizeAndValidateScopes,
+  requireApiKeyScope,
+  resolveSiteId,
+  scopesRequireActingUser,
+} from '../auth/api-key-scopes.js';
 import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
 import { encryptPublishPat } from '../auth/publish-webhook-crypto.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
@@ -16,17 +23,15 @@ import {
 } from '../site/publish-webhook-service.js';
 import { generateReturnWebhookToken, hashReturnWebhookToken } from '../site/publish-webhook-token.js';
 import { bumpSiteContentRevision } from '../site/content-revision.js';
-import {
-  createPreviewBundleRecord,
-  listPreviewBundlesForSite,
-  revokePreviewBundleRecord,
-} from '../site/preview-bundle-service.js';
-import { exportSiteBundleService, importSiteBundleService } from '../site/site-bundle-service.js';
+import { fireContentWebhook } from '../site/content-webhook.js';
+import { activateScheduledEntries, resolveEntryPayloadForReader } from '../site/entry-lifecycle.js';
+import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions } from '../site/entry-revision-service.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
 import { persistImageUpload } from '../assets/persist-image-upload.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
+import { EntryRevisionModel } from '../db/models/EntryRevision.js';
 import { AssetModel } from '../db/models/Asset.js';
 import { MembershipModel, roles, type Role } from '../db/models/Membership.js';
 import { SiteModel } from '../db/models/Site.js';
@@ -43,6 +48,7 @@ import { EntryFieldValidationError } from '../domain/fields/entry-field-validati
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
 import { GraphQLError } from 'graphql';
 import { clampListArgs } from '../lib/list-args.js';
+import { bundleMutationResolvers, bundleQueryResolvers } from './bundles.js';
 import { escapeRegexLiteral } from '../lib/regex-escape.js';
 
 function toSlug(value: string) {
@@ -70,7 +76,7 @@ async function assertEntryNameUnique(
   name: string,
   excludeEntryId?: string,
 ) {
-  const filter: Record<string, unknown> = { siteId, contentTypeId, name };
+  const filter: Record<string, unknown> = { siteId, contentTypeId, name, deletedAt: null };
   if (excludeEntryId) filter._id = { $ne: excludeEntryId };
   const clash = await EntryModel.findOne(filter).select({ _id: 1 }).lean();
   if (clash) badUserInput('An entry with this name already exists for this content type.', ['name']);
@@ -126,7 +132,7 @@ async function assertCanConfigurePublishWebhook(ctx: RequestContext, siteId: str
   await requireRole(ctx.userId, siteId, 'owner');
 }
 
-async function entryDocumentToGql(entry: any) {
+async function entryDocumentToGql(entry: any, ctx: RequestContext) {
   let lastEditedBy: { id: string; email: string } | null = null;
   if (entry.updatedBy) {
     const editor = await UserModel.findById(entry.updatedBy).select({ email: 1 }).lean();
@@ -135,11 +141,21 @@ async function entryDocumentToGql(entry: any) {
       email: editor?.email ?? 'Unknown',
     };
   }
+  const raw = entry as Record<string, unknown>;
+  const payload = resolveEntryPayloadForReader(raw, ctx);
   return {
     ...toId(entry),
     siteId: String(entry.siteId),
     contentTypeId: String(entry.contentTypeId),
-    name: typeof entry.name === 'string' ? entry.name : '',
+    name: payload.name,
+    slug: payload.slug,
+    data: payload.data,
+    lifecycleStatus: typeof raw.lifecycleStatus === 'string' ? raw.lifecycleStatus : 'published',
+    publishedAt: raw.publishedAt ? new Date(raw.publishedAt as Date).toISOString() : null,
+    scheduledPublishAt: raw.scheduledPublishAt ? new Date(raw.scheduledPublishAt as Date).toISOString() : null,
+    scheduledUnpublishAt: raw.scheduledUnpublishAt ? new Date(raw.scheduledUnpublishAt as Date).toISOString() : null,
+    deletedAt: raw.deletedAt ? new Date(raw.deletedAt as Date).toISOString() : null,
+    hasUnpublishedChanges: Boolean(raw.hasUnpublishedChanges),
     updatedAt: new Date(entry.updatedAt ?? Date.now()).toISOString(),
     lastEditedBy,
   };
@@ -469,17 +485,17 @@ export const resolvers = {
       const asset = await AssetModel.findOne({ _id: parent.faviconAssetId, siteId: parent.siteId }).lean();
       return asset ? toAsset(asset) : null;
     },
-    menusResolved: async (parent: { siteId: string; menuEntries: unknown }) => {
+    menusResolved: async (parent: { siteId: string; menuEntries: unknown }, _args: unknown, ctx: RequestContext) => {
       const obj = menuEntriesToObject(parent.menuEntries);
       const slots = Object.keys(obj).sort();
       return Promise.all(
         slots.map(async (slot) => {
           const entryId = obj[slot];
           if (!entryId) return { slot, entry: null };
-          const doc = await EntryModel.findOne({ _id: entryId, siteId: parent.siteId }).lean();
+          const doc = await EntryModel.findOne({ _id: entryId, siteId: parent.siteId, deletedAt: null }).lean();
           if (!doc) return { slot, entry: null };
           const enriched = await withResolvedLatestEntryFields(String(parent.siteId), doc as Record<string, unknown>);
-          return { slot, entry: await entryDocumentToGql(enriched) };
+          return { slot, entry: await entryDocumentToGql(enriched, ctx) };
         }),
       );
     },
@@ -598,14 +614,14 @@ export const resolvers = {
         agg,
       ] = await Promise.all([
         ContentTypeModel.countDocuments({ siteId: sid }),
-        EntryModel.countDocuments({ siteId: sid }),
+        EntryModel.countDocuments({ siteId: sid, deletedAt: null }),
         AssetModel.countDocuments({ siteId: sid }),
         MembershipModel.countDocuments({ siteId: sid }),
         EntryModel.findOne({ siteId: sid }).sort({ updatedAt: -1 }).select({ updatedAt: 1 }).lean(),
         SiteSettingsModel.findOne({ siteId: sid }).select({ siteTitle: 1 }).lean(),
         ContentTypeModel.find({ siteId: sid }).select({ _id: 1, name: 1, slug: 1 }).sort({ name: 1 }).lean(),
         EntryModel.aggregate<{ _id: mongoose.Types.ObjectId; entryCount: number }>([
-          { $match: { siteId: siteOid } },
+          { $match: { siteId: siteOid, deletedAt: null } },
           { $group: { _id: '$contentTypeId', entryCount: { $sum: 1 } } },
         ]),
       ]);
@@ -632,35 +648,65 @@ export const resolvers = {
         byContentType,
       };
     },
-    entries: async (_: unknown, { siteId, contentTypeId, limit, offset }: any, ctx: RequestContext) => {
+    entries: async (
+      _: unknown,
+      {
+        siteId,
+        contentTypeId,
+        limit,
+        offset,
+        includeDrafts,
+        includeDeleted,
+        updatedSince,
+      }: {
+        siteId?: string | null;
+        contentTypeId: string;
+        limit?: number | null;
+        offset?: number | null;
+        includeDrafts?: boolean | null;
+        includeDeleted?: boolean | null;
+        updatedSince?: string | null;
+      },
+      ctx: RequestContext,
+    ) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'entries:read');
+      const nAct = await activateScheduledEntries(sid);
+      if (nAct > 0) await bumpSiteContentRevision(sid);
       const { limit: l, offset: o } = clampListArgs(limit, offset, { limit: 30, offset: 0 });
-      const entries = await EntryModel.find({ siteId: sid, contentTypeId }).sort({ updatedAt: -1 }).skip(o).limit(l).lean();
-      const editorIds = [...new Set(entries.map((entry) => (entry.updatedBy ? String(entry.updatedBy) : '')).filter(Boolean))];
-      const editors = await UserModel.find({ _id: { $in: editorIds } }).select({ _id: 1, email: 1 }).lean();
-      const editorMap = new Map(editors.map((editor) => [String(editor._id), editor]));
-      return entries.map((entry) => ({
-        ...toId(entry),
-        siteId: String(entry.siteId),
-        contentTypeId: String(entry.contentTypeId),
-        name: typeof entry.name === 'string' ? entry.name : '',
-        updatedAt: new Date(entry.updatedAt ?? Date.now()).toISOString(),
-        lastEditedBy: entry.updatedBy
-          ? {
-              id: String(entry.updatedBy),
-              email: editorMap.get(String(entry.updatedBy))?.email ?? 'Unknown',
-            }
-          : null,
-      }));
+      const filter: Record<string, unknown> = { siteId: sid, contentTypeId };
+      if (includeDeleted !== true) filter.deletedAt = null;
+      if (ctx.apiKey && !apiKeyHasScope(ctx.apiKey.scopes, 'entries:draft:read')) {
+        filter.lifecycleStatus = 'published';
+      } else if (includeDrafts === false) {
+        filter.lifecycleStatus = 'published';
+      }
+      if (typeof updatedSince === 'string' && updatedSince.trim()) {
+        const d = new Date(updatedSince.trim());
+        if (!Number.isNaN(d.getTime())) filter.updatedAt = { $gt: d };
+      }
+      const entries = await EntryModel.find(filter).sort({ updatedAt: -1 }).skip(o).limit(l).lean();
+      return Promise.all(
+        entries.map(async (entry) => {
+          const enriched = await withResolvedLatestEntryFields(sid, entry as Record<string, unknown>);
+          return entryDocumentToGql(enriched, ctx);
+        }),
+      );
     },
     entry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'entries:read');
-      const doc = await EntryModel.findOne({ _id: id, siteId: sid }).lean();
+      const nAct = await activateScheduledEntries(sid);
+      if (nAct > 0) await bumpSiteContentRevision(sid);
+      const deletedFilter = ctx.apiKey ? { deletedAt: null } : {};
+      const doc = await EntryModel.findOne({ _id: id, siteId: sid, ...deletedFilter }).lean();
       if (!doc) return null;
+      if (ctx.apiKey && !apiKeyHasScope(ctx.apiKey.scopes, 'entries:draft:read')) {
+        if (doc.lifecycleStatus !== 'published') return null;
+      }
+      if (ctx.apiKey && doc.deletedAt) return null;
       const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
-      return entryDocumentToGql(enriched);
+      return entryDocumentToGql(enriched, ctx);
     },
     entryBySlug: async (
       _: unknown,
@@ -669,12 +715,65 @@ export const resolvers = {
     ) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'entries:read');
+      const nAct = await activateScheduledEntries(sid);
+      if (nAct > 0) await bumpSiteContentRevision(sid);
       const ct = await ContentTypeModel.findOne({ siteId: sid, slug: contentTypeSlug }).lean();
       if (!ct) return null;
-      const doc = await EntryModel.findOne({ siteId: sid, contentTypeId: ct._id, slug }).lean();
+      const usePublishedSlug = ctx.apiKey && !apiKeyHasScope(ctx.apiKey.scopes, 'entries:draft:read');
+      const doc = await EntryModel.findOne(
+        usePublishedSlug
+          ? {
+              siteId: sid,
+              contentTypeId: ct._id,
+              publishedSlug: slug,
+              lifecycleStatus: 'published',
+              deletedAt: null,
+            }
+          : { siteId: sid, contentTypeId: ct._id, slug, deletedAt: null },
+      ).lean();
       if (!doc) return null;
       const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
-      return entryDocumentToGql(enriched);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    entryRevisions: async (
+      _: unknown,
+      { entryId, siteId, limit, offset }: { entryId: string; siteId?: string | null; limit?: number | null; offset?: number | null },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const own = await EntryModel.findOne({ _id: entryId, siteId: sid }).lean();
+      if (!own) throw new Error('Entry not found');
+      const { limit: l, offset: o } = clampListArgs(limit, offset, { limit: 50, offset: 0 });
+      const rows = await listEntryRevisions(entryId, sid, l, o);
+      return rows.map((r) => ({
+        id: r.id,
+        entryId: r.entryId,
+        siteId: r.siteId,
+        revisionNumber: r.revisionNumber,
+        kind: r.kind,
+        createdAt: r.createdAt,
+        createdById: r.createdById,
+        payload: r.payload,
+      }));
+    },
+    entryRevision: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const r = await getEntryRevision(id, sid);
+      if (!r) return null;
+      return {
+        id: r.id,
+        entryId: r.entryId,
+        siteId: r.siteId,
+        revisionNumber: r.revisionNumber,
+        kind: r.kind,
+        createdAt: r.createdAt,
+        createdById: r.createdById,
+        payload: r.payload,
+      };
     },
     listAssets: async (_: unknown, { siteId, query = '', limit, offset }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
@@ -694,34 +793,7 @@ export const resolvers = {
       const keys = await ApiKeyModel.find({ siteId, revokedAt: null }).sort({ createdAt: -1 }).lean();
       return keys.map(formatApiKeyDoc);
     },
-    exportSiteBundle: async (
-      _: unknown,
-      { siteId, options }: { siteId?: string | null; options: Record<string, unknown> },
-      ctx: RequestContext,
-    ) => {
-      const sid = resolveSiteId(ctx, siteId);
-      if (ctx.apiKey) {
-        requireApiKeyScope(ctx, 'bundles:read');
-        await requireReadSite(ctx, sid);
-      } else {
-        if (!ctx.userId) throw new Error('Unauthorized');
-        await requireRole(ctx.userId, sid, 'owner');
-      }
-      return await exportSiteBundleService(sid, {
-        siteSettings: Boolean(options.siteSettings),
-        contentTypes: Boolean(options.contentTypes),
-        contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
-          ? (options.contentTypeSlugsForEntries as string[])
-          : [],
-        assets: Boolean(options.assets),
-      });
-    },
-    listPreviewBundles: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
-      const sid = resolveSiteId(ctx, siteId);
-      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'editor');
-      return listPreviewBundlesForSite(sid);
-    },
+    ...bundleQueryResolvers,
     siteSettings: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'site_settings:read');
@@ -1097,11 +1169,33 @@ export const resolvers = {
         slug: resolvedSlug,
         data,
         updatedBy: ctx.userId,
+        lifecycleStatus: 'draft',
+        publishedAt: null,
+        publishedName: null,
+        publishedSlug: null,
+        publishedData: null,
+        hasUnpublishedChanges: false,
+        scheduledPublishAt: null,
+        scheduledUnpublishAt: null,
+        deletedAt: null,
+        deletedBy: null,
+        lastPublishedRevisionId: null,
       });
-      const raw = entry.toObject() as Record<string, unknown>;
+      await appendEntryRevision({
+        entryId: String(entry._id),
+        siteId: sid,
+        userId: ctx.userId,
+        kind: 'draft_save',
+        payload: {
+          name: displayName,
+          slug: resolvedSlug,
+          data: data as Record<string, unknown>,
+        },
+      });
+      const raw = (await EntryModel.findById(entry._id).lean()) as Record<string, unknown>;
       const enriched = await withResolvedLatestEntryFields(sid, raw);
       await bumpSiteContentRevision(sid);
-      return entryDocumentToGql(enriched);
+      return entryDocumentToGql(enriched, ctx);
     },
     updateEntry: async (_: unknown, { id, siteId, ...rest }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
@@ -1137,12 +1231,39 @@ export const resolvers = {
         if (!ct) throw new Error('Content type not found');
         rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug, nameForSlugResolution);
       }
-      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...rest, updatedBy: ctx.userId }, { new: true });
+      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...rest, updatedBy: ctx.userId }, { new: true }).lean();
       if (!entry) throw new Error('Entry not found');
-      const raw = entry.toObject() as Record<string, unknown>;
+      const hu =
+        entry.lifecycleStatus === 'published' &&
+        (entry.name !== entry.publishedName ||
+          String(entry.slug ?? '') !== String(entry.publishedSlug ?? '') ||
+          JSON.stringify(entry.data ?? {}) !== JSON.stringify(entry.publishedData ?? {}));
+      await EntryModel.updateOne({ _id: id, siteId: sid }, { $set: { hasUnpublishedChanges: hu } });
+      const saved = await EntryModel.findById(id).lean();
+      if (saved) {
+        const lastRev = await EntryRevisionModel.findOne({ entryId: new mongoose.Types.ObjectId(id) })
+          .sort({ revisionNumber: -1 })
+          .select({ _id: 1 })
+          .lean();
+        const name = typeof saved.name === 'string' ? saved.name : '';
+        const slug = typeof saved.slug === 'string' ? saved.slug : null;
+        const data =
+          saved.data && typeof saved.data === 'object' && !Array.isArray(saved.data)
+            ? (saved.data as Record<string, unknown>)
+            : {};
+        await appendEntryRevision({
+          entryId: String(id),
+          siteId: sid,
+          userId: ctx.userId,
+          kind: 'draft_save',
+          payload: { name, slug, data },
+          previousRevisionId: lastRev?._id ? String(lastRev._id) : null,
+        });
+      }
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
       const enriched = await withResolvedLatestEntryFields(sid, raw);
       await bumpSiteContentRevision(sid);
-      return entryDocumentToGql(enriched);
+      return entryDocumentToGql(enriched, ctx);
     },
     deleteEntry: async (_: unknown, { id, siteId }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
@@ -1152,8 +1273,12 @@ export const resolvers = {
       if (await entryReferencedBySiteSettings(sid, String(id))) {
         throw new Error('Entry is assigned to a menu slot in site settings. Unassign it first.');
       }
-      await EntryModel.deleteOne({ _id: id, siteId: sid });
+      await EntryModel.updateOne(
+        { _id: id, siteId: sid },
+        { $set: { deletedAt: new Date(), deletedBy: new mongoose.Types.ObjectId(ctx.userId) } },
+      );
       await bumpSiteContentRevision(sid);
+      void fireContentWebhook('entry.deleted', { siteId: sid, entryId: String(id) });
       return true;
     },
     uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
@@ -1537,63 +1662,197 @@ export const resolvers = {
       }
       return siteSettingsDocToGql(doc);
     },
-    importSiteBundle: async (
-      _: unknown,
-      { siteId, bundle, options }: { siteId?: string | null; bundle: unknown; options: Record<string, unknown> },
-      ctx: RequestContext,
-    ) => {
+    publishEntry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
-      if (ctx.apiKey) requireApiKeyScope(ctx, 'bundles:write');
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
       if (!ctx.userId) throw new Error('Unauthorized');
-      await requireRole(ctx.userId, sid, 'owner');
-      const summary = await importSiteBundleService(sid, ctx.userId, bundle, {
-        siteSettings: Boolean(options.siteSettings),
-        contentTypes: Boolean(options.contentTypes),
-        contentTypeSlugsForEntries: Array.isArray(options.contentTypeSlugsForEntries)
-          ? (options.contentTypeSlugsForEntries as string[])
-          : [],
-        assets: Boolean(options.assets),
-      });
-      await bumpSiteContentRevision(sid);
-      return summary;
-    },
-    createPreviewBundle: async (
-      _: unknown,
-      {
-        siteId,
-        ttlMinutes,
-        label,
-      }: { siteId?: string | null; ttlMinutes: number; label?: string | null },
-      ctx: RequestContext,
-    ) => {
-      const sid = resolveSiteId(ctx, siteId);
-      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'editor');
-      const r = await createPreviewBundleRecord({
+      const cur = await EntryModel.findOne({ _id: id, siteId: sid, deletedAt: null }).lean();
+      if (!cur) throw new Error('Entry not found');
+      const slug = typeof cur.slug === 'string' ? cur.slug : null;
+      if (slug) {
+        const clash = await EntryModel.findOne({
+          siteId: sid,
+          contentTypeId: cur.contentTypeId,
+          publishedSlug: slug,
+          lifecycleStatus: 'published',
+          deletedAt: null,
+          _id: { $ne: cur._id },
+        })
+          .select({ _id: 1 })
+          .lean();
+        if (clash) badUserInput('Another published entry already uses this slug.', ['slug']);
+      }
+      const updated = await applyPublishToEntry(String(id), sid, ctx.userId);
+      if (!updated) throw new Error('Entry not found');
+      await bumpSiteContentRevision(sid);
+      void fireContentWebhook('entry.published', { siteId: sid, entryId: String(id) });
+      const enriched = await withResolvedLatestEntryFields(sid, updated);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    unpublishEntry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const cur = await EntryModel.findOne({ _id: id, siteId: sid, deletedAt: null }).lean();
+      if (!cur) throw new Error('Entry not found');
+      if (cur.lifecycleStatus !== 'published') throw new Error('Entry is not published');
+      const p = {
+        name: typeof cur.publishedName === 'string' ? cur.publishedName : String(cur.name ?? ''),
+        slug: typeof cur.publishedSlug === 'string' || cur.publishedSlug === null ? (cur.publishedSlug as string | null) : null,
+        data:
+          cur.publishedData && typeof cur.publishedData === 'object' && !Array.isArray(cur.publishedData)
+            ? (cur.publishedData as Record<string, unknown>)
+            : {},
+      };
+      const { revisionId } = await appendEntryRevision({
+        entryId: String(id),
         siteId: sid,
         userId: ctx.userId,
-        ttlMinutes: Number(ttlMinutes),
-        label: label ?? null,
+        kind: 'unpublish',
+        payload: p,
+        previousRevisionId: cur.lastPublishedRevisionId ? String(cur.lastPublishedRevisionId) : null,
       });
-      return {
-        publicId: r.publicId,
-        secretToken: r.secretToken,
-        expiresAt: r.expiresAt.toISOString(),
-        fetchUrl: r.fetchUrl,
-        fetchPath: r.fetchPath,
-        contentSha256: r.contentSha256,
-        sourceContentRevision: r.sourceContentRevision,
-      };
+      await EntryModel.updateOne(
+        { _id: id, siteId: sid },
+        {
+          $set: {
+            lifecycleStatus: 'draft',
+            publishedAt: null,
+            publishedName: null,
+            publishedSlug: null,
+            publishedData: null,
+            hasUnpublishedChanges: false,
+            scheduledUnpublishAt: null,
+            lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId),
+          },
+        },
+      );
+      await bumpSiteContentRevision(sid);
+      void fireContentWebhook('entry.unpublished', { siteId: sid, entryId: String(id) });
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
     },
-    revokePreviewBundle: async (
+    restoreEntry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      await EntryModel.updateOne({ _id: id, siteId: sid }, { $set: { deletedAt: null, deletedBy: null } });
+      await bumpSiteContentRevision(sid);
+      void fireContentWebhook('entry.restored', { siteId: sid, entryId: String(id) });
+      const doc = await EntryModel.findOne({ _id: id, siteId: sid }).lean();
+      if (!doc) throw new Error('Entry not found');
+      const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    rollbackEntryToRevision: async (
       _: unknown,
-      { siteId, publicId }: { siteId?: string | null; publicId: string },
+      { revisionId, siteId }: { revisionId: string; siteId?: string | null },
       ctx: RequestContext,
     ) => {
       const sid = resolveSiteId(ctx, siteId);
-      if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'editor');
-      return revokePreviewBundleRecord(sid, String(publicId));
+      const rev = await EntryRevisionModel.findOne({ _id: revisionId, siteId: sid }).lean();
+      if (!rev) throw new Error('Revision not found');
+      const entryId = String(rev.entryId);
+      const p = rev.payload as { name: string; slug: string | null; data: Record<string, unknown> };
+      const { revisionId: newRevId } = await appendEntryRevision({
+        entryId,
+        siteId: sid,
+        userId: ctx.userId,
+        kind: 'rollback',
+        payload: p,
+        previousRevisionId: String(rev._id),
+      });
+      const cur = await EntryModel.findOne({ _id: entryId, siteId: sid }).lean();
+      const $set: Record<string, unknown> = {
+        name: p.name,
+        slug: p.slug,
+        data: p.data,
+        updatedBy: ctx.userId,
+      };
+      if (cur?.lifecycleStatus === 'published') {
+        $set.publishedName = p.name;
+        $set.publishedSlug = p.slug;
+        $set.publishedData = p.data;
+        $set.hasUnpublishedChanges = false;
+        $set.lastPublishedRevisionId = new mongoose.Types.ObjectId(newRevId);
+      }
+      await EntryModel.updateOne({ _id: entryId, siteId: sid }, { $set });
+      await bumpSiteContentRevision(sid);
+      void fireContentWebhook('entry.rollback', { siteId: sid, entryId, revisionId: String(revisionId) });
+      const raw = (await EntryModel.findById(entryId).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
     },
+    schedulePublishEntry: async (
+      _: unknown,
+      { id, siteId, at }: { id: string; siteId?: string | null; at: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const when = new Date(String(at).trim());
+      if (Number.isNaN(when.getTime())) throw new Error('Invalid schedule time');
+      if (when.getTime() <= Date.now()) throw new Error('Schedule time must be in the future');
+      await EntryModel.updateOne(
+        { _id: id, siteId: sid, deletedAt: null },
+        { $set: { scheduledPublishAt: when, scheduledUnpublishAt: null } },
+      );
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    cancelScheduledPublish: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      await EntryModel.updateOne({ _id: id, siteId: sid, deletedAt: null }, { $set: { scheduledPublishAt: null } });
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    scheduleUnpublishEntry: async (
+      _: unknown,
+      { id, siteId, at }: { id: string; siteId?: string | null; at: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      const cur = await EntryModel.findOne({ _id: id, siteId: sid, deletedAt: null }).lean();
+      if (!cur) throw new Error('Entry not found');
+      if (cur.lifecycleStatus !== 'published') throw new Error('Only published entries can be scheduled for unpublish');
+      const when = new Date(String(at).trim());
+      if (Number.isNaN(when.getTime())) throw new Error('Invalid schedule time');
+      if (when.getTime() <= Date.now()) throw new Error('Schedule time must be in the future');
+      await EntryModel.updateOne(
+        { _id: id, siteId: sid, deletedAt: null },
+        { $set: { scheduledUnpublishAt: when, scheduledPublishAt: null } },
+      );
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    cancelScheduledUnpublish: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
+      if (!ctx.userId) throw new Error('Unauthorized');
+      await requireRole(ctx.userId, sid, 'editor');
+      await EntryModel.updateOne({ _id: id, siteId: sid, deletedAt: null }, { $set: { scheduledUnpublishAt: null } });
+      const raw = (await EntryModel.findById(id).lean()) as Record<string, unknown>;
+      const enriched = await withResolvedLatestEntryFields(sid, raw);
+      return entryDocumentToGql(enriched, ctx);
+    },
+    ...bundleMutationResolvers,
   },
 };

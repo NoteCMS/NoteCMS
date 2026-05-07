@@ -9,6 +9,7 @@ import http from 'node:http';
 import { buildRequestContext } from './auth/context.js';
 import type { RequestContext } from './auth/types.js';
 import { connectDb } from './db/mongoose.js';
+import { migrateEntryLifecycle } from './db/migrate-entry-lifecycle.js';
 import { migrateEntryNames } from './db/migrate-entry-names.js';
 import { migrateMembershipRoles } from './db/migrate-membership-roles.js';
 import { ensureBootstrapAdmin } from './config/bootstrap.js';
@@ -20,7 +21,6 @@ import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
 import { assertMcpEndpointEnabledForContext } from './mcp/mcp-site-gate.js';
 import { siteBuildCallbackHandler } from './http/site-build-callback.js';
-import { previewBundleGetHandler } from './http/preview-bundle-handler.js';
 
 const DEFAULT_JWT_SECRET = 'change-me';
 if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
@@ -30,6 +30,7 @@ if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
 
 await connectDb();
 await migrateEntryNames();
+await migrateEntryLifecycle();
 await migrateMembershipRoles();
 await ensureBootstrapAdmin();
 
@@ -75,14 +76,6 @@ const hooksLimiter = rateLimit({
   message: { message: 'Too many requests; try again later.' },
 });
 
-const previewBundleLimiter = rateLimit({
-  windowMs: env.previewBundleRateLimitWindowMs,
-  limit: env.previewBundleRateLimitMax,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  message: { message: 'Too many requests; try again later.' },
-});
-
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
@@ -94,17 +87,6 @@ app.post('/hooks/site-build/:siteId', hooksLimiter, async (req, res) => {
     if (!res.headersSent) {
       console.error('[hooks/site-build]', err);
       res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
-    }
-  }
-});
-
-app.get('/api/preview/:publicId', previewBundleLimiter, async (req, res) => {
-  try {
-    await previewBundleGetHandler(req, res);
-  } catch (err) {
-    if (!res.headersSent) {
-      console.error('[api/preview]', err);
-      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Preview failed' });
     }
   }
 });
@@ -177,4 +159,3 @@ await new Promise<void>((resolve, reject) => {
 
 console.log(`API ready at http://localhost:${env.port}/graphql`);
 console.log(`MCP (Streamable HTTP) at http://localhost:${env.port}/api/mcp`);
-console.log(`Preview bundles (GET) at http://localhost:${env.port}/api/preview/:publicId`);

@@ -4,6 +4,8 @@ export const API_KEY_SCOPES = [
   'content_types:write',
   'entries:read',
   'entries:write',
+  'entries:draft:read',
+  'entries:draft:write',
   'assets:read',
   'assets:write',
   'site_settings:read',

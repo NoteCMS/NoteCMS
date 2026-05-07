@@ -1,4 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type ReactNode } from 'react';
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type ReactNode,
+} from 'react';
 import { flushSync } from 'react-dom';
 import type { ColumnDef } from '@tanstack/react-table';
 import {
@@ -6,11 +16,11 @@ import {
   ChevronDown,
   Copy,
   Ellipsis,
-  ExternalLink,
+  Filter,
   Globe,
   Images,
-  Loader2,
   Plus,
+  RotateCcw,
   Trash2,
   Upload,
   X,
@@ -29,26 +39,39 @@ import { Combobox } from '@/components/ui/combobox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Dropzone, DropZoneArea, DropzoneMessage, DropzoneTrigger, useDropzone } from '@/components/ui/dropzone';
 import { Field, FieldContent, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import {
+  DropdownMenu,
+  DropdownMenuCheckboxItem,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Item, ItemContent } from '@/components/ui/item';
 import { Label } from '@/components/ui/label';
-import { MarkdownEditor } from '@/components/ui/markdown-editor';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { assetGalleryLabels } from '@/lib/asset-gallery';
 import { focalToObjectPosition } from '@/lib/focal-point';
+import {
+  type EntryActionsMenuConfig,
+  type EntryDeleteConfirmationConfig,
+  useEntryEditorToolbarSetter,
+} from '@/context/entry-editor-toolbar';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
-import {
-  NOTECMS_PREVIEW_QUERY_ID,
-  NOTECMS_PREVIEW_QUERY_TOKEN,
-  buildUrlWithNoteCmsPreviewParams,
-} from '@notecms/sdk';
+
+const ENTRY_ADMIN_GQL = `id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }`;
+
+const MarkdownEditor = lazy(() =>
+  import('@/components/ui/markdown-editor').then((m) => ({ default: m.MarkdownEditor })),
+);
 
 type EntriesPageProps = {
   token: string;
@@ -62,6 +85,15 @@ type EntriesPageProps = {
 function joinEntryDataPath(prefix: string | undefined, ...segments: string[]): string {
   const parts = [prefix, ...segments].filter((s): s is string => Boolean(s && s.length > 0));
   return parts.join('.');
+}
+
+function formatRevisionKind(kind: string): string {
+  if (!kind) return 'Revision';
+  return kind
+    .split('_')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
 }
 
 function fieldErrorsTouchRowPrefix(fieldErrors: Record<string, string>, rowPrefix: string): boolean {
@@ -94,28 +126,6 @@ function RepeaterRowCollapsible({
       {children}
     </Collapsible>
   );
-}
-
-function sitePublicBaseUrl(siteUrl: string): string | null {
-  const t = siteUrl.trim();
-  if (!t) return null;
-  const withScheme = /^https?:\/\//i.test(t) ? t : `https://${t}`;
-  try {
-    const u = new URL(withScheme);
-    return u.toString().replace(/\/$/, '');
-  } catch {
-    return null;
-  }
-}
-
-/** Build public page URL using the same base as the slug hint (`Site.url` + entry slug path). */
-function buildLiveEntryPageUrl(siteUrl: string, slugPath: string): string | null {
-  const base = sitePublicBaseUrl(siteUrl);
-  if (!base) return null;
-  const seg = slugPath.trim().replace(/^\/+/, '');
-  if (!seg) return null;
-  const encodedPath = seg.split('/').map((s) => encodeURIComponent(s)).join('/');
-  return `${base}/${encodedPath}`;
 }
 
 async function fileToBase64(file: File): Promise<string> {
@@ -923,17 +933,19 @@ function FieldList({
             <FieldLabel htmlFor={field.type === 'boolean' ? undefined : fieldId}>{field.label}</FieldLabel>
             <FieldContent>
               {field.type === 'textarea' || field.type === 'wysiwyg' ? (
-                <MarkdownEditor
-                  id={fieldId}
-                  markdown={String(fieldValue ?? '')}
-                  onChange={(nextMarkdown) => {
-                    clearThisField();
-                    onChange({ ...value, [field.key]: nextMarkdown });
-                  }}
-                  placeholder="Content (Markdown)"
-                  aria-invalid={Boolean(errMsg)}
-                  onFocusCapture={clearThisField}
-                />
+                <Suspense fallback={<div className="min-h-[120px] rounded-md border border-dashed border-muted-foreground/30 bg-muted/40" aria-hidden />}>
+                  <MarkdownEditor
+                    id={fieldId}
+                    markdown={String(fieldValue ?? '')}
+                    onChange={(nextMarkdown) => {
+                      clearThisField();
+                      onChange({ ...value, [field.key]: nextMarkdown });
+                    }}
+                    placeholder="Content (Markdown)"
+                    aria-invalid={Boolean(errMsg)}
+                    onFocusCapture={clearThisField}
+                  />
+                </Suspense>
               ) : field.type === 'boolean' ? (
                 <div className="flex items-center gap-2">
                   <Checkbox
@@ -1038,10 +1050,13 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
-  const [openingLivePreview, setOpeningLivePreview] = useState(false);
-
-  const canMintPreview =
-    activeSite?.role === 'editor' || activeSite?.role === 'owner';
+  const [showDeleted, setShowDeleted] = useState(false);
+  const [revisions, setRevisions] = useState<
+    Array<{ id: string; revisionNumber: number; kind: string; createdAt: string; payload: unknown }>
+  >([]);
+  const [revisionsLoading, setRevisionsLoading] = useState(false);
+  const [revisionSheetOpen, setRevisionSheetOpen] = useState(false);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const clearEntryFieldError = useCallback((path: string) => {
     setEntryFieldErrors((prev) => {
@@ -1159,8 +1174,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     try {
       const response = await gqlRequest<{ entries: Entry[] }>(
         token,
-        'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId name slug data updatedAt lastEditedBy { id email } } }',
-        { siteId: workspaceSiteId, contentTypeId },
+        `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean){ entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted){ ${ENTRY_ADMIN_GQL} } }`,
+        { siteId: workspaceSiteId, contentTypeId, includeDeleted: showDeleted },
       );
       setEntries(response.entries);
     } catch (loadError) {
@@ -1181,8 +1196,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         try {
           const response = await gqlRequest<{ entries: Entry[] }>(
             token,
-            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId){ id siteId contentTypeId name slug data updatedAt lastEditedBy { id email } } }',
-            { siteId: workspaceSiteId, contentTypeId: contentType.id },
+            `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean){ entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted){ ${ENTRY_ADMIN_GQL} } }`,
+            { siteId: workspaceSiteId, contentTypeId: contentType.id, includeDeleted: showDeleted },
           );
           return [contentType.id, response.entries] as const;
         } catch {
@@ -1200,7 +1215,34 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   useEffect(() => {
     void loadEntries(selectedTypeId);
-  }, [selectedTypeId]);
+  }, [selectedTypeId, showDeleted]);
+
+  useEffect(() => {
+    setRevisionSheetOpen(false);
+    setDeleteConfirmOpen(false);
+  }, [entryId]);
+
+  async function loadRevisions(forEntryId: string) {
+    if (!workspaceSiteId || forEntryId === 'new') {
+      setRevisions([]);
+      return;
+    }
+    setRevisionsLoading(true);
+    try {
+      const res = await gqlRequest<{
+        entryRevisions: Array<{ id: string; revisionNumber: number; kind: string; createdAt: string; payload: unknown }>;
+      }>(
+        token,
+        `query($siteId:ID!,$entryId:ID!){ entryRevisions(siteId:$siteId,entryId:$entryId,limit:50,offset:0){ id revisionNumber kind createdAt payload } }`,
+        { siteId: workspaceSiteId, entryId: forEntryId },
+      );
+      setRevisions(res.entryRevisions);
+    } catch {
+      setRevisions([]);
+    } finally {
+      setRevisionsLoading(false);
+    }
+  }
 
   useEffect(() => {
     setEntryFieldErrors({});
@@ -1225,10 +1267,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     void (async () => {
       try {
         const res = await gqlRequest<{
-          entry: { id: string; name: string; slug: string | null; data: Record<string, unknown> | null } | null;
+          entry: (Entry & { data: Record<string, unknown> | null }) | null;
         }>(
           token,
-          'query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ id name slug data } }',
+          `query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
           { id: entryId, siteId: workspaceSiteId },
         );
         if (cancelled || !res.entry) return;
@@ -1249,6 +1291,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           if (!exists) return [...prev, res.entry as Entry];
           return prev.map((e) => (e.id === res.entry!.id ? ({ ...e, ...res.entry } as Entry) : e));
         });
+        void loadRevisions(entryId);
       } catch {
         if (cancelled) return;
         const entry = entries.find((item) => item.id === entryId);
@@ -1270,7 +1313,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid re-fetch when `entries` list refreshes (would reset the form).
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- avoid re-fetch when `entries` list refreshes (would reset the form); `loadRevisions` is stable enough for this flow.
   }, [entryId, workspaceSiteId, token]);
 
   useEffect(() => {
@@ -1325,10 +1368,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       }
 
       const refreshed = await gqlRequest<{
-        entry: { id: string; name: string; slug: string | null; data: Record<string, unknown> | null } | null;
+        entry: (Entry & { data: Record<string, unknown> | null }) | null;
       }>(
         token,
-        'query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ id name slug data } }',
+        `query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
         { id: savedEntryId, siteId: workspaceSiteId },
       );
       if (!refreshed.entry) {
@@ -1356,6 +1399,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       navigate(`${basePath}/${savedEntryId}`, { replace: true });
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
+      void loadRevisions(savedEntryId);
       toast.success(wasNewEntry ? 'Entry created' : 'Entry updated');
     } catch (saveError) {
       if (saveError instanceof GraphqlUserInputError) {
@@ -1368,6 +1412,130 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         setError(msg);
         toast.error(msg);
       }
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handlePublishEntry() {
+    if (!workspaceSiteId || !entryId || entryId === 'new') return;
+    setIsSaving(true);
+    setError('');
+    try {
+      await gqlRequest<{ publishEntry: Entry }>(
+        token,
+        `mutation($id:ID!,$siteId:ID!){ publishEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { id: entryId, siteId: workspaceSiteId },
+      );
+      toast.success('Published');
+      await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
+      void loadRevisions(entryId);
+      const res = await gqlRequest<{ entry: Entry | null }>(
+        token,
+        `query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { id: entryId, siteId: workspaceSiteId },
+      );
+      if (res.entry) {
+        setEntries((prev) => prev.map((e) => (e.id === res.entry!.id ? { ...e, ...res.entry } : e)));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Publish failed';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleUnpublishEntry() {
+    if (!workspaceSiteId || !entryId || entryId === 'new') return;
+    setIsSaving(true);
+    setError('');
+    try {
+      await gqlRequest(
+        token,
+        `mutation($id:ID!,$siteId:ID!){ unpublishEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { id: entryId, siteId: workspaceSiteId },
+      );
+      toast.success('Unpublished');
+      await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
+      void loadRevisions(entryId);
+      const res = await gqlRequest<{ entry: Entry | null }>(
+        token,
+        `query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { id: entryId, siteId: workspaceSiteId },
+      );
+      if (res.entry) {
+        setEntries((prev) => prev.map((e) => (e.id === res.entry!.id ? { ...e, ...res.entry } : e)));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unpublish failed';
+      setError(msg);
+      toast.error(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleRestoreEntryById(id: string) {
+    if (!workspaceSiteId) return;
+    setError('');
+    try {
+      await gqlRequest(
+        token,
+        `mutation($id:ID!,$siteId:ID!){ restoreEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { id, siteId: workspaceSiteId },
+      );
+      toast.success('Entry restored');
+      await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Restore failed';
+      setError(msg);
+      toast.error(msg);
+    }
+  }
+
+  async function handleRollback(revisionId: string) {
+    if (!workspaceSiteId) return;
+    setIsSaving(true);
+    setError('');
+    try {
+      await gqlRequest(
+        token,
+        `mutation($revisionId:ID!,$siteId:ID!){ rollbackEntryToRevision(revisionId:$revisionId,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+        { revisionId, siteId: workspaceSiteId },
+      );
+      toast.success('Rolled back');
+      if (entryId && entryId !== 'new') {
+        void loadRevisions(entryId);
+        const res = await gqlRequest<{ entry: Entry | null }>(
+          token,
+          `query($id:ID!,$siteId:ID!){ entry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+          { id: entryId, siteId: workspaceSiteId },
+        );
+        if (res.entry) {
+          setEntryName(res.entry.name ?? '');
+          setSlug(res.entry.slug ?? '');
+          setData((res.entry.data ?? {}) as Record<string, unknown>);
+          setSavedSnapshot(
+            stableJsonStringify({
+              entryName: (res.entry.name ?? '').trim(),
+              slug: res.entry.slug ?? '',
+              data: (res.entry.data ?? {}) as Record<string, unknown>,
+            }),
+          );
+          setEntries((prev) => prev.map((e) => (e.id === res.entry!.id ? { ...e, ...res.entry } : e)));
+        }
+      }
+      await loadEntries(selectedTypeId);
+      await loadEntriesIndex(contentTypes);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Rollback failed';
+      setError(msg);
+      toast.error(msg);
     } finally {
       setIsSaving(false);
     }
@@ -1388,7 +1556,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           setSavedSnapshot(null);
         });
         navigate(basePath);
-        toast.success('Entry deleted');
+        toast.success('Entry moved to trash');
       } catch (deleteError) {
         const msg = deleteError instanceof Error ? deleteError.message : 'Failed to delete entry';
         setError(msg);
@@ -1454,6 +1622,36 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         header: 'Name',
         cell: ({ row }) => <span className="font-medium">{row.original.name || '—'}</span>,
       },
+      {
+        id: 'status',
+        header: 'Status',
+        cell: ({ row }) => {
+          const e = row.original;
+          if (e.deletedAt) {
+            return (
+              <Badge variant="destructive" className="font-normal">
+                Deleted
+              </Badge>
+            );
+          }
+          return (
+            <div className="flex flex-wrap gap-1">
+              {e.lifecycleStatus === 'published' ? (
+                <Badge className="font-normal">Published</Badge>
+              ) : (
+                <Badge variant="secondary" className="font-normal">
+                  Draft
+                </Badge>
+              )}
+              {e.hasUnpublishedChanges ? (
+                <Badge variant="outline" className="font-normal">
+                  Edits
+                </Badge>
+              ) : null}
+            </div>
+          );
+        },
+      },
       { accessorKey: 'slug', header: 'Slug', cell: ({ row }) => row.original.slug ?? '—' },
       {
         id: 'updatedAt',
@@ -1507,10 +1705,20 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                   <Copy />
                   Duplicate entry
                 </DropdownMenuItem>
+                {row.original.deletedAt ? (
+                  <DropdownMenuItem onClick={() => void handleRestoreEntryById(row.original.id)}>
+                    <RotateCcw />
+                    Restore entry
+                  </DropdownMenuItem>
+                ) : null}
                 <DropdownMenuItem
                   variant="destructive"
                   onClick={() => {
-                    if (window.confirm('Delete this entry? This cannot be undone.')) {
+                    if (
+                      window.confirm(
+                        'Soft-delete this entry? It stays recoverable while you can see deleted rows (enable “Show deleted” in the list).',
+                      )
+                    ) {
                       void handleDeleteEntry(row.original.id);
                     }
                   }}
@@ -1528,6 +1736,102 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   );
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
+
+  const setEntryToolbar = useEntryEditorToolbarSetter();
+  const toolbarActionsRef = useRef({
+    save: () => {},
+    deleteById: (_id: string) => {},
+    cancel: () => {},
+  });
+  toolbarActionsRef.current = {
+    save: () => void handleSaveEntry(),
+    deleteById: (id: string) => void handleDeleteEntry(id),
+    cancel: () => navigate(basePath),
+  };
+
+  useEffect(() => {
+    if (!isDetailView || !selectedType) {
+      setEntryToolbar(null);
+      return;
+    }
+    const secondary =
+      editingEntry && !editingEntry.deletedAt
+        ? ({
+            kind: 'delete' as const,
+            onClick: () => void toolbarActionsRef.current.deleteById(editingEntry.id),
+          } as const)
+        : ({
+            kind: 'cancel' as const,
+            onClick: () => toolbarActionsRef.current.cancel(),
+          } as const);
+
+    const showEntryActionsMenu = Boolean(
+      entryId && entryId !== 'new' && editingEntry && !editingEntry.deletedAt,
+    );
+
+    let entryActionsMenu: EntryActionsMenuConfig | undefined;
+    let deleteConfirmation: EntryDeleteConfirmationConfig | undefined;
+
+    if (showEntryActionsMenu && editingEntry && entryId) {
+      const publishItem =
+        editingEntry.lifecycleStatus === 'published' && !editingEntry.hasUnpublishedChanges
+          ? {
+              label: 'Unpublish',
+              disabled: isSaving,
+              onSelect: () => void handleUnpublishEntry(),
+            }
+          : {
+              label:
+                editingEntry.lifecycleStatus === 'published' && editingEntry.hasUnpublishedChanges
+                  ? 'Publish changes'
+                  : 'Publish',
+              disabled: isSaving,
+              onSelect: () => void handlePublishEntry(),
+            };
+
+      entryActionsMenu = {
+        revisionsLoading,
+        onOpenRevisions: () => {
+          setRevisionSheetOpen(true);
+          void loadRevisions(entryId);
+        },
+        publishItem,
+        onRequestDelete: () => setDeleteConfirmOpen(true),
+      };
+      deleteConfirmation = {
+        open: deleteConfirmOpen,
+        onOpenChange: setDeleteConfirmOpen,
+        onConfirm: () => {
+          setDeleteConfirmOpen(false);
+          void toolbarActionsRef.current.deleteById(editingEntry.id);
+        },
+      };
+    }
+
+    setEntryToolbar({
+      onSave: () => void toolbarActionsRef.current.save(),
+      saveDisabled: isSaving || !entryName.trim() || (requiresSlug && !slug.trim()),
+      isSaving,
+      secondary,
+      entryActionsMenu,
+      deleteConfirmation,
+    });
+
+    return () => setEntryToolbar(null);
+  }, [
+    setEntryToolbar,
+    isDetailView,
+    selectedType,
+    editingEntry,
+    entryId,
+    isSaving,
+    entryName,
+    slug,
+    requiresSlug,
+    revisionsLoading,
+    deleteConfirmOpen,
+  ]);
+
   const nameFieldError = entryFieldErrors['name'];
   const slugFieldError = entryFieldErrors['slug'];
 
@@ -1546,81 +1850,47 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   );
   const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
 
-  const handleOpenLiveSitePreview = useCallback(async () => {
-    if (!workspaceSiteId || !canMintPreview || !requiresSlug) return;
-    const baseUrl = activeSite?.url?.trim();
-    if (!baseUrl) {
-      toast.error('Set this workspace’s site URL in Site settings so we know where the live site lives.');
-      return;
-    }
-    const slugTrim = slug.trim();
-    if (!slugTrim) {
-      toast.error('Add a slug before opening the live site.');
-      return;
-    }
-    if (!entryId || entryId === 'new') {
-      toast.error('Save the entry first.');
-      return;
-    }
-    if (isDirty) {
-      toast.error('Save your changes first — preview uses the latest saved content from the CMS.');
-      return;
-    }
-    const pageUrl = buildLiveEntryPageUrl(baseUrl, slugTrim);
-    if (!pageUrl) {
-      toast.error('Could not build a URL from the workspace site address.');
-      return;
-    }
-    setOpeningLivePreview(true);
-    setError('');
-    try {
-      const res = await gqlRequest<{
-        createPreviewBundle: { publicId: string; secretToken: string };
-      }>(
-        token,
-        `mutation($siteId:ID!,$ttl:Int!,$label:String){
-          createPreviewBundle(siteId:$siteId,ttlMinutes:$ttl,label:$label){ publicId secretToken }
-        }`,
-        {
-          siteId: workspaceSiteId,
-          ttl: 240,
-          label: `Editor preview: ${selectedType?.slug ?? 'entry'} / ${slugTrim}`,
-        },
-      );
-      const { publicId, secretToken } = res.createPreviewBundle;
-      const target = buildUrlWithNoteCmsPreviewParams(pageUrl, publicId, secretToken);
-      window.open(target, '_blank', 'noopener,noreferrer');
-      toast.success('Opened preview in a new tab. Your site must read the preview query params (see docs).');
-    } catch (openErr) {
-      const msg = openErr instanceof Error ? openErr.message : 'Could not start preview';
-      setError(msg);
-      toast.error(msg);
-    } finally {
-      setOpeningLivePreview(false);
-    }
-  }, [
-    workspaceSiteId,
-    canMintPreview,
-    requiresSlug,
-    activeSite?.url,
-    slug,
-    entryId,
-    isDirty,
-    token,
-    selectedType?.slug,
-  ]);
-
   if (isDetailView) {
     return (
       <>
         {unsavedPrompt}
         <div className="w-full space-y-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
-            <CardTitle>{entryId === 'new' ? 'Create Entry' : 'Edit Entry'}</CardTitle>
-            <Button variant="outline" onClick={() => navigate(basePath)}>
-              Back to table
-            </Button>
+          <CardHeader className="mb-4 flex flex-col gap-3 space-y-0 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+              <CardTitle className="mb-0">
+                {entryId === 'new' ? 'Create Entry' : 'Edit Entry'}
+              </CardTitle>
+              {entryId && entryId !== 'new' && editingEntry ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  {editingEntry.deletedAt ? (
+                    <Badge variant="destructive">Deleted</Badge>
+                  ) : editingEntry.lifecycleStatus === 'published' ? (
+                    <Badge>Published</Badge>
+                  ) : (
+                    <Badge variant="secondary">Draft</Badge>
+                  )}
+                  {editingEntry.hasUnpublishedChanges ? <Badge variant="outline">Unpublished changes</Badge> : null}
+                  {editingEntry.scheduledPublishAt ? (
+                    <span className="text-xs text-muted-foreground">
+                      Scheduled: {new Date(editingEntry.scheduledPublishAt).toLocaleString()}
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            {entryId && entryId !== 'new' && editingEntry?.deletedAt ? (
+              <CardAction className="sm:ml-auto">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={isSaving}
+                  onClick={() => void handleRestoreEntryById(editingEntry.id)}
+                >
+                  Restore
+                </Button>
+              </CardAction>
+            ) : null}
           </CardHeader>
           <CardContent className="space-y-4">
             {error ? (
@@ -1688,40 +1958,6 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                           {slugFieldError ? <FieldError>{slugFieldError}</FieldError> : null}
                         </FieldContent>
                       </Field>
-                      {canMintPreview && entryId !== 'new' ? (
-                        <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="w-fit"
-                            disabled={
-                              openingLivePreview ||
-                              !slug.trim() ||
-                              isDirty ||
-                              !activeSite?.url?.trim()
-                            }
-                            onClick={() => void handleOpenLiveSitePreview()}
-                          >
-                            {openingLivePreview ? (
-                              <Loader2 className="mr-2 size-4 animate-spin" aria-hidden />
-                            ) : (
-                              <ExternalLink className="mr-2 size-4" aria-hidden />
-                            )}
-                            Open live site (preview)
-                          </Button>
-                          <FieldDescription className="max-w-prose text-xs">
-                            Creates a fresh preview bundle (4&nbsp;h), then opens{' '}
-                            <span className="font-medium text-foreground">{`https://${activeSite?.url ?? '…'}/…`}</span>{' '}
-                            with query params{' '}
-                            <code className="rounded bg-muted px-1">{NOTECMS_PREVIEW_QUERY_ID}</code> and{' '}
-                            <code className="rounded bg-muted px-1">{NOTECMS_PREVIEW_QUERY_TOKEN}</code>. Your site should
-                            read them on the server, fetch the bundle via{' '}
-                            <code className="rounded bg-muted px-1">fetchPreviewBundle</code>, then redirect without those
-                            params. Save first — only saved content is included.
-                          </FieldDescription>
-                        </div>
-                      ) : null}
                     </ItemContent>
                   </Item>
                 ) : null}
@@ -1741,23 +1977,6 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                   fieldErrors={entryFieldErrors}
                   onClearFieldError={clearEntryFieldError}
                 />
-                <div className="flex gap-2">
-                  {editingEntry ? (
-                    <Button variant="outline" onClick={() => void handleDeleteEntry(editingEntry.id)}>
-                      Delete
-                    </Button>
-                  ) : (
-                    <Button variant="outline" onClick={() => navigate(basePath)}>
-                      Cancel
-                    </Button>
-                  )}
-                  <Button
-                    onClick={() => void handleSaveEntry()}
-                    disabled={isSaving || !entryName.trim() || (requiresSlug && !slug.trim())}
-                  >
-                    {isSaving ? 'Saving…' : entryId === 'new' ? 'Create Entry' : 'Update Entry'}
-                  </Button>
-                </div>
               </>
             ) : (
               <p className="text-sm text-muted-foreground">Select a content type to manage entries.</p>
@@ -1765,6 +1984,68 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           </CardContent>
         </Card>
       </div>
+      <Sheet open={revisionSheetOpen} onOpenChange={setRevisionSheetOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+          <SheetHeader className="shrink-0 space-y-1 border-b border-border px-6 py-5">
+            <SheetTitle>Revision history</SheetTitle>
+            <SheetDescription>
+              {entryName.trim() ? `Versions of “${entryName.trim()}”.` : 'Versions of this entry.'} Restore an earlier
+              snapshot with roll back (unsaved editor changes stay until you save).
+            </SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            {revisionsLoading ? (
+              <p className="text-sm text-muted-foreground">Loading revisions…</p>
+            ) : revisions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed bg-muted/20 px-4 py-12 text-center">
+                <p className="text-sm font-medium text-foreground">No revisions yet</p>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  Revisions appear when you publish, roll back, or when the system records a migration snapshot.
+                </p>
+              </div>
+            ) : (
+              <ol className="flex flex-col gap-2">
+                {revisions.map((r, index) => (
+                  <li
+                    key={r.id}
+                    className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                  >
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-xs font-medium text-muted-foreground">#{r.revisionNumber}</span>
+                        <Badge variant="secondary" className="text-xs font-normal">
+                          {formatRevisionKind(r.kind)}
+                        </Badge>
+                        {index === 0 ? (
+                          <Badge variant="outline" className="text-xs font-normal">
+                            Newest
+                          </Badge>
+                        ) : null}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {new Date(r.createdAt).toLocaleString(undefined, {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        })}
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="shrink-0 self-start sm:self-center"
+                      disabled={isSaving}
+                      onClick={() => void handleRollback(r.id)}
+                    >
+                      Roll back
+                    </Button>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
       </>
     );
   }
@@ -1789,6 +2070,20 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
             <Button onClick={() => navigate(`${basePath}/new`)} disabled={!selectedTypeId}>
               New Entry
             </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button" variant="outline" size="icon-sm" aria-label="Filters" title="Filters">
+                  <Filter className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-48">
+                <DropdownMenuGroup>
+                  <DropdownMenuCheckboxItem checked={showDeleted} onCheckedChange={(v) => setShowDeleted(v === true)}>
+                    Show deleted
+                  </DropdownMenuCheckboxItem>
+                </DropdownMenuGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -1811,7 +2106,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
               emptyMessage="No entries yet."
               showColumnToggle={false}
               onRowClick={(entry) => navigate(`${basePath}/${entry.id}`)}
-              rowClickIgnoreColumnIds={['actions', 'lastEditedBy']}
+              rowClickIgnoreColumnIds={['actions', 'lastEditedBy', 'status']}
             />
           ) : (
             <p className="text-sm text-muted-foreground">Select a content type to manage entries.</p>
