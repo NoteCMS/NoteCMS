@@ -25,6 +25,12 @@ export type Entry = {
   data: Json;
   updatedAt: string;
   lastEditedBy: EntryEditor | null;
+  lifecycleStatus?: string;
+  publishedAt?: string | null;
+  scheduledPublishAt?: string | null;
+  scheduledUnpublishAt?: string | null;
+  deletedAt?: string | null;
+  hasUnpublishedChanges?: boolean;
 };
 
 export type AssetVariantUrls = {
@@ -96,7 +102,7 @@ export type SiteSettings = {
   menusResolved: MenuSlotResolved[];
 };
 
-/** Site bundle `version: 1` from `exportSiteBundle` / preview GET — portable JSON export shape. */
+/** Site bundle `version: 1` from `exportSiteBundle` — portable JSON export shape. */
 export type SiteExportBundleV1 = {
   version: 1;
   exportedAt: string;

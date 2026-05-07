@@ -47,7 +47,16 @@ export type NoteCmsClient = {
   query<TData>(query: string, variables?: Record<string, unknown>): Promise<TData>;
 
   contentTypes(): Promise<ContentType[]>;
-  entries(contentTypeId: string, options?: { limit?: number; offset?: number }): Promise<Entry[]>;
+  entries(
+    contentTypeId: string,
+    options?: {
+      limit?: number;
+      offset?: number;
+      includeDrafts?: boolean;
+      includeDeleted?: boolean;
+      updatedSince?: string;
+    },
+  ): Promise<Entry[]>;
   entry(id: string): Promise<Entry | null>;
   entryBySlug(contentTypeSlug: string, slug: string): Promise<Entry | null>;
   listAssets(options?: { query?: string; limit?: number; offset?: number }): Promise<Asset[]>;
@@ -131,6 +140,9 @@ export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient 
         contentTypeId,
         limit,
         offset,
+        includeDrafts: options.includeDrafts ?? null,
+        includeDeleted: options.includeDeleted ?? null,
+        updatedSince: options.updatedSince ?? null,
       });
       return data.entries;
     },

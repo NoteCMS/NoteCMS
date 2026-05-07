@@ -25,14 +25,36 @@ export const CONTENT_TYPES = /* GraphQL */ `
 `;
 
 export const ENTRIES = /* GraphQL */ `
-  query NoteCmsEntries($siteId: ID!, $contentTypeId: ID!, $limit: Int, $offset: Int) {
-    entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit, offset: $offset) {
+  query NoteCmsEntries(
+    $siteId: ID!
+    $contentTypeId: ID!
+    $limit: Int
+    $offset: Int
+    $includeDrafts: Boolean
+    $includeDeleted: Boolean
+    $updatedSince: String
+  ) {
+    entries(
+      siteId: $siteId
+      contentTypeId: $contentTypeId
+      limit: $limit
+      offset: $offset
+      includeDrafts: $includeDrafts
+      includeDeleted: $includeDeleted
+      updatedSince: $updatedSince
+    ) {
       id
       siteId
       contentTypeId
       name
       slug
       data
+      lifecycleStatus
+      publishedAt
+      scheduledPublishAt
+      scheduledUnpublishAt
+      deletedAt
+      hasUnpublishedChanges
       updatedAt
       lastEditedBy {
         id
@@ -51,6 +73,12 @@ export const ENTRY = /* GraphQL */ `
       name
       slug
       data
+      lifecycleStatus
+      publishedAt
+      scheduledPublishAt
+      scheduledUnpublishAt
+      deletedAt
+      hasUnpublishedChanges
       updatedAt
       lastEditedBy {
         id
@@ -69,6 +97,12 @@ export const ENTRY_BY_SLUG = /* GraphQL */ `
       name
       slug
       data
+      lifecycleStatus
+      publishedAt
+      scheduledPublishAt
+      scheduledUnpublishAt
+      deletedAt
+      hasUnpublishedChanges
       updatedAt
       lastEditedBy {
         id
@@ -152,6 +186,12 @@ export const SITE_SETTINGS = /* GraphQL */ `
           name
           slug
           data
+          lifecycleStatus
+          publishedAt
+          scheduledPublishAt
+          scheduledUnpublishAt
+          deletedAt
+          hasUnpublishedChanges
           updatedAt
           lastEditedBy {
             id

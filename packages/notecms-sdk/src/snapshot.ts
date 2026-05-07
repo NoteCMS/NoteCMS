@@ -45,17 +45,27 @@ export type FetchBuildSnapshotOptions = {
   assetPageSize?: number;
   /** Parallelism when fetching entries per content type. */
   maxConcurrentTypes?: number;
+  /**
+   * Forwarded to `entries` query. **Default:** omit/false — API keys see **published** rows only unless the key includes `entries:draft:read`.
+   * Set `includeDrafts: true` only for staging builds; document the risk clearly.
+   */
+  includeDrafts?: boolean;
+  /** When true, includes soft-deleted rows (JWT/admin-style access; API keys follow server rules). */
+  includeDeleted?: boolean;
+  /** ISO 8601 — incremental sync: only entries with `updatedAt` after this instant (see API `entries.updatedSince`). */
+  updatedSince?: string;
 };
 
 async function fetchAllEntriesForType(
   client: NoteCmsClient,
   contentTypeId: string,
   pageSize: number,
+  listOpts?: { includeDrafts?: boolean; includeDeleted?: boolean; updatedSince?: string },
 ): Promise<Entry[]> {
   const out: Entry[] = [];
   let offset = 0;
   while (true) {
-    const batch = await client.entries(contentTypeId, { limit: pageSize, offset });
+    const batch = await client.entries(contentTypeId, { limit: pageSize, offset, ...listOpts });
     out.push(...batch);
     if (batch.length < pageSize) break;
     offset += pageSize;
@@ -111,12 +121,17 @@ export async function fetchBuildSnapshot(
   );
   const maxConcurrent = Math.max(1, options.maxConcurrentTypes ?? DEFAULT_SNAPSHOT_MAX_CONCURRENT_TYPES);
   const includeAssets = options.includeAssets ?? true;
+  const listOpts = {
+    includeDrafts: options.includeDrafts,
+    includeDeleted: options.includeDeleted,
+    updatedSince: options.updatedSince,
+  };
 
   const [site, contentTypes] = await Promise.all([client.siteSettings(), client.contentTypes()]);
 
   const entriesByTypeSlug: Record<string, Entry[]> = {};
   await mapWithConcurrency(contentTypes, maxConcurrent, async (ct) => {
-    entriesByTypeSlug[ct.slug] = await fetchAllEntriesForType(client, ct.id, entryPageSize);
+    entriesByTypeSlug[ct.slug] = await fetchAllEntriesForType(client, ct.id, entryPageSize, listOpts);
   });
 
   const entriesById: Record<string, Entry> = {};

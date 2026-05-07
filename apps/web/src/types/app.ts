@@ -1,4 +1,6 @@
-export type Role = 'owner' | 'editor' | 'viewer';
+import type { EntryLifecycleStatus, Role } from '@note/types';
+
+export type { EntryLifecycleStatus, Role };
 export type Status = 'active' | 'disabled';
 export type FieldType =
   | 'text'
@@ -128,6 +130,12 @@ export type Entry = {
     id: string;
     email: string;
   } | null;
+  lifecycleStatus?: EntryLifecycleStatus;
+  publishedAt?: string | null;
+  scheduledPublishAt?: string | null;
+  scheduledUnpublishAt?: string | null;
+  deletedAt?: string | null;
+  hasUnpublishedChanges?: boolean;
 };
 
 export type AccessDraft = Record<string, { enabled: boolean; role: Role }>;

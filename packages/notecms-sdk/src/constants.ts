@@ -11,4 +11,4 @@ export const DEFAULT_SNAPSHOT_MAX_CONCURRENT_TYPES = 4;
  * Version of the JSON shape returned by {@link fetchBuildSnapshot}.
  * Increment when adding/removing top-level snapshot fields so consumers can migrate.
  */
-export const SNAPSHOT_FORMAT_VERSION = 1 as const;
+export const SNAPSHOT_FORMAT_VERSION = 2 as const;
