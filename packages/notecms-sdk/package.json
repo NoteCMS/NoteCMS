@@ -2,7 +2,7 @@
   "name": "@notecms/sdk",
   "version": "0.5.0",
   "private": false,
-  "description": "NoteCMS headless SDK: GraphQL client (API key), build snapshots, and path helpers for static sites.",
+  "description": "NoteCMS headless SDK: GraphQL client, build snapshots, and permalink routing for static sites. Routing guide: docs/ROUTING.md",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,13 +12,21 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist",
+    "docs",
+    "AGENTS.md",
+    "README.md"
+  ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "npm run build -w @notecms/routing && tsup",
     "clean": "rm -rf dist",
+    "prepublishOnly": "npm run build",
     "test": "vitest run"
   },
   "devDependencies": {
+    "@notecms/routing": "*",
+    "tsup": "^8.5.0",
     "typescript": "^5.9.3",
     "vitest": "^3.2.4"
   },

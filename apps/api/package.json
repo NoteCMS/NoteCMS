@@ -15,6 +15,7 @@
     "@apollo/server": "^5.0.0",
     "@as-integrations/express5": "^1.1.2",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@notecms/routing": "*",
     "bcryptjs": "^3.0.2",
     "cors": "^2.8.5",
     "dotenv": "^16.6.1",

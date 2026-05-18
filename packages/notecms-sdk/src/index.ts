@@ -16,6 +16,23 @@ export {
   listStaticPaths,
   type StaticPathDescriptor,
 } from './paths.js';
+export { slugify } from '@notecms/routing';
+export {
+  buildCanonicalPath,
+  buildArchivePath,
+  contentTypeHasSlugFromOptions,
+  effectivePermalinkTemplate,
+  getDefaultPermalinkTemplate,
+  normalizeContentTypeRoutingOptions,
+  parseHomepageOption,
+  validatePermalinkTemplateString,
+  isRootStylePermalinkTemplate,
+  type ContentTypeRoutingInput,
+  type EntryRoutingInput,
+  type HomepageOption,
+} from '@notecms/routing';
+export { buildRouteManifestNodes } from '@notecms/routing';
+export type { RouteManifestNode, RouteManifestContentType, RouteManifestEntry } from '@notecms/routing';
 export {
   API_KEY_INFO,
   CONTENT_TYPES,

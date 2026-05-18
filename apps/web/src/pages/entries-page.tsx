@@ -67,7 +67,7 @@ import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageF
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-const ENTRY_ADMIN_GQL = `id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }`;
+const ENTRY_ADMIN_GQL = `id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges createdAt updatedAt canonicalPath lastEditedBy { id email }`;
 
 const MarkdownEditor = lazy(() =>
   import('@/components/ui/markdown-editor').then((m) => ({ default: m.MarkdownEditor })),

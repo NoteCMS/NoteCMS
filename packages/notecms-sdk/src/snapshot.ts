@@ -9,7 +9,10 @@ import { contentTypeHasSlug } from './paths.js';
 import type { Asset, ContentType, Entry, SiteSettings } from './types.js';
 
 /**
- * Full-site read model for static generation. Entries per type are ordered **newest first** by the API
+ * Full-site read model for static generation. Pair with {@link listStaticPaths} for SSG routes;
+ * see `docs/ROUTING.md` for permalink and `slugIndex` usage.
+ *
+ * Entries per type are ordered **newest first** by the API
  * (`updatedAt` descending). Pagination is applied sequentially per content type; **under concurrent CMS
  * writes**, the snapshot is **best-effort** (an entry may theoretically appear twice or be skipped across
  * page boundaries). For CI builds against stable content this is usually irrelevant.

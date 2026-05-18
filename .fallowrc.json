@@ -1,46 +1,27 @@
 {
-  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
-  "publicPackages": ["@notecms/sdk", "@note/types", "@note/ui"],
-  "ignoreExportsUsedInFile": true,
-  "ignorePatterns": [
-    "infra/**",
-    "apps/web/public/**",
-    "apps/web/scripts/**",
-    "apps/web/src/components/ui/**",
-    "apps/web/src/hooks/use-mobile.ts"
-  ],
-  "ignoreDependencies": [
-    "lightningcss-darwin-arm64",
-    "lightningcss-darwin-x64",
-    "lightningcss-linux-arm64-gnu",
-    "lightningcss-linux-x64-gnu",
-    "lightningcss-linux-x64-musl",
-    "lightningcss-win32-x64-msvc",
-    "shadcn",
-    "@base-ui/react",
-    "@platejs/basic-nodes",
-    "@platejs/list-classic",
-    "@platejs/markdown",
-    "@radix-ui/react-avatar",
-    "class-variance-authority",
-    "cmdk",
-    "emblor-maintained",
-    "platejs",
-    "radix-ui",
-    "react-dropzone",
-    "slate"
-  ],
-  "rules": {
-    "unused-files": "warn",
-    "unused-exports": "warn",
-    "unused-types": "warn",
-    "unused-class-members": "off",
-    "unused-dependencies": "warn",
-    "unused-optional-dependencies": "off",
-    "unlisted-dependencies": "error",
-    "unresolved-imports": "off",
-    "duplicate-exports": "error",
-    "circular-dependencies": "error",
-    "boundary-violations": "warn"
+  "$schema": "https://docs.fallow.tools/schemas/config.schema.json",
+  "boundaries": {
+    "zones": [
+      { "name": "appsApi", "patterns": ["apps/api/src/**"] },
+      { "name": "appsWeb", "patterns": ["apps/web/src/**"] },
+      { "name": "packages", "patterns": ["packages/**"] }
+    ],
+    "rules": [
+      {
+        "from": "packages",
+        "allow": ["packages"],
+        "reason": "Packages may only import other packages."
+      },
+      {
+        "from": "appsApi",
+        "allow": ["packages"],
+        "reason": "API app may import packages only."
+      },
+      {
+        "from": "appsWeb",
+        "allow": ["packages"],
+        "reason": "Web app may import packages only."
+      }
+    ]
   }
 }

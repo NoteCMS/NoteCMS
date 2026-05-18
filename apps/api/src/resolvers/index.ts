@@ -24,7 +24,19 @@ import {
 import { generateReturnWebhookToken, hashReturnWebhookToken } from '../site/publish-webhook-token.js';
 import { bumpSiteContentRevision } from '../site/content-revision.js';
 import { fireContentWebhook } from '../site/content-webhook.js';
-import { activateScheduledEntries, resolveEntryPayloadForReader } from '../site/entry-lifecycle.js';
+import {
+  activateScheduledEntries,
+  entryMatchesPublishedConsumerFilter,
+  resolveEntryPayloadForReader,
+} from '../site/entry-lifecycle.js';
+import {
+  buildCanonicalPath,
+  buildRouteManifestNodes,
+  normalizeContentTypeRoutingOptions,
+  slugify,
+  type RouteManifestContentType,
+  type RouteManifestEntry,
+} from '@notecms/routing';
 import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions } from '../site/entry-revision-service.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
@@ -50,14 +62,6 @@ import { GraphQLError } from 'graphql';
 import { clampListArgs } from '../lib/list-args.js';
 import { bundleMutationResolvers, bundleQueryResolvers } from './bundles.js';
 import { escapeRegexLiteral } from '../lib/regex-escape.js';
-
-function toSlug(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 const ENTRY_NAME_MAX = 200;
 const USER_DISPLAY_NAME_MAX = 80;
@@ -91,10 +95,10 @@ function resolveEntrySlug(
   const hasSlug = Boolean(contentType.options?.hasSlug);
   if (!hasSlug) return null;
 
-  const direct = typeof inputSlug === 'string' ? toSlug(inputSlug) : '';
+  const direct = typeof inputSlug === 'string' ? slugify(inputSlug) : '';
   if (direct) return direct;
 
-  const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? toSlug(displayName) : '';
+  const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? slugify(displayName) : '';
   if (fromDisplayName) return fromDisplayName;
 
   badUserInput('Slug is required for this content type', ['slug']);
@@ -143,6 +147,7 @@ async function entryDocumentToGql(entry: any, ctx: RequestContext) {
   }
   const raw = entry as Record<string, unknown>;
   const payload = resolveEntryPayloadForReader(raw, ctx);
+  const createdAtRaw = raw.createdAt ?? (entry as { createdAt?: Date }).createdAt;
   return {
     ...toId(entry),
     siteId: String(entry.siteId),
@@ -156,6 +161,7 @@ async function entryDocumentToGql(entry: any, ctx: RequestContext) {
     scheduledUnpublishAt: raw.scheduledUnpublishAt ? new Date(raw.scheduledUnpublishAt as Date).toISOString() : null,
     deletedAt: raw.deletedAt ? new Date(raw.deletedAt as Date).toISOString() : null,
     hasUnpublishedChanges: Boolean(raw.hasUnpublishedChanges),
+    createdAt: createdAtRaw ? new Date(createdAtRaw as Date).toISOString() : new Date(entry.updatedAt ?? Date.now()).toISOString(),
     updatedAt: new Date(entry.updatedAt ?? Date.now()).toISOString(),
     lastEditedBy,
   };
@@ -503,6 +509,32 @@ export const resolvers = {
   ContentType: {
     options: (parent: any) => parent.options ?? {},
   },
+  Entry: {
+    canonicalPath: async (
+      parent: {
+        id: string;
+        siteId: string;
+        contentTypeId: string;
+        slug: string | null;
+        publishedAt?: string | null;
+        createdAt?: string;
+      },
+      _: unknown,
+      _ctx: RequestContext,
+    ) => {
+      const ct = await ContentTypeModel.findOne({ _id: parent.contentTypeId, siteId: parent.siteId }).lean();
+      if (!ct) return null;
+      return buildCanonicalPath({
+        contentType: { slug: ct.slug, options: (ct.options ?? null) as Record<string, unknown> | null },
+        entry: {
+          id: parent.id,
+          slug: parent.slug,
+          publishedAt: parent.publishedAt ?? null,
+          createdAt: parent.createdAt ?? null,
+        },
+      });
+    },
+  },
   User: {
     displayName: (parent: { displayName?: string | null }) =>
       typeof parent.displayName === 'string' && parent.displayName.trim() ? parent.displayName.trim() : null,
@@ -734,6 +766,71 @@ export const resolvers = {
       if (!doc) return null;
       const enriched = await withResolvedLatestEntryFields(sid, doc as Record<string, unknown>);
       return entryDocumentToGql(enriched, ctx);
+    },
+    buildRouteManifest: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'entries:read');
+      const types = await ContentTypeModel.find({ siteId: sid }).lean();
+      const rows = await EntryModel.find({ siteId: sid }).lean();
+      const ctList: RouteManifestContentType[] = types.map((t) => ({
+        id: String(t._id),
+        slug: String(t.slug ?? ''),
+        options: (t.options ?? null) as Record<string, unknown> | null,
+      }));
+      const entryList: RouteManifestEntry[] = [];
+      for (const row of rows) {
+        const doc = row as Record<string, unknown>;
+        if (!entryMatchesPublishedConsumerFilter(doc)) continue;
+        const ps = doc.publishedSlug;
+        const publishedSlug = typeof ps === 'string' && ps.trim() ? ps.trim() : null;
+        if (!publishedSlug) continue;
+        entryList.push({
+          id: String(row._id),
+          contentTypeId: String(row.contentTypeId),
+          lifecycleStatus: typeof doc.lifecycleStatus === 'string' ? doc.lifecycleStatus : '',
+          deletedAt: doc.deletedAt ? new Date(doc.deletedAt as Date).toISOString() : null,
+          scheduledPublishAt: doc.scheduledPublishAt ? new Date(doc.scheduledPublishAt as Date).toISOString() : null,
+          slug: publishedSlug,
+          publishedSlug,
+          publishedAt: doc.publishedAt ? new Date(doc.publishedAt as Date).toISOString() : null,
+          createdAt: doc.createdAt ? new Date(doc.createdAt as Date).toISOString() : null,
+        });
+      }
+      return buildRouteManifestNodes(ctList, entryList);
+    },
+    suggestSlug: async (
+      _: unknown,
+      {
+        siteId,
+        contentTypeId,
+        base,
+        excludeEntryId,
+      }: { siteId?: string | null; contentTypeId: string; base: string; excludeEntryId?: string | null },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'entries:read');
+      const ct = await ContentTypeModel.findOne({ _id: contentTypeId, siteId: sid }).lean();
+      if (!ct) throw new Error('Content type not found');
+      if (!Boolean((ct.options as Record<string, unknown> | undefined)?.hasSlug)) {
+        badUserInput('This content type does not use entry slugs', ['contentTypeId']);
+      }
+      const root = slugify(String(base ?? '')) || 'entry';
+      let candidate = root;
+      let n = 2;
+      while (true) {
+        const filter: Record<string, unknown> = {
+          siteId: sid,
+          contentTypeId,
+          deletedAt: null,
+          slug: candidate,
+        };
+        if (excludeEntryId) filter._id = { $ne: excludeEntryId };
+        const clash = await EntryModel.findOne(filter).select({ _id: 1 }).lean();
+        if (!clash) return candidate;
+        candidate = `${root}-${n}`;
+        n += 1;
+      }
     },
     entryRevisions: async (
       _: unknown,
@@ -1087,15 +1184,25 @@ export const resolvers = {
       await requireRole(ctx.userId, sid, 'owner');
       const safeFields = validateFieldDefinitions(fields);
       await assertReferencedContentTypesExist(sid, safeFields as FieldDef[]);
-      const normalizedSlug = toSlug(String(slug ?? ''));
+      const normalizedSlug = slugify(String(slug ?? ''));
       if (!normalizedSlug) throw new Error('Content type URL key could not be derived from the name');
+      let normalizedOptions: Record<string, unknown> = {};
+      try {
+        normalizedOptions = normalizeContentTypeRoutingOptions(
+          (options && typeof options === 'object' && !Array.isArray(options) ? (options as Record<string, unknown>) : {}) as Record<string, unknown>,
+          Boolean((options as Record<string, unknown> | undefined)?.hasSlug),
+          normalizedSlug,
+        ) as Record<string, unknown>;
+      } catch (e) {
+        badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
+      }
       try {
         const ct = await ContentTypeModel.create({
           siteId: sid,
           name,
           slug: normalizedSlug,
           fields: safeFields,
-          options,
+          options: normalizedOptions,
         });
         await bumpSiteContentRevision(sid);
         return toId(ct.toObject());
@@ -1119,7 +1226,28 @@ export const resolvers = {
         if (rest.slug == null || rest.slug === '') {
           delete rest.slug;
         } else {
-          rest.slug = toSlug(String(rest.slug));
+          rest.slug = slugify(String(rest.slug));
+        }
+      }
+      if (rest.options !== undefined) {
+        const existing = await ContentTypeModel.findOne({ _id: id, siteId: sid }).lean();
+        if (!existing) throw new Error('Content type not found');
+        const merged = {
+          ...((existing.options && typeof existing.options === 'object' && !Array.isArray(existing.options)
+            ? (existing.options as Record<string, unknown>)
+            : {}) as Record<string, unknown>),
+          ...(rest.options && typeof rest.options === 'object' && !Array.isArray(rest.options)
+            ? (rest.options as Record<string, unknown>)
+            : {}),
+        };
+        const slugKey = typeof rest.slug === 'string' && rest.slug ? rest.slug : String(existing.slug ?? '');
+        try {
+          rest.options = normalizeContentTypeRoutingOptions(merged, Boolean(merged.hasSlug), slugKey) as Record<
+            string,
+            unknown
+          >;
+        } catch (e) {
+          badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
         }
       }
       try {

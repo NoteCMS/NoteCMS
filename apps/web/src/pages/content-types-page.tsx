@@ -1595,6 +1595,11 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
   const [showInSidebar, setShowInSidebar] = useState(false);
   const [sidebarLabel, setSidebarLabel] = useState('');
   const [sidebarOrder, setSidebarOrder] = useState(100);
+  const [permalinkTemplate, setPermalinkTemplate] = useState('');
+  const [archiveEnabled, setArchiveEnabled] = useState(false);
+  const [archivePath, setArchivePath] = useState('');
+  const [homepageEnabled, setHomepageEnabled] = useState(false);
+  const [homepageEntrySlug, setHomepageEntrySlug] = useState('home');
   const [schemaBootstrap, setSchemaBootstrap] = useState<ContentTypeSchemaBootstrap | null>(null);
   const schemaRef = useRef<ContentTypeSchemaHandle | null>(null);
 
@@ -1625,10 +1630,15 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
         showInSidebar,
         sidebarLabel,
         sidebarOrder,
+        permalinkTemplate,
+        archiveEnabled,
+        archivePath,
+        homepageEnabled,
+        homepageEntrySlug,
         schema,
       }),
     );
-  }, [isLoading, schemaBootstrap, contentTypeId, workspaceSiteId]);
+  }, [isLoading, schemaBootstrap, contentTypeId, workspaceSiteId, reloadKey]);
 
   const currentSnapshot = useMemo(() => {
     const schema = schemaRef.current?.getSnapshot();
@@ -1637,9 +1647,26 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
       showInSidebar,
       sidebarLabel,
       sidebarOrder,
+      permalinkTemplate,
+      archiveEnabled,
+      archivePath,
+      homepageEnabled,
+      homepageEntrySlug,
       schema,
     });
-  }, [name, showInSidebar, sidebarLabel, sidebarOrder, schemaTick, schemaBootstrap]);
+  }, [
+    name,
+    showInSidebar,
+    sidebarLabel,
+    sidebarOrder,
+    permalinkTemplate,
+    archiveEnabled,
+    archivePath,
+    homepageEnabled,
+    homepageEntrySlug,
+    schemaTick,
+    schemaBootstrap,
+  ]);
 
   const isDirty = savedSnapshot !== null && currentSnapshot !== savedSnapshot;
   const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
@@ -1668,6 +1695,11 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
             setShowInSidebar(false);
             setSidebarLabel('');
             setSidebarOrder(100);
+            setPermalinkTemplate('');
+            setArchiveEnabled(false);
+            setArchivePath('');
+            setHomepageEnabled(false);
+            setHomepageEntrySlug('home');
             setError('');
             setSchemaBootstrap({
               fields: [createEmptyField()],
@@ -1690,6 +1722,21 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
           setShowInSidebar(Boolean(target.options?.showInSidebar));
           setSidebarLabel(target.options?.sidebarLabel ?? '');
           setSidebarOrder(target.options?.sidebarOrder ?? 100);
+          setPermalinkTemplate(typeof target.options?.permalinkTemplate === 'string' ? target.options.permalinkTemplate : '');
+          setArchiveEnabled(Boolean(target.options?.archiveEnabled));
+          setArchivePath(typeof target.options?.archivePath === 'string' ? target.options.archivePath : '');
+          const ho = target.options?.homepage;
+          if (ho && typeof ho === 'object' && !Array.isArray(ho) && (ho as { enabled?: boolean }).enabled === true) {
+            setHomepageEnabled(true);
+            setHomepageEntrySlug(
+              typeof (ho as { entrySlug?: string }).entrySlug === 'string' && (ho as { entrySlug: string }).entrySlug.trim()
+                ? (ho as { entrySlug: string }).entrySlug
+                : 'home',
+            );
+          } else {
+            setHomepageEnabled(false);
+            setHomepageEntrySlug('home');
+          }
           setSchemaBootstrap({
             fields: target.fields?.length ? target.fields : [createEmptyField()],
             hasSlug: Boolean(target.options?.hasSlug),
@@ -1720,6 +1767,23 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
       return;
     }
     const { fields, hasSlug } = schema;
+    const optionsPayload: Record<string, unknown> = {
+      showInSidebar,
+      sidebarLabel,
+      sidebarOrder,
+      hasSlug,
+      slugFieldKey: '',
+    };
+    if (hasSlug) {
+      if (permalinkTemplate.trim()) optionsPayload.permalinkTemplate = permalinkTemplate.trim();
+      if (archiveEnabled) {
+        optionsPayload.archiveEnabled = true;
+        if (archivePath.trim()) optionsPayload.archivePath = archivePath.trim();
+      }
+      optionsPayload.homepage = homepageEnabled
+        ? { enabled: true, entrySlug: homepageEntrySlug.trim() || 'home' }
+        : { enabled: false };
+    }
     setIsSaving(true);
     setError('');
     try {
@@ -1734,7 +1798,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
             name: name.trim(),
             slug,
             fields,
-            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: '' },
+            options: optionsPayload,
           },
         );
       } else {
@@ -1746,7 +1810,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
             siteId: workspaceSiteId,
             name: name.trim(),
             fields,
-            options: { showInSidebar, sidebarLabel, sidebarOrder, hasSlug, slugFieldKey: '' },
+            options: optionsPayload,
           },
         );
       }
@@ -1756,6 +1820,11 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
         showInSidebar,
         sidebarLabel,
         sidebarOrder,
+        permalinkTemplate,
+        archiveEnabled,
+        archivePath,
+        homepageEnabled,
+        homepageEntrySlug,
         schema: schemaAfterSave,
       });
       flushSync(() => {
@@ -1783,6 +1852,8 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
     [allContentTypes],
   );
   const derivedBaseSlug = useMemo(() => slugifyContentTypeName(name), [name]);
+  const routingHasSlug = schemaRef.current?.getSnapshot()?.hasSlug ?? schemaBootstrap?.hasSlug ?? false;
+
   const displaySlug = useMemo(() => {
     if (!isNew) return committedSlug;
     return uniqueContentTypeSlug(derivedBaseSlug, takenSlugs);
@@ -1914,6 +1985,91 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
                 contentTypeFieldMap={contentTypeFieldMap}
                 onSchemaChange={bumpSchema}
               />
+
+              {routingHasSlug ? (
+                <Item variant="muted" className="w-full flex-col flex-nowrap items-stretch" role="group" aria-label="Static URLs">
+                  <div className="space-y-1 pb-2">
+                    <p className="text-sm font-medium text-foreground">Static site URLs</p>
+                    <p className="text-xs text-muted-foreground">
+                      Default is <span className="font-mono">/:typeSlug/:slug</span> (e.g.{' '}
+                      <span className="font-mono">/{displaySlug || 'type'}/hello</span>). Use{' '}
+                      <span className="font-mono">/:slug</span> for root-level pages (no type segment). Tokens:{' '}
+                      <span className="font-mono">:typeSlug</span>, <span className="font-mono">:slug</span>,{' '}
+                      <span className="font-mono">:id</span>, <span className="font-mono">:year</span>,{' '}
+                      <span className="font-mono">:month</span>, <span className="font-mono">:day</span>.
+                    </p>
+                  </div>
+                  <Field className="w-full">
+                    <FieldLabel htmlFor="ct-permalink">Permalink template</FieldLabel>
+                    <FieldContent>
+                      <Input
+                        id="ct-permalink"
+                        value={permalinkTemplate}
+                        onChange={(e) => setPermalinkTemplate(e.target.value)}
+                        placeholder="/:typeSlug/:slug"
+                        className="font-mono text-sm"
+                      />
+                    </FieldContent>
+                    <FieldDescription>Leave empty to use the default. Must include :slug.</FieldDescription>
+                  </Field>
+                  <Field orientation="horizontal" className="items-start gap-3">
+                    <Checkbox
+                      id="ct-archive"
+                      checked={archiveEnabled}
+                      onCheckedChange={(v) => setArchiveEnabled(v === true)}
+                    />
+                    <FieldContent>
+                      <FieldLabel htmlFor="ct-archive">Archive index route</FieldLabel>
+                      <FieldDescription>
+                        Adds a listing path (default <span className="font-mono">/{displaySlug || 'type'}</span>).
+                        Optional custom path below.
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
+                  {archiveEnabled ? (
+                    <Field className="w-full">
+                      <FieldLabel htmlFor="ct-archive-path">Custom archive path (optional)</FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="ct-archive-path"
+                          value={archivePath}
+                          onChange={(e) => setArchivePath(e.target.value)}
+                          placeholder={`/${displaySlug || 'pages'}`}
+                          className="font-mono text-sm"
+                        />
+                      </FieldContent>
+                    </Field>
+                  ) : null}
+                  <Field orientation="horizontal" className="items-start gap-3">
+                    <Checkbox
+                      id="ct-homepage"
+                      checked={homepageEnabled}
+                      onCheckedChange={(v) => setHomepageEnabled(v === true)}
+                    />
+                    <FieldContent>
+                      <FieldLabel htmlFor="ct-homepage">Homepage at /</FieldLabel>
+                      <FieldDescription>
+                        Only for templates without <span className="font-mono">:typeSlug</span> (e.g.{' '}
+                        <span className="font-mono">/:slug</span>). Maps one entry slug to the site root.
+                      </FieldDescription>
+                    </FieldContent>
+                  </Field>
+                  {homepageEnabled ? (
+                    <Field className="w-full">
+                      <FieldLabel htmlFor="ct-home-slug">Homepage entry slug</FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="ct-home-slug"
+                          value={homepageEntrySlug}
+                          onChange={(e) => setHomepageEntrySlug(e.target.value)}
+                          placeholder="home"
+                          className="font-mono text-sm"
+                        />
+                      </FieldContent>
+                    </Field>
+                  ) : null}
+                </Item>
+              ) : null}
 
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => navigate('/content-types')}>

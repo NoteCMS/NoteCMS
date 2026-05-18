@@ -31,7 +31,10 @@ export const typeDefs = `#graphql
     scheduledUnpublishAt: String
     deletedAt: String
     hasUnpublishedChanges: Boolean!
+    createdAt: String!
     updatedAt: String!
+    """Canonical site path (leading slash) from the content type permalink template; null when the type has no URL slug."""
+    canonicalPath: String
     lastEditedBy: EntryEditor
   }
   type AuthPayload { token: String!, user: User! }
@@ -247,6 +250,13 @@ export const typeDefs = `#graphql
     ): [Entry!]!
     entry(id: ID!, siteId: ID): Entry
     entryBySlug(siteId: ID, contentTypeSlug: String!, slug: String!): Entry
+    """
+    Published-consumer route list for static generation (entries + optional archives). Throws if two nodes share the same path.
+    Requires entries:read for API keys.
+    """
+    buildRouteManifest(siteId: ID): JSON!
+    """Slugify base and append -2, -3, … until unused among non-deleted entries of this type (working slug field)."""
+    suggestSlug(siteId: ID, contentTypeId: ID!, base: String!, excludeEntryId: ID): String!
     entryRevisions(entryId: ID!, siteId: ID, limit: Int, offset: Int): [EntryRevision!]!
     entryRevision(id: ID!, siteId: ID): EntryRevision
     """The query argument matches filename as a case-insensitive substring (not a regex). limit/offset are capped."""

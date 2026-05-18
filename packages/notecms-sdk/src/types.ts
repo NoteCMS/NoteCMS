@@ -23,6 +23,7 @@ export type Entry = {
   name: string;
   slug: string | null;
   data: Json;
+  createdAt?: string;
   updatedAt: string;
   lastEditedBy: EntryEditor | null;
   lifecycleStatus?: string;

@@ -85,6 +85,13 @@ export type ContentType = {
     sidebarLabel?: string;
     sidebarOrder?: number;
     hasSlug?: boolean;
+    /** Default `/:typeSlug/:slug`. Use `/:slug` for root-level pages (no type segment). */
+    permalinkTemplate?: string;
+    archiveEnabled?: boolean;
+    /** When set, overrides default archive path `/{typeSlug}`. */
+    archivePath?: string;
+    /** Map one entry slug to `/` (only allowed when permalink has no :typeSlug). */
+    homepage?: { enabled: boolean; entrySlug?: string };
   };
 };
 
@@ -125,7 +132,10 @@ export type Entry = {
   name: string;
   slug: string | null;
   data: Record<string, unknown>;
+  createdAt?: string;
   updatedAt: string;
+  /** Canonical path from content type permalink rules (null when type has no URL slug). */
+  canonicalPath?: string | null;
   lastEditedBy: {
     id: string;
     email: string;

@@ -55,7 +55,9 @@ export const ENTRIES = /* GraphQL */ `
       scheduledUnpublishAt
       deletedAt
       hasUnpublishedChanges
+      createdAt
       updatedAt
+      canonicalPath
       lastEditedBy {
         id
         email
@@ -79,7 +81,9 @@ export const ENTRY = /* GraphQL */ `
       scheduledUnpublishAt
       deletedAt
       hasUnpublishedChanges
+      createdAt
       updatedAt
+      canonicalPath
       lastEditedBy {
         id
         email
@@ -103,7 +107,9 @@ export const ENTRY_BY_SLUG = /* GraphQL */ `
       scheduledUnpublishAt
       deletedAt
       hasUnpublishedChanges
+      createdAt
       updatedAt
+      canonicalPath
       lastEditedBy {
         id
         email

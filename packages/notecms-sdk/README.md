@@ -1,6 +1,8 @@
 # @notecms/sdk
 
-Headless TypeScript SDK for [NoteCMS](https://github.com/NoteCMS/NoteCMS) GraphQL: site API keys, read-only content, optional full-site snapshot for static generation, and small routing helpers.
+Headless TypeScript SDK for [NoteCMS](https://github.com/NoteCMS/NoteCMS) GraphQL: site API keys, read-only content, optional full-site snapshot for static generation, and permalink routing helpers.
+
+**Routing (pages, homepage, SSG paths):** see **[docs/ROUTING.md](./docs/ROUTING.md)** — canonical guide for humans and agents. Agent index: **[AGENTS.md](./AGENTS.md)**.
 
 ## Security
 
@@ -55,6 +57,19 @@ Use `depends('notecms:...')` + `invalidate()` when you want to refetch without a
 
 Use **server** `fetch` with caching disabled, e.g. `fetch(url, { cache: 'no-store' })` — pass the same options via `fetchInit: { cache: 'no-store' }` on `createNoteCmsClient`. Do **not** apply Next’s `revalidate` options to this SDK’s `fetchInit`; they are Next-specific.
 
+## Content type routing (permalink)
+
+URL rules are configured per content type in `options` (`hasSlug`, `permalinkTemplate`, `archive*`, `homepage`). The SDK computes paths from that config — do not hard-code URL shapes in your site.
+
+**Full reference (examples, API table, SSG workflow): [docs/ROUTING.md](./docs/ROUTING.md)**
+
+Quick production pattern:
+
+```ts
+const snapshot = await fetchBuildSnapshot(cms);
+const paths = listStaticPaths(snapshot); // { path, typeSlug, slug, kind }[]
+```
+
 ## Production (static / SSG)
 
 ```ts
@@ -68,7 +83,7 @@ const cms = createNoteCmsClient({
 
 const snapshot = await fetchBuildSnapshot(cms, { includeAssets: true });
 // snapshot.snapshotFormatVersion — bump handling when upgrading @notecms/sdk
-const paths = listStaticPaths(snapshot);
+const paths = listStaticPaths(snapshot); // throws if archive + entry paths collide
 ```
 
 ### Snapshot semantics

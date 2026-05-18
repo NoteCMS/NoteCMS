@@ -282,7 +282,12 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
         name: z.string(),
         slug: z.string(),
         fields: z.array(z.unknown()).describe('Field definitions: [{ key, label, type, required?, config? }, …]'),
-        options: z.record(z.string(), z.unknown()).optional().describe('e.g. hasSlug, showInSidebar, sidebarOrder'),
+        options: z
+          .record(z.string(), z.unknown())
+          .optional()
+          .describe(
+            'e.g. hasSlug, showInSidebar, sidebarOrder, permalinkTemplate (default /:typeSlug/:slug; use /:slug for root pages), archiveEnabled, archivePath, homepage: { enabled, entrySlug }',
+          ),
       },
       annotations: { readOnlyHint: false },
     },

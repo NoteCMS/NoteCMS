@@ -13,6 +13,7 @@ import {
 import type { FieldDefinition } from '../domain/fields/types.js';
 import { validateEntryData, validateFieldDefinitions } from '../domain/fields/validator.js';
 import mongoose from 'mongoose';
+import { slugify } from '@notecms/routing';
 import { appendEntryRevision } from './entry-revision-service.js';
 
 const BUNDLE_VERSION = 1;
@@ -61,14 +62,6 @@ type PortableMenuSlot = {
   entrySlug: string | null;
   entryName: string | null;
 };
-
-function toSlug(value: string) {
-  return value
-    .toLowerCase()
-    .trim()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 function menuEntriesToObject(mapOrRecord: unknown): Record<string, string> {
   if (!mapOrRecord) return {};
@@ -312,9 +305,9 @@ function resolveEntrySlug(
 ) {
   const hasSlug = Boolean(contentType.options?.hasSlug);
   if (!hasSlug) return null;
-  const direct = typeof inputSlug === 'string' ? toSlug(inputSlug) : '';
+  const direct = typeof inputSlug === 'string' ? slugify(inputSlug) : '';
   if (direct) return direct;
-  const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? toSlug(displayName) : '';
+  const fromDisplayName = typeof displayName === 'string' && displayName.trim() ? slugify(displayName) : '';
   if (fromDisplayName) return fromDisplayName;
   throw new Error('Slug is required for this content type');
 }
@@ -531,7 +524,7 @@ export async function importSiteBundleService(
         const remappedFields = remapFieldIdsInFields(ct.fields as unknown[], idMap);
         const safeFields = validateFieldDefinitions(remappedFields as FieldDef[]);
 
-        const normalizedSlug = toSlug(String(ct.slug ?? ''));
+        const normalizedSlug = slugify(String(ct.slug ?? ''));
         if (!normalizedSlug) continue;
 
         const existing = await ContentTypeModel.findOne({ siteId, slug: normalizedSlug }).lean();
