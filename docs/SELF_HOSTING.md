@@ -86,7 +86,7 @@ Run only **one** API replica with `BACKUP_SCHEDULER_ENABLED=true` to avoid dupli
 | `TRUST_PROXY`                                                        | Set to `1` when the API sits behind a reverse proxy so rate limits use the real client IP (`X-Forwarded-For`). |
 | `JSON_BODY_LIMIT`                                                    | Express JSON body size (default `12mb`; raise if you import very large site bundles).              |
 | `GRAPHQL_RATE_LIMIT_MAX`, `GRAPHQL_RATE_LIMIT_WINDOW_MS`               | Per-IP GraphQL rate limit (default 400 requests / 15 minutes).                                    |
-| `MCP_RATE_LIMIT_MAX`, `MCP_RATE_LIMIT_WINDOW_MS`                     | Per-IP MCP endpoint limit (default 120 / 15 minutes).                                               |
+| `MCP_RATE_LIMIT_UNAUTH_MAX`, `MCP_RATE_LIMIT_WINDOW_MS` | Unauthenticated MCP `/api/mcp` probes per IP (default **60** / 15 minutes). Authenticated requests are not rate limited. Set `MCP_RATE_LIMIT_UNAUTH_MAX=0` to disable. |
 | `CSP_CONNECT_SRC_EXTRA`                                              | Optional space- or comma-separated extra `connect-src` tokens for the **web** container CSP (e.g. another API origin). Used when generating `serve.json` at container start. |
 | `PUBLIC_API_BASE_URL`                                                | Public origin of the **API** (no trailing slash), e.g. `https://api.example.com`. Used so the admin UI can generate GitHub **build completion** callback URLs (`POST /hooks/site-build/:siteId`). |
 

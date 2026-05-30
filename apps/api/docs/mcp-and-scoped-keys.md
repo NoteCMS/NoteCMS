@@ -71,4 +71,4 @@ Point the MCP server URL at your deployed API, e.g. `https://notecms.example.com
 ## Security
 
 - Do not expose API keys in browser bundles or public repos.
-- Treat `/api/mcp` like `/graphql`: rate limit and monitor if exposed on the public internet.
+- Treat `/api/mcp` like `/graphql`: rate limit and monitor if exposed on the public internet. **Authenticated** MCP traffic (API key or JWT) is not rate limited. **Unauthenticated** probes are limited per IP (default 60 requests / 15 minutes). Set `MCP_RATE_LIMIT_UNAUTH_MAX=0` to disable.

@@ -30,7 +30,7 @@ export const env = {
   graphqlRateLimitMax: Number(process.env.GRAPHQL_RATE_LIMIT_MAX ?? 400),
   /** Window in ms for GraphQL rate limit (default 15 minutes). */
   graphqlRateLimitWindowMs: Number(process.env.GRAPHQL_RATE_LIMIT_WINDOW_MS ?? 900_000),
-  mcpRateLimitMax: Number(process.env.MCP_RATE_LIMIT_MAX ?? 120),
+  mcpRateLimitUnauthMax: Number(process.env.MCP_RATE_LIMIT_UNAUTH_MAX ?? 60),
   mcpRateLimitWindowMs: Number(process.env.MCP_RATE_LIMIT_WINDOW_MS ?? 900_000),
   /** When true, Express trusts `X-Forwarded-For` (required behind Portless/nginx for correct rate-limit client IPs). Set `TRUST_PROXY=0` to disable. */
   trustProxy: computeTrustProxy(),

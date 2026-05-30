@@ -16,6 +16,7 @@ import { ensureBootstrapAdmin } from './config/bootstrap.js';
 import { buildCorsOptions } from './config/cors-options.js';
 import { env } from './config/env.js';
 import { apiSecurityHeaders } from './config/security-headers.js';
+import { createMcpLimiter } from './config/mcp-rate-limit.js';
 import { typeDefs } from './graphql/schema.js';
 import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
@@ -77,13 +78,7 @@ const graphqlLimiter = rateLimit({
   message: { message: 'Too many requests; try again later.' },
 });
 
-const mcpLimiter = rateLimit({
-  windowMs: env.mcpRateLimitWindowMs,
-  limit: env.mcpRateLimitMax,
-  standardHeaders: 'draft-7',
-  legacyHeaders: false,
-  message: { message: 'Too many MCP requests; try again later.' },
-});
+const mcpLimiter = createMcpLimiter();
 
 const hooksLimiter = rateLimit({
   windowMs: env.hooksRateLimitWindowMs,
