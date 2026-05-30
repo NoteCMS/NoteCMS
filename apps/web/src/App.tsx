@@ -38,6 +38,7 @@ import { SiteSettingsPage } from '@/pages/site-settings-page';
 import { PlatformUsersPage, WorkspaceUsersPage } from '@/pages/users-page';
 import { DashboardPage } from '@/pages/dashboard-page';
 import { AccountSettingsPage } from '@/pages/account-settings-page';
+import { AdminSettingsPage } from '@/pages/admin-settings-page';
 import { EntryEditorToolbarProvider, useEntryEditorToolbarState } from '@/context/entry-editor-toolbar';
 import { ArrowLeft, History, Loader2, Settings2, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
@@ -485,6 +486,8 @@ export function App() {
               workspaceSiteId={activeSiteId}
               onProfileUpdated={refreshProfile}
             />
+          ) : path === '/admin/settings' ? (
+            <AdminSettingsPage token={token} isGlobalAdmin={isAdmin} />
           ) : path === '/dashboard' ? (
             <DashboardPage
               token={token}

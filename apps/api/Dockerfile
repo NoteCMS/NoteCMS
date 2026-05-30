@@ -17,7 +17,7 @@ RUN npm run build -w @notecms/routing && npm run build -w @note/api
 
 FROM node:22-alpine
 WORKDIR /app
-RUN apk add --no-cache wget
+RUN apk add --no-cache wget mongodb-tools
 ENV NODE_ENV=production
 COPY --from=build /app/apps/api/dist ./dist
 COPY apps/api/package.json ./package.json

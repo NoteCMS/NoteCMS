@@ -15,6 +15,7 @@ import { validateEntryData, validateFieldDefinitions } from '../domain/fields/va
 import mongoose from 'mongoose';
 import { slugify } from '@notecms/routing';
 import { appendEntryRevision } from './entry-revision-service.js';
+import { EntryRevisionModel } from '../db/models/EntryRevision.js';
 
 const BUNDLE_VERSION = 1;
 const MAX_EXPORT_ASSETS = 120;
@@ -337,12 +338,17 @@ export async function exportFullSiteBundle(siteId: string): Promise<Record<strin
 export async function exportSiteBundleService(
   siteId: string,
   options: SiteBundleOptions,
+  exportOpts?: { forBackup?: boolean },
 ): Promise<Record<string, unknown>> {
+  const forBackup = exportOpts?.forBackup === true;
   const bundle: Record<string, unknown> = {
-    version: BUNDLE_VERSION,
+    version: forBackup ? 2 : BUNDLE_VERSION,
     exportedAt: new Date().toISOString(),
     siteId,
   };
+  if (forBackup) {
+    bundle.kind = 'site_backup';
+  }
 
   if (options.contentTypes) {
     const cts = await ContentTypeModel.find({ siteId }).lean();
@@ -409,13 +415,15 @@ export async function exportSiteBundleService(
 
   if (options.assets) {
     const storage = getStorageAdapter();
-    const assets = await AssetModel.find({ siteId }).sort({ createdAt: -1 }).limit(MAX_EXPORT_ASSETS).lean();
+    const assetQuery = AssetModel.find({ siteId }).sort({ createdAt: -1 });
+    if (!forBackup) assetQuery.limit(MAX_EXPORT_ASSETS);
+    const assets = await assetQuery.lean();
     const exported: ExportedAsset[] = [];
     for (const a of assets) {
       const exportId = `export-${String(a._id)}`;
       try {
         const buf = await storage.getBuffer(a.storageKeyOriginal);
-        if (buf.byteLength > MAX_ASSET_BASE64_BYTES) {
+        if (!forBackup && buf.byteLength > MAX_ASSET_BASE64_BYTES) {
           exported.push({
             exportId,
             legacyMongoId: String(a._id),
@@ -464,14 +472,99 @@ function isBundleV1(raw: unknown): raw is { version: number } {
   return Boolean(raw && typeof raw === 'object' && !Array.isArray(raw) && (raw as { version?: unknown }).version === 1);
 }
 
+function isRestorableBundle(raw: unknown): raw is { version: number } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+  const v = (raw as { version?: unknown }).version;
+  return v === 1 || v === 2;
+}
+
+export type SiteBackupExportSummary = {
+  contentTypes: number;
+  entries: number;
+  assets: number;
+  siteSettings: boolean;
+};
+
+export async function exportSiteBackupBundle(siteId: string): Promise<{
+  bundle: Record<string, unknown>;
+  summary: SiteBackupExportSummary;
+}> {
+  const options = await resolveFullSiteBundleExportOptions(siteId);
+  const bundle = await exportSiteBundleService(siteId, options, { forBackup: true });
+  const contentTypes = Array.isArray(bundle.contentTypes) ? bundle.contentTypes.length : 0;
+  let entries = 0;
+  if (Array.isArray(bundle.entries)) {
+    for (const g of bundle.entries as Array<{ items?: unknown[] }>) {
+      entries += g.items?.length ?? 0;
+    }
+  }
+  const assets = Array.isArray(bundle.assets) ? bundle.assets.length : 0;
+  return {
+    bundle,
+    summary: {
+      contentTypes,
+      entries,
+      assets,
+      siteSettings: Boolean(bundle.siteSettings),
+    },
+  };
+}
+
+async function clearSiteContentForRestore(siteId: string): Promise<void> {
+  await EntryRevisionModel.deleteMany({ siteId });
+  await EntryModel.deleteMany({ siteId });
+  await ContentTypeModel.deleteMany({ siteId });
+
+  const storage = getStorageAdapter();
+  const assets = await AssetModel.find({ siteId }).lean();
+  for (const asset of assets) {
+    const keys = [
+      asset.storageKeyOriginal,
+      asset.storageKeyWeb,
+      asset.storageKeyThumb,
+      asset.storageKeySmall,
+      asset.storageKeyMedium,
+      asset.storageKeyXlarge,
+    ].filter((key): key is string => Boolean(key));
+    await Promise.all(keys.map((key) => storage.delete(key).catch(() => undefined)));
+  }
+  await AssetModel.deleteMany({ siteId });
+
+  await SiteSettingsModel.updateOne(
+    { siteId },
+    {
+      $set: {
+        siteTitle: null,
+        menuEntries: new Map(),
+        logoAssetId: null,
+        faviconAssetId: null,
+      },
+    },
+  );
+}
+
+/** Replace all site content from a backup bundle (destructive rollback). */
+export async function replaceSiteFromBundle(
+  siteId: string,
+  userId: string,
+  bundleUnknown: unknown,
+): Promise<SiteImportSummary> {
+  if (!isRestorableBundle(bundleUnknown)) {
+    throw new Error('Invalid backup bundle: expected version 1 or 2');
+  }
+  const options = await resolveFullSiteBundleExportOptions(siteId);
+  await clearSiteContentForRestore(siteId);
+  return importSiteBundleService(siteId, userId, bundleUnknown, options);
+}
+
 export async function importSiteBundleService(
   siteId: string,
   userId: string,
   bundleUnknown: unknown,
   options: SiteBundleOptions,
 ): Promise<SiteImportSummary> {
-  if (!isBundleV1(bundleUnknown)) {
-    throw new Error('Invalid bundle: expected { "version": 1, ... }');
+  if (!isRestorableBundle(bundleUnknown)) {
+    throw new Error('Invalid bundle: expected { "version": 1 or 2, ... }');
   }
   const bundle = bundleUnknown as Record<string, unknown>;
 

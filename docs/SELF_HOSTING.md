@@ -43,8 +43,26 @@ docker compose -f deploy/docker-compose.yml up -d
 
 - **MongoDB**: Docker volume `mongodb_data` (see `deploy/docker-compose.yml`).
 - **Uploaded assets**: volume `api_assets`, mounted at `ASSET_LOCAL_ROOT` inside the API container (default `/data/assets`).
+- **Automatic backups**: volume `api_backups`, mounted at `BACKUP_LOCAL_ROOT` (default `/data/backups`). The API stores tiered site snapshots and platform `mongodump` archives here.
 
-Back up both volumes for a full restore. S3-backed asset storage is not implemented yet; use local volume only until it is.
+Back up all three volumes for a full restore. S3-backed asset storage is not implemented yet; use local volume only until it is.
+
+### Automatic backup schedule
+
+Both **per-site** snapshots and **platform** backups use the same tiered retention (configurable via env):
+
+| Tier | Default schedule | Keep |
+|------|------------------|------|
+| Hourly | Every hour | 24 |
+| Daily | 03:00 UTC | 7 |
+| Weekly | Sunday 04:00 UTC | 4 |
+
+- **Site owners**: list and restore backups under **Site settings → Backups** (replace semantics; a pre-restore snapshot is created first).
+- **Platform admins**: list and restore under **Admin → Admin settings** (full database + assets; requires typing the backup id to confirm).
+
+Run only **one** API replica with `BACKUP_SCHEDULER_ENABLED=true` to avoid duplicate scheduled jobs. The API image includes `mongodump` / `mongorestore` for platform backups.
+
+**Local dev without Docker:** site backups work out of the box. Platform backups default to **off** (`PLATFORM_BACKUP_ENABLED` is `false` in development). If you enable them, install [MongoDB Database Tools](https://www.mongodb.com/docs/database-tools/) or set `MONGODUMP_BIN` / `MONGORESTORE_BIN`. Scheduled platform jobs are skipped when those binaries are missing.
 
 ## Environment reference
 

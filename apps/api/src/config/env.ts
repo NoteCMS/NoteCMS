@@ -52,4 +52,23 @@ export const env = {
   contentWebhookUrl: process.env.CONTENT_WEBHOOK_URL?.trim() || undefined,
   /** Optional HMAC-SHA256 secret; when set, `X-NoteCMS-Signature: sha256=<hex>` is sent for the raw body. */
   contentWebhookSecret: process.env.CONTENT_WEBHOOK_SECRET?.trim() || undefined,
+
+  backupLocalRoot: process.env.BACKUP_LOCAL_ROOT?.trim() || path.resolve(process.cwd(), 'data/backups'),
+  backupSchedulerEnabled: (process.env.BACKUP_SCHEDULER_ENABLED ?? 'true').toLowerCase() !== 'false',
+  /** Off in dev by default — needs mongodump on PATH; Docker API image includes mongodb-tools. */
+  platformBackupEnabled: (() => {
+    const raw = process.env.PLATFORM_BACKUP_ENABLED?.trim().toLowerCase();
+    if (raw === 'true' || raw === '1') return true;
+    if (raw === 'false' || raw === '0') return false;
+    return (process.env.NODE_ENV ?? 'development') === 'production';
+  })(),
+  mongodumpBin: process.env.MONGODUMP_BIN?.trim() || 'mongodump',
+  mongorestoreBin: process.env.MONGORESTORE_BIN?.trim() || 'mongorestore',
+  backupCronHourly: process.env.BACKUP_CRON_HOURLY?.trim() || '0 * * * *',
+  backupCronDaily: process.env.BACKUP_CRON_DAILY?.trim() || '0 3 * * *',
+  backupCronWeekly: process.env.BACKUP_CRON_WEEKLY?.trim() || '0 4 * * 0',
+  backupRetentionHourly: Number(process.env.BACKUP_RETENTION_HOURLY ?? 24),
+  backupRetentionDaily: Number(process.env.BACKUP_RETENTION_DAILY ?? 7),
+  backupRetentionWeekly: Number(process.env.BACKUP_RETENTION_WEEKLY ?? 4),
+  backupRetentionManual: Number(process.env.BACKUP_RETENTION_MANUAL ?? 5),
 };

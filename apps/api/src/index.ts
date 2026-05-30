@@ -21,6 +21,8 @@ import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
 import { assertMcpEndpointEnabledForContext } from './mcp/mcp-site-gate.js';
 import { siteBuildCallbackHandler } from './http/site-build-callback.js';
+import { startBackupScheduler } from './backups/scheduler.js';
+import { getPlatformMaintenanceMode } from './db/models/PlatformState.js';
 
 const DEFAULT_JWT_SECRET = 'change-me';
 if (env.nodeEnv === 'production' && env.jwtSecret === DEFAULT_JWT_SECRET) {
@@ -33,6 +35,7 @@ await migrateEntryNames();
 await migrateEntryLifecycle();
 await migrateMembershipRoles();
 await ensureBootstrapAdmin();
+startBackupScheduler();
 
 const app = express();
 if (env.trustProxy) {
@@ -44,7 +47,21 @@ const httpServer = http.createServer(app);
 const apollo = new ApolloServer<RequestContext>({
   typeDefs,
   resolvers,
-  plugins: [ApolloServerPluginDrainHttpServer({ httpServer })],
+  plugins: [
+    ApolloServerPluginDrainHttpServer({ httpServer }),
+    {
+      async requestDidStart() {
+        return {
+          async didResolveOperation(ctx) {
+            if (ctx.operation?.operation !== 'mutation') return;
+            if (await getPlatformMaintenanceMode()) {
+              throw new Error('Platform is in maintenance mode; try again after restore completes.');
+            }
+          },
+        };
+      },
+    },
+  ],
 });
 
 await apollo.start();

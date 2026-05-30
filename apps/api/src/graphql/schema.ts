@@ -146,6 +146,8 @@ export const typeDefs = `#graphql
     contentRevision: Int!
     """Written when a successful build completion callback includes structured fields in the detail payload."""
     lastPublishedWatermark: JSON
+    """When false, scheduled automatic backups are skipped for this workspace."""
+    backupEnabled: Boolean!
   }
 
   input PublishWebhookInput {
@@ -206,6 +208,60 @@ export const typeDefs = `#graphql
     siteSettingsApplied: Boolean!
   }
 
+  type SiteBackupSummary {
+    contentTypes: Int!
+    entries: Int!
+    assets: Int!
+    siteSettings: Boolean!
+  }
+
+  type SiteBackup {
+    id: ID!
+    siteId: ID!
+    tier: String!
+    trigger: String!
+    status: String!
+    label: String
+    createdByUserId: ID
+    createdAt: String!
+    completedAt: String
+    sizeBytes: Int!
+    errorMessage: String
+    bundleVersion: Int!
+    summary: SiteBackupSummary!
+  }
+
+  type SiteBackupSettings {
+    backupEnabled: Boolean!
+  }
+
+  input SiteBackupSettingsInput {
+    backupEnabled: Boolean
+  }
+
+  type SiteRestoreBackupResult {
+    preRestoreBackupId: ID!
+    summary: SiteImportSummary!
+  }
+
+  type PlatformBackup {
+    id: ID!
+    tier: String!
+    trigger: String!
+    status: String!
+    label: String
+    createdByUserId: ID
+    createdAt: String!
+    completedAt: String
+    sizeBytes: Int!
+    errorMessage: String
+    mongoVersion: String
+  }
+
+  type PlatformRestoreResult {
+    ok: Boolean!
+  }
+
   type WorkspaceContentTypeBreakdown {
     contentTypeId: ID!
     name: String!
@@ -264,6 +320,10 @@ export const typeDefs = `#graphql
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID): SiteSettings!
     exportSiteBundle(siteId: ID, options: SiteBundlePartOptions!): JSON!
+    siteBackups(siteId: ID, limit: Int, offset: Int): [SiteBackup!]!
+    exportSiteBackupJson(siteId: ID, backupId: ID!): JSON!
+    platformBackups(limit: Int, offset: Int): [PlatformBackup!]!
+    platformMaintenanceMode: Boolean!
   }
 
   type Mutation {
@@ -323,5 +383,14 @@ export const typeDefs = `#graphql
     disablePublishReturnWebhook(siteId: ID!): SiteSettings!
 
     importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
+
+    createSiteBackup(siteId: ID, label: String): SiteBackup!
+    restoreSiteBackup(siteId: ID, backupId: ID!): SiteRestoreBackupResult!
+    deleteSiteBackup(siteId: ID, backupId: ID!): Boolean!
+    updateSiteBackupSettings(siteId: ID, input: SiteBackupSettingsInput!): SiteBackupSettings!
+
+    createPlatformBackup(label: String): PlatformBackup!
+    restorePlatformBackup(backupId: ID!, confirmId: ID!): PlatformRestoreResult!
+    deletePlatformBackup(backupId: ID!): Boolean!
   }
 `;

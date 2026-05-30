@@ -23,11 +23,13 @@ services:
       MONGO_URI: mongodb://mongo:27017/notecms
       API_PORT: 4000
       ASSET_LOCAL_ROOT: /data/assets
+      BACKUP_LOCAL_ROOT: /data/backups
     depends_on:
       mongo:
         condition: service_healthy
     volumes:
       - api_assets:/data/assets
+      - api_backups:/data/backups
     ports:
       - "4000:4000"
     healthcheck:
@@ -60,3 +62,4 @@ services:
 volumes:
   mongodb_data:
   api_assets:
+  api_backups:

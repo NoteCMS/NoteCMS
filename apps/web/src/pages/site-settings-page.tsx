@@ -32,6 +32,7 @@ import { toast } from 'sonner';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { SiteImportExportSection } from '@/components/site-import-export-section';
+import { SiteBackupsSection } from '@/components/site-backups-section';
 import type { Asset, ContentType, Entry, Site } from '@/types/app';
 
 const ASSET_PREVIEW_GQL = `id filename mimeType variants { thumbnail web }`;
@@ -108,6 +109,7 @@ type SiteSettingsGql = {
   publishLastReturnStatus: string | null;
   publishLastReturnRunUrl: string | null;
   publishLastReturnPayload: unknown;
+  backupEnabled: boolean;
 };
 
 const PUBLISH_SITE_SETTINGS_FIELDS = `
@@ -302,6 +304,7 @@ export function SiteSettingsPage({
   const [publishTriggering, setPublishTriggering] = useState(false);
   const [returnSetup, setReturnSetup] = useState<{ callbackUrl: string } | null>(null);
   const [returnCopyHint, setReturnCopyHint] = useState('');
+  const [backupEnabled, setBackupEnabled] = useState(true);
   const [deploySheetOpen, setDeploySheetOpen] = useState(false);
 
   const logoFileRef = useRef<HTMLInputElement>(null);
@@ -334,6 +337,7 @@ export function SiteSettingsPage({
             logo { ${ASSET_PREVIEW_GQL} }
             favicon { ${ASSET_PREVIEW_GQL} }
             ${PUBLISH_SITE_SETTINGS_FIELDS}
+            backupEnabled
           }
         }`,
         { siteId: workspaceSiteId },
@@ -357,6 +361,7 @@ export function SiteSettingsPage({
       setPublishLastReturnAt(s.publishLastReturnAt ?? null);
       setPublishLastReturnStatus(s.publishLastReturnStatus ?? null);
       setPublishLastReturnRunUrl(s.publishLastReturnRunUrl ?? null);
+      setBackupEnabled(s.backupEnabled !== false);
       setPublishPatDraft('');
       setPublishPatClear(false);
     } catch (e) {
@@ -1173,6 +1178,14 @@ export function SiteSettingsPage({
               </section>
 
               {!loading && canManageBundle ? (
+                <>
+                <SiteBackupsSection
+                  token={token}
+                  siteId={workspaceSiteId}
+                  siteLabel={activeSite?.name ?? 'site'}
+                  backupEnabled={backupEnabled}
+                  onSettingsChanged={loadSettings}
+                />
                 <SiteImportExportSection
                   token={token}
                   siteId={workspaceSiteId}
@@ -1184,6 +1197,7 @@ export function SiteSettingsPage({
                     await onSitesChanged?.();
                   }}
                 />
+                </>
               ) : null}
             </>
           )}

@@ -27,11 +27,14 @@ services:
       ASSET_LOCAL_ROOT: ${ASSET_LOCAL_ROOT:-/data/assets}
       ASSET_STORAGE_DRIVER: ${ASSET_STORAGE_DRIVER:-local}
       ASSET_MAX_UPLOAD_BYTES: ${ASSET_MAX_UPLOAD_BYTES:-10000000}
+      BACKUP_LOCAL_ROOT: ${BACKUP_LOCAL_ROOT:-/data/backups}
+      BACKUP_SCHEDULER_ENABLED: ${BACKUP_SCHEDULER_ENABLED:-true}
     depends_on:
       mongo:
         condition: service_healthy
     volumes:
       - api_assets:/data/assets
+      - api_backups:/data/backups
     ports:
       - "${API_PUBLISH_PORT:-127.0.0.1:4000}:4000"
     healthcheck:
@@ -71,3 +74,4 @@ services:
 volumes:
   mongodb_data:
   api_assets:
+  api_backups:

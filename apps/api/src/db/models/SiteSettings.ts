@@ -40,6 +40,8 @@ const siteSettingsSchema = new Schema(
 
     /** Monotonic counter bumped when site content, types, settings, or assets change (publish alignment). */
     contentRevision: { type: Number, default: 0 },
+    /** When false, scheduled site backups are skipped for this workspace. Default true. */
+    backupEnabled: { type: Boolean, default: true },
     /** Written when CI reports `success`; optional fields from workflow `detail` (contentRevision, bundleHash, builtAt, workflowRunId). */
     lastPublishedWatermark: { type: Schema.Types.Mixed, default: null },
   },

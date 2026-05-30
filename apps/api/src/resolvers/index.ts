@@ -61,6 +61,7 @@ import { validateEntryData, validateFieldDefinitions } from '../domain/fields/va
 import { GraphQLError } from 'graphql';
 import { clampListArgs } from '../lib/list-args.js';
 import { bundleMutationResolvers, bundleQueryResolvers } from './bundles.js';
+import { backupMutationResolvers, backupQueryResolvers } from './backups.js';
 import { escapeRegexLiteral } from '../lib/regex-escape.js';
 
 const ENTRY_NAME_MAX = 200;
@@ -387,6 +388,7 @@ function siteSettingsDocToGql(doc: {
   publishLastReturnPayload?: unknown;
   contentRevision?: number | null;
   lastPublishedWatermark?: unknown;
+  backupEnabled?: boolean | null;
 }) {
   let publishWebhookPostUrl: string | null = null;
   try {
@@ -448,6 +450,7 @@ function siteSettingsDocToGql(doc: {
       doc.lastPublishedWatermark != null && typeof doc.lastPublishedWatermark === 'object'
         ? doc.lastPublishedWatermark
         : null,
+    backupEnabled: doc.backupEnabled !== false,
   };
 }
 
@@ -891,6 +894,7 @@ export const resolvers = {
       return keys.map(formatApiKeyDoc);
     },
     ...bundleQueryResolvers,
+    ...backupQueryResolvers,
     siteSettings: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'site_settings:read');
@@ -905,6 +909,7 @@ export const resolvers = {
           mcpEnabled: true,
           contentRevision: 0,
           lastPublishedWatermark: null,
+          backupEnabled: true,
         });
       }
       return siteSettingsDocToGql(doc);
@@ -1982,5 +1987,6 @@ export const resolvers = {
       return entryDocumentToGql(enriched, ctx);
     },
     ...bundleMutationResolvers,
+    ...backupMutationResolvers,
   },
 };
