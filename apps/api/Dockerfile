@@ -1,4 +1,4 @@
-FROM node:22-alpine AS deps
+FROM node:22-alpine AS build-deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/api/package.json ./apps/api/package.json
@@ -11,9 +11,16 @@ RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build-deps /app/node_modules ./node_modules
 COPY . .
 RUN npm run build -w @notecms/routing && npm run build -w @note/api
+
+FROM node:22-alpine AS prod-deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY apps/api/package.json ./apps/api/package.json
+COPY packages/routing/package.json ./packages/routing/package.json
+RUN npm ci --workspace=@note/api --workspace=@notecms/routing --omit=dev && npm cache clean --force
 
 FROM node:22-alpine
 WORKDIR /app
@@ -21,7 +28,7 @@ RUN apk add --no-cache wget mongodb-tools
 ENV NODE_ENV=production
 COPY --from=build /app/apps/api/dist ./dist
 COPY apps/api/package.json ./package.json
-COPY --from=build /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=build /app/packages/routing/package.json ./packages/routing/package.json
 COPY --from=build /app/packages/routing/dist ./packages/routing/dist
 EXPOSE 4000
