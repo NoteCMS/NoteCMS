@@ -105,6 +105,18 @@ app.post('/hooks/site-build/:siteId', hooksLimiter, async (req, res) => {
   }
 });
 
+app.post('/hooks/site-build/:siteId/:buildSlug', hooksLimiter, async (req, res) => {
+  try {
+    const buildSlug = typeof req.params.buildSlug === 'string' ? req.params.buildSlug : undefined;
+    await siteBuildCallbackHandler(req, res, buildSlug);
+  } catch (err) {
+    if (!res.headersSent) {
+      console.error('[hooks/site-build]', err);
+      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
+    }
+  }
+});
+
 app.use(
   '/graphql',
   graphqlLimiter,

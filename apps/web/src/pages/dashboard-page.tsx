@@ -10,12 +10,14 @@ import {
   Loader2,
   Plus,
   RefreshCw,
+  Rocket,
   Settings,
   Shapes,
   Users,
 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { LoadErrorAlert } from '@/components/load-error-alert';
+import { SiteBuildsRunList } from '@/components/site-builds-run-list';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -28,6 +30,7 @@ import {
 } from '@/components/ui/item';
 import { Skeleton } from '@/components/ui/skeleton';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
+import { fetchSiteBuilds, type SiteBuildGql } from '@/lib/site-builds';
 import type { ContentType, Site } from '@/types/app';
 
 type EntryListRow = {
@@ -115,6 +118,7 @@ export function DashboardPage({
   >([]);
   const [mcpEnabled, setMcpEnabled] = useState<boolean | null>(null);
   const [apiKeyCount, setApiKeyCount] = useState<number | null>(null);
+  const [siteBuilds, setSiteBuilds] = useState<SiteBuildGql[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -123,13 +127,14 @@ export function DashboardPage({
       setContentTypes([]);
       setOverview(null);
       setRecentEntries([]);
+      setSiteBuilds([]);
       setLoading(false);
       return;
     }
     setLoading(true);
     setError('');
     try {
-      const [mainRes, keysRes] = await Promise.all([
+      const [mainRes, keysRes, buildsList] = await Promise.all([
         gqlRequest<{
           workspaceOverview: WorkspaceOverview;
           contentTypes: ContentType[];
@@ -158,6 +163,7 @@ export function DashboardPage({
               { siteId: workspaceSiteId },
             ).catch(() => ({ apiKeys: [] as { id: string }[] }))
           : Promise.resolve(null),
+        fetchSiteBuilds(token, workspaceSiteId).catch(() => [] as SiteBuildGql[]),
       ]);
 
       const types = mainRes.contentTypes;
@@ -165,6 +171,7 @@ export function DashboardPage({
       setOverview(mainRes.workspaceOverview);
       setMcpEnabled(mainRes.siteSettings?.mcpEnabled ?? null);
       setApiKeyCount(keysRes?.apiKeys?.length ?? null);
+      setSiteBuilds(buildsList);
 
       const entryChunks = await Promise.all(
         types.map((t) =>
@@ -194,6 +201,7 @@ export function DashboardPage({
       setContentTypes([]);
       setOverview(null);
       setRecentEntries([]);
+      setSiteBuilds([]);
     } finally {
       setLoading(false);
     }
@@ -240,6 +248,16 @@ export function DashboardPage({
   }, [overview?.byContentType, contentTypes]);
 
   const showAdminCard = showSiteAdminTools || isGlobalAdmin;
+  const showDeployCard = canCreateEntries || isGlobalAdmin;
+
+  const loadBuilds = useCallback(async () => {
+    if (!token || !workspaceSiteId) return;
+    try {
+      setSiteBuilds(await fetchSiteBuilds(token, workspaceSiteId));
+    } catch {
+      setSiteBuilds([]);
+    }
+  }, [token, workspaceSiteId]);
 
   return (
     <div className="w-full space-y-6">
@@ -436,6 +454,55 @@ export function DashboardPage({
               </div>
             </CardContent>
           </Card>
+
+          {showDeployCard ? (
+            <Card className="border-border bg-card shadow-sm">
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="space-y-1">
+                    <CardTitle className="text-base font-semibold">Deploy</CardTitle>
+                    <CardDescription>Push changes to your live or staging site</CardDescription>
+                  </div>
+                  {(showSiteAdminTools || isGlobalAdmin) && siteBuilds.length > 0 ? (
+                    <Button variant="ghost" size="sm" className="h-8 shrink-0 text-xs" asChild>
+                      <Link to="/site-settings">Manage</Link>
+                    </Button>
+                  ) : null}
+                </div>
+              </CardHeader>
+              <CardContent className="pb-5">
+                {loading ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-14 w-full rounded-xl" />
+                    <Skeleton className="h-14 w-full rounded-xl" />
+                  </div>
+                ) : siteBuilds.length === 0 ? (
+                  <div className="flex flex-col items-center rounded-xl border border-dashed border-border/80 bg-muted/20 py-8 text-center">
+                    <Rocket className="mb-2 size-7 text-muted-foreground/60" />
+                    <p className="text-sm text-muted-foreground mb-3 px-4">
+                      {showSiteAdminTools || isGlobalAdmin
+                        ? 'Connect GitHub to run deploys from here.'
+                        : 'No builds set up yet. Ask a site owner to connect GitHub.'}
+                    </p>
+                    {showSiteAdminTools || isGlobalAdmin ? (
+                      <Button size="sm" variant="secondary" asChild>
+                        <Link to="/site-settings">Set up builds</Link>
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <SiteBuildsRunList
+                    token={token}
+                    siteId={workspaceSiteId}
+                    builds={siteBuilds}
+                    siteRole={activeSite?.role}
+                    isGlobalAdmin={isGlobalAdmin}
+                    onTriggered={loadBuilds}
+                  />
+                )}
+              </CardContent>
+            </Card>
+          ) : null}
 
           <Card className="border-border bg-card shadow-sm">
             <CardHeader className="pb-3">

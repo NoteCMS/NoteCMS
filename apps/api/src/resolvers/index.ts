@@ -22,6 +22,20 @@ import {
   triggerRepositoryDispatch,
 } from '../site/publish-webhook-service.js';
 import { generateReturnWebhookToken, hashReturnWebhookToken } from '../site/publish-webhook-token.js';
+import {
+  createSiteBuild as createSiteBuildRecord,
+  deleteSiteBuild as deleteSiteBuildRecord,
+  disableSiteBuildReturnWebhook as disableSiteBuildReturnWebhookRecord,
+  ensureLegacySiteBuildMigrated,
+  getPrimarySiteBuild,
+  getSiteBuildById,
+  listSiteBuilds,
+  rotateSiteBuildReturnWebhook as rotateSiteBuildReturnWebhookRecord,
+  siteBuildDocToGql,
+  triggerSiteBuild as triggerSiteBuildRecord,
+  updateSiteBuild as updateSiteBuildRecord,
+  type SiteBuildInputFields,
+} from '../site/site-build-service.js';
 import { bumpSiteContentRevision } from '../site/content-revision.js';
 import { fireContentWebhook } from '../site/content-webhook.js';
 import {
@@ -148,6 +162,60 @@ async function assertCanConfigurePublishWebhook(ctx: RequestContext, siteId: str
   if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
   if (await actorIsGlobalAdmin(ctx)) return;
   await requireRole(ctx.userId, siteId, 'owner');
+}
+
+async function assertCanTriggerSiteBuild(
+  ctx: RequestContext,
+  siteId: string,
+  triggerMinRole: 'editor' | 'owner',
+) {
+  if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
+  await requireRole(ctx.userId, siteId, triggerMinRole);
+}
+
+function mergePrimaryBuildIntoSiteSettingsGql(
+  base: ReturnType<typeof siteSettingsDocToGql>,
+  build: ReturnType<typeof siteBuildDocToGql> | null,
+) {
+  if (!build) return base;
+  return {
+    ...base,
+    publishEnabled: build.enabled,
+    publishGithubOwner: build.publishGithubOwner,
+    publishGithubRepo: build.publishGithubRepo,
+    publishGithubRepoUrl: build.publishGithubRepoUrl,
+    publishEventType: build.publishEventType,
+    hasPublishPat: build.hasPublishPat,
+    publishWebhookPostUrl: build.publishWebhookPostUrl,
+    hasPublishReturnToken: build.hasPublishReturnToken,
+    publishLastTriggerAt: build.publishLastTriggerAt,
+    publishLastTriggerOk: build.publishLastTriggerOk,
+    publishLastTriggerStatusCode: build.publishLastTriggerStatusCode,
+    publishLastTriggerMessage: build.publishLastTriggerMessage,
+    publishLastReturnAt: build.publishLastReturnAt,
+    publishLastReturnStatus: build.publishLastReturnStatus,
+    publishLastReturnRunUrl: build.publishLastReturnRunUrl,
+    publishLastReturnPayload: build.publishLastReturnPayload,
+    lastPublishedWatermark: build.lastPublishedWatermark ?? base.lastPublishedWatermark,
+  };
+}
+
+async function siteSettingsResponseForSite(siteId: string, doc: Parameters<typeof siteSettingsDocToGql>[0] | null | undefined) {
+  const base = siteSettingsDocToGql(
+    doc ?? {
+      siteId,
+      logoAssetId: null,
+      faviconAssetId: null,
+      siteTitle: null,
+      menuEntries: {},
+      mcpEnabled: true,
+      contentRevision: 0,
+      lastPublishedWatermark: null,
+      backupEnabled: true,
+    },
+  );
+  const primary = await getPrimarySiteBuild(siteId);
+  return mergePrimaryBuildIntoSiteSettingsGql(base, primary ? siteBuildDocToGql(primary) : null);
 }
 
 async function entryDocumentToGql(entry: any, ctx: RequestContext) {
@@ -908,20 +976,23 @@ export const resolvers = {
       const sid = resolveSiteId(ctx, siteId);
       await requireReadSite(ctx, sid, 'site_settings:read');
       const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
-      if (!doc) {
-        return siteSettingsDocToGql({
-          siteId: sid,
-          logoAssetId: null,
-          faviconAssetId: null,
-          siteTitle: null,
-          menuEntries: {},
-          mcpEnabled: true,
-          contentRevision: 0,
-          lastPublishedWatermark: null,
-          backupEnabled: true,
-        });
-      }
-      return siteSettingsDocToGql(doc);
+      return siteSettingsResponseForSite(sid, doc);
+    },
+    siteBuilds: async (_: unknown, { siteId }: { siteId?: string | null }, ctx: RequestContext) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'site_settings:read');
+      const builds = await listSiteBuilds(sid);
+      return builds.map(siteBuildDocToGql);
+    },
+    siteBuild: async (
+      _: unknown,
+      { siteId, id }: { siteId?: string | null; id: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await requireReadSite(ctx, sid, 'site_settings:read');
+      const build = await getSiteBuildById(sid, id);
+      return build ? siteBuildDocToGql(build) : null;
     },
   },
   Mutation: {
@@ -1773,11 +1844,40 @@ export const resolvers = {
         setDefaultsOnInsert: true,
       }).lean();
       if (!updated) throw new Error('Failed to save publish webhook settings');
-      return siteSettingsDocToGql(updated);
+      await ensureLegacySiteBuildMigrated(sid);
+      const primary = await getPrimarySiteBuild(sid);
+      if (primary) {
+        await updateSiteBuildRecord(sid, String(primary._id), {
+          enabled: nextEnabled,
+          githubRepoUrl: Object.prototype.hasOwnProperty.call(input, 'githubRepoUrl') ? input.githubRepoUrl : undefined,
+          publishGithubOwner: input.publishGithubOwner ?? undefined,
+          publishGithubRepo: input.publishGithubRepo ?? undefined,
+          publishEventType: input.publishEventType ?? undefined,
+          githubPat: Object.prototype.hasOwnProperty.call(input, 'githubPat') ? input.githubPat : undefined,
+        });
+      }
+      return siteSettingsResponseForSite(sid, updated);
     },
     triggerPublishWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
       const sid = resolveSiteId(ctx, siteId);
+      await ensureLegacySiteBuildMigrated(sid);
+      const primary = await getPrimarySiteBuild(sid);
+      if (primary) {
+        await assertCanTriggerSiteBuild(ctx, sid, primary.triggerMinRole === 'owner' ? 'owner' : 'editor');
+        const triggeredAt = new Date().toISOString();
+        const result = await triggerSiteBuildRecord({
+          siteId: sid,
+          buildId: String(primary._id),
+          triggeredByUserId: ctx.userId,
+        });
+        return {
+          ok: result.ok,
+          statusCode: result.statusCode,
+          message: result.message,
+          triggeredAt,
+        };
+      }
       await requireRole(ctx.userId, sid, 'editor');
       const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
       if (!doc) {
@@ -1804,6 +1904,11 @@ export const resolvers = {
     rotatePublishReturnWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await assertCanConfigurePublishWebhook(ctx, sid);
+      await ensureLegacySiteBuildMigrated(sid);
+      const primary = await getPrimarySiteBuild(sid);
+      if (primary) {
+        return rotateSiteBuildReturnWebhookRecord(sid, String(primary._id));
+      }
       const token = generateReturnWebhookToken();
       const hash = hashReturnWebhookToken(token);
       const callbackUrl = buildPublishCompletionCallbackUrl(sid, token);
@@ -1817,6 +1922,13 @@ export const resolvers = {
     disablePublishReturnWebhook: async (_: unknown, { siteId }: { siteId: string }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       await assertCanConfigurePublishWebhook(ctx, sid);
+      await ensureLegacySiteBuildMigrated(sid);
+      const primary = await getPrimarySiteBuild(sid);
+      if (primary) {
+        await disableSiteBuildReturnWebhookRecord(sid, String(primary._id));
+        const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
+        return siteSettingsResponseForSite(sid, doc);
+      }
       await SiteSettingsModel.findOneAndUpdate(
         { siteId: sid },
         {
@@ -1831,10 +1943,95 @@ export const resolvers = {
         { upsert: false },
       );
       const doc = await SiteSettingsModel.findOne({ siteId: sid }).lean();
-      if (!doc) {
-        return siteSettingsDocToGql({ siteId: sid, menuEntries: {}, mcpEnabled: true });
+      return siteSettingsResponseForSite(sid, doc);
+    },
+    createSiteBuild: async (
+      _: unknown,
+      {
+        siteId,
+        input,
+      }: {
+        siteId?: string | null;
+        input: SiteBuildInputFields & { slug: string; label: string };
+      },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      return createSiteBuildRecord(sid, input);
+    },
+    updateSiteBuild: async (
+      _: unknown,
+      {
+        siteId,
+        id,
+        input,
+      }: {
+        siteId?: string | null;
+        id: string;
+        input: SiteBuildInputFields;
+      },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      return updateSiteBuildRecord(sid, id, input);
+    },
+    deleteSiteBuild: async (
+      _: unknown,
+      { siteId, id }: { siteId?: string | null; id: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      return deleteSiteBuildRecord(sid, id);
+    },
+    triggerSiteBuild: async (
+      _: unknown,
+      { siteId, id }: { siteId?: string | null; id: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      const build = await getSiteBuildById(sid, id);
+      if (!build) {
+        return {
+          ok: false,
+          statusCode: 0,
+          message: 'Build not found.',
+          triggeredAt: new Date().toISOString(),
+        };
       }
-      return siteSettingsDocToGql(doc);
+      await assertCanTriggerSiteBuild(ctx, sid, build.triggerMinRole === 'owner' ? 'owner' : 'editor');
+      const triggeredAt = new Date().toISOString();
+      const result = await triggerSiteBuildRecord({
+        siteId: sid,
+        buildId: id,
+        triggeredByUserId: ctx.userId!,
+      });
+      return {
+        ok: result.ok,
+        statusCode: result.statusCode,
+        message: result.message,
+        triggeredAt,
+      };
+    },
+    rotateSiteBuildReturnWebhook: async (
+      _: unknown,
+      { siteId, id }: { siteId?: string | null; id: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      return rotateSiteBuildReturnWebhookRecord(sid, id);
+    },
+    disableSiteBuildReturnWebhook: async (
+      _: unknown,
+      { siteId, id }: { siteId?: string | null; id: string },
+      ctx: RequestContext,
+    ) => {
+      const sid = resolveSiteId(ctx, siteId);
+      await assertCanConfigurePublishWebhook(ctx, sid);
+      return disableSiteBuildReturnWebhookRecord(sid, id);
     },
     publishEntry: async (_: unknown, { id, siteId }: { id: string; siteId?: string | null }, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);

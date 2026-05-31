@@ -1,8 +1,10 @@
 import type { Request, Response } from 'express';
 import mongoose from 'mongoose';
+import { SiteBuildModel } from '../db/models/SiteBuild.js';
 import { SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { parseLastPublishedWatermarkFromDetail } from '../site/publish-watermark-detail.js';
 import { verifyReturnWebhookToken } from '../site/publish-webhook-token.js';
+import { ensureLegacySiteBuildMigrated } from '../site/site-build-service.js';
 
 const ALLOWED_STATUS = new Set(['success', 'failure', 'cancelled']);
 const MAX_BODY_BYTES = 32_000;
@@ -29,11 +31,74 @@ function capJsonPayload(value: unknown): unknown {
   }
 }
 
+type CallbackTarget =
+  | { kind: 'legacy-settings'; siteId: string }
+  | { kind: 'site-build'; siteId: string; buildId: unknown };
+
+async function resolveCallbackTarget(siteId: string, buildSlug?: string): Promise<CallbackTarget | null> {
+  if (buildSlug) {
+    await ensureLegacySiteBuildMigrated(siteId);
+    const slug = buildSlug.trim().toLowerCase();
+    const build = await SiteBuildModel.findOne({ siteId, slug }).select({ _id: 1 }).lean();
+    if (!build) return null;
+    return { kind: 'site-build', siteId, buildId: build._id };
+  }
+  return { kind: 'legacy-settings', siteId };
+}
+
+async function verifyCallbackToken(target: CallbackTarget, token: string): Promise<boolean> {
+  if (target.kind === 'site-build') {
+    const build = await SiteBuildModel.findById(target.buildId).select({ publishReturnTokenHash: 1 }).lean();
+    const hash =
+      build && typeof build.publishReturnTokenHash === 'string' ? build.publishReturnTokenHash.trim() : '';
+    return Boolean(hash && verifyReturnWebhookToken(token, hash));
+  }
+
+  const doc = await SiteSettingsModel.findOne({ siteId: target.siteId }).select({ publishReturnTokenHash: 1 }).lean();
+  const hash = doc && typeof doc.publishReturnTokenHash === 'string' ? doc.publishReturnTokenHash.trim() : '';
+  if (hash && verifyReturnWebhookToken(token, hash)) return true;
+
+  await ensureLegacySiteBuildMigrated(target.siteId);
+  const builds = await SiteBuildModel.find({ siteId: target.siteId }).select({ publishReturnTokenHash: 1 }).lean();
+  return builds.some((b) => {
+    const h = typeof b.publishReturnTokenHash === 'string' ? b.publishReturnTokenHash.trim() : '';
+    return Boolean(h && verifyReturnWebhookToken(token, h));
+  });
+}
+
+async function persistCallbackResult(target: CallbackTarget, body: Record<string, unknown>): Promise<void> {
+  const statusRaw = typeof body.status === 'string' ? body.status : '';
+  const status = statusRaw.trim().toLowerCase();
+  const runUrlRaw = body.runUrl;
+  const runUrl = typeof runUrlRaw === 'string' ? runUrlRaw.trim().slice(0, 2000) : '';
+  const detail = body.detail;
+  const publishLastReturnPayload = detail !== undefined ? capJsonPayload(detail) : null;
+
+  const baseSet: Record<string, unknown> = {
+    publishLastReturnAt: new Date(),
+    publishLastReturnStatus: status,
+    publishLastReturnRunUrl: runUrl || null,
+    publishLastReturnPayload,
+  };
+
+  if (status === 'success') {
+    const watermark = parseLastPublishedWatermarkFromDetail(detail);
+    if (watermark) baseSet.lastPublishedWatermark = watermark;
+  }
+
+  if (target.kind === 'site-build') {
+    await SiteBuildModel.updateOne({ _id: target.buildId }, { $set: baseSet });
+    return;
+  }
+
+  await SiteSettingsModel.updateOne({ siteId: target.siteId }, { $set: baseSet });
+}
+
 /**
  * GitHub Actions (or any runner) POSTs here when a build finishes.
- * No JWT — verified by per-site bearer token (hashed at rest).
+ * No JWT — verified by per-build or per-site bearer token (hashed at rest).
  */
-export async function siteBuildCallbackHandler(req: Request, res: Response): Promise<void> {
+export async function siteBuildCallbackHandler(req: Request, res: Response, buildSlug?: string): Promise<void> {
   if (req.method !== 'POST') {
     res.status(405).setHeader('Allow', 'POST').end();
     return;
@@ -60,10 +125,13 @@ export async function siteBuildCallbackHandler(req: Request, res: Response): Pro
     return;
   }
 
-  const doc = await SiteSettingsModel.findOne({ siteId }).select({ publishReturnTokenHash: 1 }).lean();
-  const hash =
-    doc && typeof doc.publishReturnTokenHash === 'string' ? doc.publishReturnTokenHash.trim() : '';
-  if (!hash || !verifyReturnWebhookToken(token, hash)) {
+  const target = await resolveCallbackTarget(siteId, buildSlug);
+  if (!target) {
+    res.status(404).end();
+    return;
+  }
+
+  if (!(await verifyCallbackToken(target, token))) {
     res.status(404).end();
     return;
   }
@@ -81,25 +149,6 @@ export async function siteBuildCallbackHandler(req: Request, res: Response): Pro
     return;
   }
 
-  const runUrlRaw = (body as { runUrl?: unknown }).runUrl;
-  const runUrl = typeof runUrlRaw === 'string' ? runUrlRaw.trim().slice(0, 2000) : '';
-
-  const detail = (body as { detail?: unknown }).detail;
-  const publishLastReturnPayload = detail !== undefined ? capJsonPayload(detail) : null;
-
-  const baseSet: Record<string, unknown> = {
-    publishLastReturnAt: new Date(),
-    publishLastReturnStatus: status,
-    publishLastReturnRunUrl: runUrl || null,
-    publishLastReturnPayload,
-  };
-
-  if (status === 'success') {
-    const watermark = parseLastPublishedWatermarkFromDetail(detail);
-    if (watermark) baseSet.lastPublishedWatermark = watermark;
-  }
-
-  await SiteSettingsModel.updateOne({ siteId }, { $set: baseSet });
-
+  await persistCallbackResult(target, body as Record<string, unknown>);
   res.status(204).end();
 }

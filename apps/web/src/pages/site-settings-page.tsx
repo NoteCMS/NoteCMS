@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Copy, Globe, ImageIcon, Loader2, Pencil, Plus, Rocket, Save, Trash2, X } from 'lucide-react';
+import { Globe, ImageIcon, Loader2, Pencil, Plus, Save, Trash2, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
-import { DeploySheetErrorBoundary } from '@/components/deploy-sheet-error-boundary';
 import { LoadErrorAlert } from '@/components/load-error-alert';
+import {
+  fetchSiteBuilds,
+  type SiteBuildGql,
+} from '@/lib/site-builds';
+import { SiteBuildsRunList } from '@/components/site-builds-run-list';
+import { SiteBuildsSheet } from '@/components/site-builds-sheet';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -20,15 +25,6 @@ import { Item, ItemContent, ItemGroup, ItemMedia } from '@/components/ui/item';
 import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet';
-import { toast } from 'sonner';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { SiteImportExportSection } from '@/components/site-import-export-section';
@@ -93,30 +89,14 @@ type SiteSettingsGql = {
   menuEntries: Record<string, string>;
   logo: Asset | null;
   favicon: Asset | null;
-  publishEnabled: boolean;
-  publishGithubOwner: string | null;
-  publishGithubRepo: string | null;
-  publishGithubRepoUrl: string | null;
-  publishEventType: string | null;
-  hasPublishPat: boolean;
-  publishWebhookPostUrl: string | null;
-  hasPublishReturnToken: boolean;
-  publishLastTriggerAt: string | null;
-  publishLastTriggerOk: boolean | null;
-  publishLastTriggerStatusCode: number | null;
-  publishLastTriggerMessage: string | null;
-  publishLastReturnAt: string | null;
-  publishLastReturnStatus: string | null;
-  publishLastReturnRunUrl: string | null;
-  publishLastReturnPayload: unknown;
   backupEnabled: boolean;
 };
 
-const PUBLISH_SITE_SETTINGS_FIELDS = `
-  publishEnabled publishGithubOwner publishGithubRepo publishGithubRepoUrl publishEventType hasPublishPat
-  publishWebhookPostUrl hasPublishReturnToken
-  publishLastTriggerAt publishLastTriggerOk publishLastTriggerStatusCode publishLastTriggerMessage
-  publishLastReturnAt publishLastReturnStatus publishLastReturnRunUrl publishLastReturnPayload
+const SITE_SETTINGS_FIELDS = `
+  id siteId logoAssetId faviconAssetId siteTitle menuEntries
+  logo { ${ASSET_PREVIEW_GQL} }
+  favicon { ${ASSET_PREVIEW_GQL} }
+  backupEnabled
 `;
 
 type SiteSettingsPageProps = {
@@ -261,15 +241,14 @@ export function SiteSettingsPage({
   const canManageSiteIdentity =
     activeSite?.role === 'owner';
   const canManageBundle = activeSite?.role === 'owner';
-  const canConfigurePublishWebhook = isGlobalAdmin || activeSite?.role === 'owner';
-  const canTriggerPublishWebhook = canEdit;
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [deploySheetError, setDeploySheetError] = useState('');
-  const [deploySheetBoundaryKey, setDeploySheetBoundaryKey] = useState(0);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [siteBuilds, setSiteBuilds] = useState<SiteBuildGql[]>([]);
+  const [buildsLoading, setBuildsLoading] = useState(true);
+  const [deploySheetOpen, setDeploySheetOpen] = useState(false);
 
   const [logoAssetId, setLogoAssetId] = useState<string | null>(null);
   const [faviconAssetId, setFaviconAssetId] = useState<string | null>(null);
@@ -284,28 +263,7 @@ export function SiteSettingsPage({
   const [entryGroups, setEntryGroups] = useState<Array<{ label: string; options: Array<{ value: string; label: string }> }>>([]);
   const [contentTypesForBundle, setContentTypesForBundle] = useState<Array<{ id: string; name: string; slug: string }>>([]);
 
-  const [publishEnabled, setPublishEnabled] = useState(false);
-  const [publishRepoUrl, setPublishRepoUrl] = useState('');
-  const [publishEventType, setPublishEventType] = useState('');
-  const [publishHasPat, setPublishHasPat] = useState(false);
-  const [publishWebhookPostUrl, setPublishWebhookPostUrl] = useState<string | null>(null);
-  const [publishHasReturnToken, setPublishHasReturnToken] = useState(false);
-  const [publishLastTriggerAt, setPublishLastTriggerAt] = useState<string | null>(null);
-  const [publishLastTriggerOk, setPublishLastTriggerOk] = useState<boolean | null>(null);
-  const [publishLastTriggerMessage, setPublishLastTriggerMessage] = useState<string | null>(null);
-  const [publishLastReturnAt, setPublishLastReturnAt] = useState<string | null>(null);
-  const [publishLastReturnStatus, setPublishLastReturnStatus] = useState<string | null>(null);
-  const [publishLastReturnRunUrl, setPublishLastReturnRunUrl] = useState<string | null>(null);
-  const [publishPatDraft, setPublishPatDraft] = useState('');
-  const [publishPatClear, setPublishPatClear] = useState(false);
-  const [publishSaving, setPublishSaving] = useState(false);
-  const [publishRotating, setPublishRotating] = useState(false);
-  const [publishDisablingReturn, setPublishDisablingReturn] = useState(false);
-  const [publishTriggering, setPublishTriggering] = useState(false);
-  const [returnSetup, setReturnSetup] = useState<{ callbackUrl: string } | null>(null);
-  const [returnCopyHint, setReturnCopyHint] = useState('');
   const [backupEnabled, setBackupEnabled] = useState(true);
-  const [deploySheetOpen, setDeploySheetOpen] = useState(false);
 
   const logoFileRef = useRef<HTMLInputElement>(null);
   const faviconFileRef = useRef<HTMLInputElement>(null);
@@ -320,24 +278,31 @@ export function SiteSettingsPage({
     setSiteUrlDraft(siteUrlHostPart(s.url));
   }, [workspaceSiteId, sites]);
 
+  const loadBuilds = useCallback(async () => {
+    if (!workspaceSiteId) return;
+    setBuildsLoading(true);
+    try {
+      const list = await fetchSiteBuilds(token, workspaceSiteId);
+      setSiteBuilds(list);
+    } catch {
+      setSiteBuilds([]);
+    } finally {
+      setBuildsLoading(false);
+    }
+  }, [token, workspaceSiteId]);
+
   const loadSettings = useCallback(
-    async (opts?: { errorTarget?: 'page' | 'sheet'; quiet?: boolean }) => {
+    async (opts?: { quiet?: boolean }) => {
       if (!workspaceSiteId) return;
-      const errorTarget = opts?.errorTarget ?? 'page';
       const quiet = opts?.quiet ?? false;
       if (!quiet) setLoading(true);
-      if (errorTarget === 'page') setError('');
-      else setDeploySheetError('');
+      setError('');
       try {
       const res = await gqlRequest<{ siteSettings: SiteSettingsGql }>(
         token,
         `query($siteId:ID!){
           siteSettings(siteId:$siteId){
-            id siteId logoAssetId faviconAssetId siteTitle menuEntries
-            logo { ${ASSET_PREVIEW_GQL} }
-            favicon { ${ASSET_PREVIEW_GQL} }
-            ${PUBLISH_SITE_SETTINGS_FIELDS}
-            backupEnabled
+            ${SITE_SETTINGS_FIELDS}
           }
         }`,
         { siteId: workspaceSiteId },
@@ -349,30 +314,16 @@ export function SiteSettingsPage({
       setMenuRows(menuEntriesToRows(s.menuEntries ?? {}));
       setLogoPreview(s.logo);
       setFaviconPreview(s.favicon);
-      setPublishEnabled(Boolean(s.publishEnabled));
-      setPublishRepoUrl(s.publishGithubRepoUrl ?? '');
-      setPublishEventType(s.publishEventType ?? '');
-      setPublishHasPat(Boolean(s.hasPublishPat));
-      setPublishWebhookPostUrl(s.publishWebhookPostUrl ?? null);
-      setPublishHasReturnToken(Boolean(s.hasPublishReturnToken));
-      setPublishLastTriggerAt(s.publishLastTriggerAt ?? null);
-      setPublishLastTriggerOk(typeof s.publishLastTriggerOk === 'boolean' ? s.publishLastTriggerOk : null);
-      setPublishLastTriggerMessage(s.publishLastTriggerMessage ?? null);
-      setPublishLastReturnAt(s.publishLastReturnAt ?? null);
-      setPublishLastReturnStatus(s.publishLastReturnStatus ?? null);
-      setPublishLastReturnRunUrl(s.publishLastReturnRunUrl ?? null);
       setBackupEnabled(s.backupEnabled !== false);
-      setPublishPatDraft('');
-      setPublishPatClear(false);
+      await loadBuilds();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load site settings';
-      if (errorTarget === 'sheet') setDeploySheetError(msg);
-      else setError(msg);
+      setError(msg);
     } finally {
       if (!quiet) setLoading(false);
     }
     },
-    [token, workspaceSiteId],
+    [token, workspaceSiteId, loadBuilds],
   );
 
   useEffect(() => {
@@ -424,146 +375,7 @@ export function SiteSettingsPage({
     void loadEntries();
   }, [loadEntries]);
 
-  const publishDispatchReady =
-    publishEnabled &&
-    publishHasPat &&
-    publishRepoUrl.trim().length > 0 &&
-    publishEventType.trim().length > 0;
-
-  const buildsSummaryLine = useMemo(() => {
-    if (loading) return 'Loading…';
-    if (publishLastReturnAt) {
-      const when = new Date(publishLastReturnAt).toLocaleString();
-      const st = publishLastReturnStatus?.trim();
-      return `Last build finished ${when}${st ? ` · ${st}` : ''}`;
-    }
-    if (publishLastTriggerAt) {
-      const when = new Date(publishLastTriggerAt).toLocaleString();
-      if (publishLastTriggerOk === false) return `Last deploy started ${when} · something went wrong`;
-      return `Last deploy started ${when}`;
-    }
-    if (publishDispatchReady) return 'Ready — open the panel to run a build or adjust settings.';
-    return 'Not connected yet — open the panel to link your repository.';
-  }, [
-    loading,
-    publishLastReturnAt,
-    publishLastReturnStatus,
-    publishLastTriggerAt,
-    publishLastTriggerOk,
-    publishDispatchReady,
-  ]);
-
-  const buildsSetupDone = Boolean(publishDispatchReady || publishHasReturnToken || publishEnabled);
-
-  async function handleSavePublishWebhook() {
-    if (!canConfigurePublishWebhook || !workspaceSiteId) return;
-    setPublishSaving(true);
-    setDeploySheetError('');
-    try {
-      const input: Record<string, unknown> = {
-        publishEnabled,
-        githubRepoUrl: publishRepoUrl.trim(),
-        publishEventType: publishEventType.trim() || null,
-      };
-      if (publishPatClear) input.githubPat = '';
-      else if (publishPatDraft.trim()) input.githubPat = publishPatDraft.trim();
-
-      await gqlRequest(
-        token,
-        `mutation($siteId:ID!,$input:PublishWebhookInput!){
-          updatePublishWebhook(siteId:$siteId,input:$input){
-            id siteId ${PUBLISH_SITE_SETTINGS_FIELDS}
-          }
-        }`,
-        { siteId: workspaceSiteId, input },
-      );
-      await loadSettings({ errorTarget: 'sheet', quiet: true });
-      toast.success('Build webhook settings saved');
-    } catch (e) {
-      setDeploySheetError(e instanceof Error ? e.message : 'Failed to save webhook settings');
-    } finally {
-      setPublishSaving(false);
-    }
-  }
-
-  async function handleRotateReturnWebhook() {
-    if (!canConfigurePublishWebhook || !workspaceSiteId) return;
-    setPublishRotating(true);
-    setDeploySheetError('');
-    try {
-      const res = await gqlRequest<{
-        rotatePublishReturnWebhook: { callbackUrl: string };
-      }>(
-        token,
-        `mutation($siteId:ID!){ rotatePublishReturnWebhook(siteId:$siteId){ callbackUrl } }`,
-        { siteId: workspaceSiteId },
-      );
-      setReturnSetup(res.rotatePublishReturnWebhook);
-      await loadSettings({ errorTarget: 'sheet', quiet: true });
-    } catch (e) {
-      setDeploySheetError(e instanceof Error ? e.message : 'Failed to generate callback');
-    } finally {
-      setPublishRotating(false);
-    }
-  }
-
-  async function handleDisableReturnWebhook() {
-    if (!canConfigurePublishWebhook || !workspaceSiteId) return;
-    if (
-      !window.confirm(
-        'Disable the build completion callback? Existing GitHub workflow secrets that use this link will stop working until you generate a new one.',
-      )
-    )
-      return;
-    setPublishDisablingReturn(true);
-    setDeploySheetError('');
-    try {
-      await gqlRequest(
-        token,
-        `mutation($siteId:ID!){ disablePublishReturnWebhook(siteId:$siteId){ id siteId ${PUBLISH_SITE_SETTINGS_FIELDS} } }`,
-        { siteId: workspaceSiteId },
-      );
-      await loadSettings({ errorTarget: 'sheet', quiet: true });
-      toast.success('Callback disabled');
-    } catch (e) {
-      setDeploySheetError(e instanceof Error ? e.message : 'Failed to disable callback');
-    } finally {
-      setPublishDisablingReturn(false);
-    }
-  }
-
-  async function handleTriggerPublish() {
-    if (!workspaceSiteId || !canEdit) return;
-    setPublishTriggering(true);
-    setDeploySheetError('');
-    try {
-      const res = await gqlRequest<{
-        triggerPublishWebhook: { ok: boolean; message: string };
-      }>(token, `mutation($siteId:ID!){ triggerPublishWebhook(siteId:$siteId){ ok message } }`, {
-        siteId: workspaceSiteId,
-      });
-      const r = res.triggerPublishWebhook;
-      if (r.ok) toast.success(r.message || 'Build triggered');
-      else toast.error(r.message || 'Could not trigger build');
-      await loadSettings({ errorTarget: 'sheet', quiet: true });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Trigger failed';
-      setDeploySheetError(msg);
-      toast.error(msg);
-    } finally {
-      setPublishTriggering(false);
-    }
-  }
-
-  async function copyReturnField(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      setReturnCopyHint(`${label} copied.`);
-      window.setTimeout(() => setReturnCopyHint(''), 2500);
-    } catch {
-      setReturnCopyHint('Could not copy.');
-    }
-  }
+  const buildsSetupDone = siteBuilds.length > 0;
 
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const prevLoadingRef = useRef(true);
@@ -1023,28 +835,44 @@ export function SiteSettingsPage({
               <Separator />
 
               <section className="space-y-3">
-                <div className="space-y-1">
-                  <h4 className="text-base font-semibold leading-none">Builds</h4>
-                  <p className="text-sm text-muted-foreground">
-                    Connect GitHub so your team can start deploys from here—without digging through repo settings.
-                  </p>
-                </div>
-                <Item variant="muted" className="flex w-full flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <ItemContent className="min-w-0 gap-1">
-                    <p className="text-sm font-medium text-foreground">GitHub Actions</p>
-                    <p className="text-xs text-muted-foreground">{buildsSummaryLine}</p>
-                  </ItemContent>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-1">
+                    <h4 className="text-base font-semibold leading-none">Builds</h4>
+                    <p className="text-sm text-muted-foreground">
+                      Connect GitHub for live, staging, or other deploy targets. Owners add builds; each one can limit
+                      who can run it.
+                    </p>
+                  </div>
                   <Button
                     type="button"
-                    variant="secondary"
+                    variant="outline"
                     size="sm"
                     className="shrink-0"
                     onClick={() => setDeploySheetOpen(true)}
                   >
-                    <Rocket className="mr-2 size-4" aria-hidden />
                     {buildsSetupDone ? 'Manage builds' : 'Set up builds'}
                   </Button>
-                </Item>
+                </div>
+                {loading || buildsLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 animate-spin" />
+                    Loading builds…
+                  </div>
+                ) : (
+                  <SiteBuildsRunList
+                    token={token}
+                    siteId={workspaceSiteId}
+                    builds={siteBuilds}
+                    siteRole={activeSite?.role}
+                    isGlobalAdmin={isGlobalAdmin}
+                    onTriggered={loadBuilds}
+                    emptyMessage={
+                      canEdit
+                        ? 'No builds yet. Add one to connect GitHub and run deploys from here.'
+                        : 'No builds set up yet. Ask a site owner to connect GitHub.'
+                    }
+                  />
+                )}
               </section>
 
               <Separator />
@@ -1204,263 +1032,18 @@ export function SiteSettingsPage({
         </CardContent>
       </Card>
 
-      <Sheet
+      <SiteBuildsSheet
         open={deploySheetOpen}
         onOpenChange={(open) => {
           setDeploySheetOpen(open);
-          if (open) {
-            setDeploySheetError('');
-            setDeploySheetBoundaryKey((k) => k + 1);
-          }
+          if (!open) void loadBuilds();
         }}
-      >
-        <SheetContent
-          side="right"
-          className="flex h-[100dvh] max-h-[100dvh] w-full flex-col gap-0 overflow-hidden border-0 p-0 shadow-xl sm:max-w-md md:max-w-lg"
-        >
-          <SheetHeader className="shrink-0 space-y-1 border-b border-border px-6 py-5 text-left">
-            <SheetTitle>Builds with GitHub</SheetTitle>
-            <SheetDescription className="text-pretty">
-              Start a deploy from here, and optionally report back when your GitHub workflow finishes so this workspace
-              shows the latest status.
-            </SheetDescription>
-          </SheetHeader>
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-6">
-            {deploySheetError ? (
-              <LoadErrorAlert
-                className="mb-4"
-                title="Build panel"
-                message={deploySheetError}
-                onRetry={() => {
-                  setDeploySheetError('');
-                  void loadSettings({ errorTarget: 'sheet', quiet: true });
-                }}
-              />
-            ) : null}
-            <DeploySheetErrorBoundary key={deploySheetBoundaryKey}>
-            {!canEdit ? (
-              <p className="mb-4 text-sm text-muted-foreground">
-                You can view status here. Only editors can run deploys; only owners (or admins) can change the GitHub
-                connection.
-              </p>
-            ) : null}
-
-            <ItemGroup className="gap-4">
-              <Item variant="muted" className="w-full flex-col items-stretch gap-4">
-                <ItemContent className="w-full gap-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="space-y-1">
-                      <p className="text-sm font-medium">Run a deploy</p>
-                      <p className="text-xs text-muted-foreground">
-                        {publishLastTriggerAt
-                          ? `${new Date(publishLastTriggerAt).toLocaleString()}${publishLastTriggerOk === false ? ' · something went wrong' : ''}${publishLastTriggerMessage ? ` · ${publishLastTriggerMessage}` : ''}`
-                          : 'No deploy started from here yet.'}
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      disabled={
-                        !canEdit ||
-                        !canTriggerPublishWebhook ||
-                        !publishDispatchReady ||
-                        publishTriggering ||
-                        loading
-                      }
-                      onClick={() => void handleTriggerPublish()}
-                    >
-                      {publishTriggering ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                      Run deploy now
-                    </Button>
-                  </div>
-                  {!publishDispatchReady ? (
-                    <p className="text-xs text-muted-foreground">
-                      {canConfigurePublishWebhook
-                        ? 'Turn builds on below and save your GitHub details first.'
-                        : 'Ask a site owner to connect GitHub before you can run a deploy.'}
-                    </p>
-                  ) : null}
-                </ItemContent>
-              </Item>
-
-              <Item variant="muted" className="w-full flex-col items-stretch gap-4">
-                <ItemContent className="w-full gap-4">
-                  <p className="text-sm font-medium">After the workflow finishes</p>
-                  <p className="text-xs text-muted-foreground">
-                    {publishLastReturnAt
-                      ? `${new Date(publishLastReturnAt).toLocaleString()} · ${publishLastReturnStatus ?? '—'}`
-                      : 'No completion reported yet.'}
-                    {publishLastReturnRunUrl ? (
-                      <>
-                        {' '}
-                        <a
-                          href={publishLastReturnRunUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-primary underline underline-offset-2"
-                        >
-                          View on GitHub
-                        </a>
-                      </>
-                    ) : null}
-                  </p>
-                  {publishWebhookPostUrl ? (
-                    <p className="text-xs text-muted-foreground break-all">
-                      Base ping URL (without secret): {publishWebhookPostUrl}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      To get a completion link, this API needs PUBLIC_API_BASE_URL set where it runs. You can still try
-                      “Generate completion link” — if it fails, whoever hosts the CMS should set that env var.
-                    </p>
-                  )}
-                  {canConfigurePublishWebhook ? (
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        disabled={publishRotating}
-                        onClick={() => void handleRotateReturnWebhook()}
-                      >
-                        {publishRotating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                        {publishHasReturnToken ? 'New completion link' : 'Generate completion link'}
-                      </Button>
-                      {publishHasReturnToken ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="text-muted-foreground"
-                          disabled={publishDisablingReturn}
-                          onClick={() => void handleDisableReturnWebhook()}
-                        >
-                          Stop listening
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : publishHasReturnToken ? (
-                    <p className="text-xs text-muted-foreground">Ping endpoint is set up (details hidden).</p>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">Ask an owner to turn on completion pings.</p>
-                  )}
-                </ItemContent>
-              </Item>
-
-              {canConfigurePublishWebhook ? (
-                <Item variant="muted" className="w-full flex-col items-stretch gap-4">
-                  <ItemContent className="w-full gap-4">
-                    <div className="flex items-start gap-3">
-                      <Checkbox
-                        id="publish-enabled-sheet"
-                        checked={publishEnabled}
-                        onCheckedChange={(v) => setPublishEnabled(v === true)}
-                        disabled={publishSaving}
-                      />
-                      <div className="grid gap-1.5 leading-none">
-                        <label htmlFor="publish-enabled-sheet" className="text-sm font-medium">
-                          Enable GitHub builds
-                        </label>
-                        <p className="text-xs text-muted-foreground">
-                          Lets this workspace ask GitHub to start your workflow. Use a token that can reach your repo.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div className="grid gap-4">
-                      <Field>
-                        <FieldLabel>Repository</FieldLabel>
-                        <FieldContent>
-                          <Input
-                            value={publishRepoUrl}
-                            onChange={(e) => setPublishRepoUrl(e.target.value)}
-                            placeholder="https://github.com/your-org/your-repo"
-                            autoComplete="off"
-                            disabled={publishSaving}
-                          />
-                          <FieldDescription>
-                            Paste the repo’s GitHub URL, or shorthand like{' '}
-                            <span className="font-medium text-foreground">your-org/your-repo</span>.
-                          </FieldDescription>
-                        </FieldContent>
-                      </Field>
-                      <Field>
-                        <FieldLabel>Workflow trigger name</FieldLabel>
-                        <FieldContent>
-                          <Input
-                            value={publishEventType}
-                            onChange={(e) => setPublishEventType(e.target.value)}
-                            placeholder="deploy_site"
-                            autoComplete="off"
-                            disabled={publishSaving}
-                          />
-                          <FieldDescription>Must match the name in your GitHub Actions workflow file.</FieldDescription>
-                        </FieldContent>
-                      </Field>
-                      <Field>
-                        <FieldLabel>Personal access token</FieldLabel>
-                        <FieldContent className="space-y-2">
-                          <Input
-                            type="password"
-                            value={publishPatDraft}
-                            onChange={(e) => {
-                              setPublishPatDraft(e.target.value);
-                              if (e.target.value.trim()) setPublishPatClear(false);
-                            }}
-                            placeholder={publishHasPat ? 'Leave blank to keep the saved token' : 'Paste token'}
-                            autoComplete="new-password"
-                            disabled={publishSaving}
-                          />
-                          <div className="flex flex-wrap items-center gap-2">
-                            {publishHasPat ? (
-                              <span className="text-xs text-muted-foreground">A token is saved.</span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">No token saved yet.</span>
-                            )}
-                            {publishHasPat ? (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-auto py-1 text-xs"
-                                disabled={publishSaving}
-                                onClick={() => {
-                                  setPublishPatClear(true);
-                                  setPublishPatDraft('');
-                                }}
-                              >
-                                Clear saved token
-                              </Button>
-                            ) : null}
-                          </div>
-                        </FieldContent>
-                      </Field>
-                    </div>
-
-                    <Button type="button" disabled={publishSaving} onClick={() => void handleSavePublishWebhook()}>
-                      {publishSaving ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Save className="mr-2 size-4" />}
-                      Save connection
-                    </Button>
-
-                    <p className="text-xs text-muted-foreground">
-                      <a
-                        href="https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#repository_dispatch"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-primary underline underline-offset-2"
-                      >
-                        How this connects on GitHub
-                      </a>
-                    </p>
-                  </ItemContent>
-                </Item>
-              ) : null}
-            </ItemGroup>
-            </DeploySheetErrorBoundary>
-          </div>
-        </SheetContent>
-      </Sheet>
+        token={token}
+        siteId={workspaceSiteId}
+        siteRole={activeSite?.role}
+        isGlobalAdmin={isGlobalAdmin}
+        onBuildsChanged={loadBuilds}
+      />
 
       <AssetPickerDialog
         open={picker === 'logo'}
@@ -1485,55 +1068,6 @@ export function SiteSettingsPage({
         }}
       />
 
-      <Dialog
-        open={returnSetup !== null}
-        onOpenChange={(o) => {
-          if (!o) setReturnSetup(null);
-        }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Copy completion callback</DialogTitle>
-            <DialogDescription>
-              Shown only once. Save the whole URL as a single GitHub Actions secret (for example{' '}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">CMS_BUILD_CALLBACK_URL</code>) — it already includes
-              the signing secret. POST JSON from your workflow when the job finishes; no separate Bearer header required.
-            </DialogDescription>
-          </DialogHeader>
-          {returnSetup ? (
-            <div className="space-y-4 text-sm">
-              <div>
-                <p className="mb-1 font-medium">Callback URL</p>
-                <div className="flex gap-2">
-                  <code className="min-w-0 flex-1 break-all rounded border bg-muted px-2 py-1.5 text-xs">
-                    {returnSetup.callbackUrl}
-                  </code>
-                  <Button
-                    type="button"
-                    size="icon"
-                    variant="outline"
-                    aria-label="Copy callback URL"
-                    onClick={() => void copyReturnField(returnSetup.callbackUrl, 'URL')}
-                  >
-                    <Copy className="size-4" />
-                  </Button>
-                </div>
-              </div>
-              {returnCopyHint ? <p className="text-xs text-muted-foreground">{returnCopyHint}</p> : null}
-              <div>
-                <p className="mb-1 text-xs font-medium text-muted-foreground">Example (last step in bash)</p>
-                <pre className="max-h-48 overflow-x-auto overflow-y-auto rounded border bg-muted p-3 text-[11px] leading-relaxed">
-                  {[
-                    `curl -sS -X POST "$CMS_BUILD_CALLBACK_URL" \\`,
-                    `  -H "Content-Type: application/json" \\`,
-                    "  -d '{\"status\":\"success\",\"runUrl\":\"'$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID'\"}'",
-                  ].join('\n')}
-                </pre>
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
     </div>
     </>
   );

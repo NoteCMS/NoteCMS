@@ -188,6 +188,67 @@ export const typeDefs = `#graphql
     callbackUrl: String!
   }
 
+  enum SiteBuildTriggerRole {
+    editor
+    owner
+  }
+
+  """A GitHub Actions deploy target for a workspace (e.g. production, staging)."""
+  type SiteBuild {
+    id: ID!
+    siteId: ID!
+    """URL-safe id unique within the workspace, e.g. production or staging."""
+    slug: String!
+    label: String!
+    sortOrder: Int!
+    enabled: Boolean!
+    """Minimum site role required to trigger this build. Owners can always trigger."""
+    triggerMinRole: SiteBuildTriggerRole!
+    publishGithubOwner: String
+    publishGithubRepo: String
+    publishGithubRepoUrl: String
+    publishEventType: String
+    hasPublishPat: Boolean!
+    publishWebhookPostUrl: String
+    hasPublishReturnToken: Boolean!
+    publishLastTriggerAt: String
+    publishLastTriggerOk: Boolean
+    publishLastTriggerStatusCode: Int
+    publishLastTriggerMessage: String
+    publishLastReturnAt: String
+    publishLastReturnStatus: String
+    publishLastReturnRunUrl: String
+    publishLastReturnPayload: JSON
+    lastPublishedWatermark: JSON
+  }
+
+  input SiteBuildInput {
+    slug: String
+    label: String
+    sortOrder: Int
+    enabled: Boolean
+    triggerMinRole: SiteBuildTriggerRole
+    githubRepoUrl: String
+    publishGithubOwner: String
+    publishGithubRepo: String
+    publishEventType: String
+    """Plaintext PAT; omit to keep existing. Pass empty string to remove stored token."""
+    githubPat: String
+  }
+
+  input CreateSiteBuildInput {
+    slug: String!
+    label: String!
+    sortOrder: Int
+    enabled: Boolean
+    triggerMinRole: SiteBuildTriggerRole
+    githubRepoUrl: String
+    publishGithubOwner: String
+    publishGithubRepo: String
+    publishEventType: String
+    githubPat: String
+  }
+
   input SiteSettingsInput {
     logoAssetId: ID
     faviconAssetId: ID
@@ -330,6 +391,8 @@ export const typeDefs = `#graphql
     listAssets(siteId: ID, query: String, limit: Int, offset: Int): [Asset!]!
     apiKeys(siteId: ID!): [ApiKey!]!
     siteSettings(siteId: ID): SiteSettings!
+    siteBuilds(siteId: ID): [SiteBuild!]!
+    siteBuild(siteId: ID, id: ID!): SiteBuild
     exportSiteBundle(siteId: ID, options: SiteBundlePartOptions!): JSON!
     siteBackups(siteId: ID, limit: Int, offset: Int): [SiteBackup!]!
     exportSiteBackupJson(siteId: ID, backupId: ID!): JSON!
@@ -392,6 +455,19 @@ export const typeDefs = `#graphql
     rotatePublishReturnWebhook(siteId: ID!): PublishReturnWebhookSetup!
     """Site owner or platform admin: disable inbound return webhook."""
     disablePublishReturnWebhook(siteId: ID!): SiteSettings!
+
+    """Site owner or platform admin: create a GitHub Actions build target."""
+    createSiteBuild(siteId: ID, input: CreateSiteBuildInput!): SiteBuild!
+    """Site owner or platform admin: update a build target."""
+    updateSiteBuild(siteId: ID, id: ID!, input: SiteBuildInput!): SiteBuild!
+    """Site owner or platform admin: remove a build target."""
+    deleteSiteBuild(siteId: ID, id: ID!): Boolean!
+    """Trigger a build when the signed-in user meets triggerMinRole for that target."""
+    triggerSiteBuild(siteId: ID, id: ID!): PublishTriggerResult!
+    """Site owner or platform admin: generate a per-build completion callback URL."""
+    rotateSiteBuildReturnWebhook(siteId: ID, id: ID!): PublishReturnWebhookSetup!
+    """Site owner or platform admin: disable a build completion callback."""
+    disableSiteBuildReturnWebhook(siteId: ID, id: ID!): SiteBuild!
 
     importSiteBundle(siteId: ID, bundle: JSON!, options: SiteBundlePartOptions!): SiteImportSummary!
 

@@ -89,6 +89,7 @@ export function buildPublishCompletionCallbackUrl(siteId: string, plainToken: st
 }
 
 type SiteSettingsLean = {
+  enabled?: boolean | null;
   publishEnabled?: boolean | null;
   publishGithubOwner?: string | null;
   publishGithubRepo?: string | null;
@@ -100,11 +101,18 @@ export async function triggerRepositoryDispatch(params: {
   siteId: string;
   triggeredByUserId: string;
   settings: SiteSettingsLean;
+  buildSlug?: string;
+  buildLabel?: string;
+  onTriggerResult?: (result: { ok: boolean; statusCode: number; message: string }) => Promise<void>;
 }): Promise<{ ok: boolean; statusCode: number; message: string }> {
-  const { siteId, triggeredByUserId, settings } = params;
+  const { siteId, triggeredByUserId, settings, buildSlug, buildLabel, onTriggerResult } = params;
 
-  if (!settings.publishEnabled) {
-    return { ok: false, statusCode: 0, message: 'Publish webhook is turned off for this workspace.' };
+  const enabled =
+    settings.enabled !== undefined && settings.enabled !== null
+      ? Boolean(settings.enabled)
+      : Boolean(settings.publishEnabled);
+  if (!enabled) {
+    return { ok: false, statusCode: 0, message: 'This build is turned off.' };
   }
   const owner = typeof settings.publishGithubOwner === 'string' ? settings.publishGithubOwner.trim() : '';
   const repo = typeof settings.publishGithubRepo === 'string' ? settings.publishGithubRepo.trim() : '';
@@ -131,7 +139,9 @@ export async function triggerRepositoryDispatch(params: {
 
   let postUrl = '';
   try {
-    postUrl = buildPublishWebhookPostUrl(siteId);
+    postUrl = buildSlug
+      ? `${env.publicApiBaseUrl}/hooks/site-build/${encodeURIComponent(siteId)}/${encodeURIComponent(buildSlug)}`
+      : buildPublishWebhookPostUrl(siteId);
   } catch {
     postUrl = '';
   }
@@ -142,6 +152,12 @@ export async function triggerRepositoryDispatch(params: {
     triggeredByUserId,
     triggeredAt: new Date().toISOString(),
   };
+  if (buildSlug) {
+    clientPayload.buildSlug = buildSlug;
+  }
+  if (buildLabel) {
+    clientPayload.buildLabel = buildLabel;
+  }
   if (postUrl) {
     clientPayload.buildCallbackPostUrl = postUrl;
   }
@@ -165,19 +181,28 @@ export async function triggerRepositoryDispatch(params: {
       }),
     });
     const statusCode = res.status;
-    if (statusCode === 204) {
+    const persistTrigger = async (result: { ok: boolean; statusCode: number; message: string }) => {
+      if (onTriggerResult) {
+        await onTriggerResult(result);
+        return;
+      }
       await SiteSettingsModel.updateOne(
         { siteId },
         {
           $set: {
             publishLastTriggerAt: new Date(),
-            publishLastTriggerOk: true,
-            publishLastTriggerStatusCode: statusCode,
-            publishLastTriggerMessage: 'Dispatched',
+            publishLastTriggerOk: result.ok,
+            publishLastTriggerStatusCode: result.statusCode,
+            publishLastTriggerMessage: result.message.slice(0, 2000),
           },
         },
       );
-      return { ok: true, statusCode, message: 'GitHub workflow was triggered.' };
+    };
+
+    if (statusCode === 204) {
+      const result = { ok: true, statusCode, message: 'GitHub workflow was triggered.' };
+      await persistTrigger(result);
+      return result;
     }
     const text = await res.text().catch(() => '');
     const safe = text.length > 500 ? `${text.slice(0, 500)}…` : text;
@@ -188,31 +213,28 @@ export async function triggerRepositoryDispatch(params: {
           ? 'GitHub repository was not found (check owner and repo name).'
           : `GitHub returned HTTP ${String(statusCode)}${safe ? `: ${safe}` : ''}`;
 
-    await SiteSettingsModel.updateOne(
-      { siteId },
-      {
-        $set: {
-          publishLastTriggerAt: new Date(),
-          publishLastTriggerOk: false,
-          publishLastTriggerStatusCode: statusCode,
-          publishLastTriggerMessage: message.slice(0, 2000),
-        },
-      },
-    );
+    await persistTrigger({ ok: false, statusCode, message });
     return { ok: false, statusCode, message };
   } catch (e) {
     const msg = e instanceof Error && e.name === 'AbortError' ? 'Request to GitHub timed out.' : 'Could not reach GitHub.';
-    await SiteSettingsModel.updateOne(
-      { siteId },
-      {
-        $set: {
-          publishLastTriggerAt: new Date(),
-          publishLastTriggerOk: false,
-          publishLastTriggerStatusCode: 0,
-          publishLastTriggerMessage: msg,
+    const persistTrigger = async (result: { ok: boolean; statusCode: number; message: string }) => {
+      if (onTriggerResult) {
+        await onTriggerResult(result);
+        return;
+      }
+      await SiteSettingsModel.updateOne(
+        { siteId },
+        {
+          $set: {
+            publishLastTriggerAt: new Date(),
+            publishLastTriggerOk: result.ok,
+            publishLastTriggerStatusCode: result.statusCode,
+            publishLastTriggerMessage: result.message.slice(0, 2000),
+          },
         },
-      },
-    );
+      );
+    };
+    await persistTrigger({ ok: false, statusCode: 0, message: msg });
     return { ok: false, statusCode: 0, message: msg };
   } finally {
     clearTimeout(t);
