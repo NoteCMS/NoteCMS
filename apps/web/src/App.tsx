@@ -25,6 +25,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { gqlRequest } from '@/api/graphql';
 import { useAuth } from '@/hooks/use-auth';
 import { buildPageTitle } from '@/lib/page-title';
@@ -40,7 +41,7 @@ import { DashboardPage } from '@/pages/dashboard-page';
 import { AccountSettingsPage } from '@/pages/account-settings-page';
 import { AdminSettingsPage } from '@/pages/admin-settings-page';
 import { EntryEditorToolbarProvider, useEntryEditorToolbarState } from '@/context/entry-editor-toolbar';
-import { ArrowLeft, History, Loader2, Settings2, Trash2 } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, History, Loader2, Settings2, Trash2 } from 'lucide-react';
 import { Fragment, useEffect, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import type { ContentType } from '@/types/app';
@@ -73,6 +74,28 @@ function EntryToolbarHeaderActions() {
         </Dialog>
       ) : null}
       <div className="ml-auto flex shrink-0 items-center gap-2">
+        {cfg.revisions ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="text-muted-foreground hover:text-foreground"
+                aria-label="Revision history"
+                disabled={cfg.revisions.loading}
+                onClick={cfg.revisions.onOpen}
+              >
+                {cfg.revisions.loading ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <History className="size-4" aria-hidden />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom">Revision history</TooltipContent>
+          </Tooltip>
+        ) : null}
         {menu ? (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -82,27 +105,17 @@ function EntryToolbarHeaderActions() {
                 size="icon-sm"
                 className="text-muted-foreground hover:text-foreground"
                 aria-label="Entry actions"
-                title="Entry actions"
               >
                 <Settings2 className="size-4" aria-hidden />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-52">
               <DropdownMenuItem
-                onSelect={() => {
-                  menu.onOpenRevisions();
-                }}
+                disabled={menu.visibility.disabled}
+                onSelect={menu.visibility.onToggle}
               >
-                {menu.revisionsLoading ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : (
-                  <History />
-                )}
-                Revision history
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={menu.publishItem.disabled} onSelect={menu.publishItem.onSelect}>
-                {menu.publishItem.label}
+                {menu.visibility.visible ? <Eye /> : <EyeOff />}
+                {menu.visibility.visible ? 'Hide from site' : 'Show on site'}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -388,7 +401,7 @@ export function App() {
       />
       <SidebarInset className="bg-muted">
         <EntryEditorToolbarProvider>
-          <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b border-border/60 bg-muted/95 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-muted/80 dark:border-border/40 dark:bg-muted/90 dark:supports-[backdrop-filter]:bg-muted/75">
+          <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 bg-muted/95 px-4 backdrop-blur-md supports-[backdrop-filter]:bg-muted/80 dark:bg-muted/90 dark:supports-[backdrop-filter]:bg-muted/75">
             <SidebarTrigger className="hover:bg-muted/90" />
             <Separator orientation="vertical" className="data-[orientation=vertical]:h-4 data-[orientation=vertical]:self-center" />
             {showEntriesBackToTable ? (

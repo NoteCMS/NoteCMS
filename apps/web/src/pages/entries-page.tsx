@@ -1353,6 +1353,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   async function handleSaveEntry() {
     if (!workspaceSiteId || !selectedTypeId || !selectedType) return;
     const wasNewEntry = !entryId || entryId === 'new';
+    const shouldRepublishOnSave =
+      !wasNewEntry && editingEntry?.lifecycleStatus === 'published' && !editingEntry.deletedAt;
     setIsSaving(true);
     setError('');
     const payloadData = pruneEntriesLatestFields(
@@ -1405,7 +1407,21 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       if (!refreshed.entry) {
         throw new Error('Entry saved but could not reload it for the editor.');
       }
-      const r = refreshed.entry;
+      let r = refreshed.entry;
+      let republishSucceeded = false;
+      if (shouldRepublishOnSave) {
+        try {
+          const published = await gqlRequest<{ publishEntry: Entry & { data: Record<string, unknown> | null } }>(
+            token,
+            `mutation($id:ID!,$siteId:ID!){ publishEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
+            { id: savedEntryId, siteId: workspaceSiteId },
+          );
+          r = published.publishEntry;
+          republishSucceeded = true;
+        } catch {
+          toast.error('Saved, but the live site could not be updated');
+        }
+      }
       const nextData = (r.data ?? {}) as Record<string, unknown>;
       const nextMetaTitle = r.meta?.title ?? '';
       const nextMetaDescription = r.meta?.description ?? '';
@@ -1434,7 +1450,9 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
       void loadRevisions(savedEntryId);
-      toast.success(wasNewEntry ? 'Entry created' : 'Entry updated');
+      toast.success(
+        wasNewEntry ? 'Entry created' : republishSucceeded ? 'Saved to live site' : 'Entry saved',
+      );
     } catch (saveError) {
       if (saveError instanceof GraphqlUserInputError) {
         setError('');
@@ -1461,7 +1479,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         `mutation($id:ID!,$siteId:ID!){ publishEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
         { id: entryId, siteId: workspaceSiteId },
       );
-      toast.success('Published');
+      toast.success('Shown on site');
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
       void loadRevisions(entryId);
@@ -1492,7 +1510,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         `mutation($id:ID!,$siteId:ID!){ unpublishEntry(id:$id,siteId:$siteId){ ${ENTRY_ADMIN_GQL} } }`,
         { id: entryId, siteId: workspaceSiteId },
       );
-      toast.success('Unpublished');
+      toast.success('Hidden from site');
       await loadEntries(selectedTypeId);
       await loadEntriesIndex(contentTypes);
       void loadRevisions(entryId);
@@ -1778,6 +1796,22 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
   const canEditSeo = showMetaFields && !editingEntry?.deletedAt;
 
+  const currentSnapshot = useMemo(
+    () =>
+      stableJsonStringify({
+        entryName: entryName.trim(),
+        slug,
+        data,
+        metaTitle,
+        metaDescription,
+      }),
+    [entryName, slug, data, metaTitle, metaDescription],
+  );
+
+  const isDirty = Boolean(
+    isDetailView && savedSnapshot !== null && currentSnapshot !== savedSnapshot,
+  );
+
   const setEntryToolbar = useEntryEditorToolbarSetter();
   const toolbarActionsRef = useRef({
     save: () => {},
@@ -1814,29 +1848,20 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     let deleteConfirmation: EntryDeleteConfirmationConfig | undefined;
 
     if (showEntryActionsMenu && editingEntry && entryId) {
-      const publishItem =
-        editingEntry.lifecycleStatus === 'published' && !editingEntry.hasUnpublishedChanges
-          ? {
-              label: 'Unpublish',
-              disabled: isSaving,
-              onSelect: () => void handleUnpublishEntry(),
-            }
-          : {
-              label:
-                editingEntry.lifecycleStatus === 'published' && editingEntry.hasUnpublishedChanges
-                  ? 'Publish changes'
-                  : 'Publish',
-              disabled: isSaving,
-              onSelect: () => void handlePublishEntry(),
-            };
-
       entryActionsMenu = {
-        revisionsLoading,
-        onOpenRevisions: () => {
-          setRevisionSheetOpen(true);
-          void loadRevisions(entryId);
+        visibility: {
+          visible: editingEntry.lifecycleStatus === 'published',
+          disabled:
+            isSaving ||
+            (editingEntry.lifecycleStatus !== 'published' && isDirty),
+          onToggle: () => {
+            if (editingEntry.lifecycleStatus === 'published') {
+              void handleUnpublishEntry();
+            } else {
+              void handlePublishEntry();
+            }
+          },
         },
-        publishItem,
         onRequestDelete: () => setDeleteConfirmOpen(true),
       };
       deleteConfirmation = {
@@ -1851,9 +1876,20 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
     setEntryToolbar({
       onSave: () => void toolbarActionsRef.current.save(),
-      saveDisabled: isSaving || !entryName.trim() || (requiresSlug && !slug.trim()),
+      saveDisabled:
+        isSaving || !isDirty || !entryName.trim() || (requiresSlug && !slug.trim()),
       isSaving,
       secondary,
+      revisions:
+        showEntryActionsMenu && entryId
+          ? {
+              loading: revisionsLoading,
+              onOpen: () => {
+                setRevisionSheetOpen(true);
+                void loadRevisions(entryId);
+              },
+            }
+          : undefined,
       entryActionsMenu,
       deleteConfirmation,
     });
@@ -1871,26 +1907,11 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     requiresSlug,
     revisionsLoading,
     deleteConfirmOpen,
+    isDirty,
   ]);
 
   const nameFieldError = entryFieldErrors['name'];
   const slugFieldError = entryFieldErrors['slug'];
-
-  const currentSnapshot = useMemo(
-    () =>
-      stableJsonStringify({
-        entryName: entryName.trim(),
-        slug,
-        data,
-        metaTitle,
-        metaDescription,
-      }),
-    [entryName, slug, data, metaTitle, metaDescription],
-  );
-
-  const isDirty = Boolean(
-    isDetailView && savedSnapshot !== null && currentSnapshot !== savedSnapshot,
-  );
   const unsavedPrompt = useUnsavedChangesPrompt({ isDirty });
 
   if (isDetailView) {

@@ -5,13 +5,10 @@ export type EntryEditorSecondary =
   | { kind: 'cancel'; onClick: () => void };
 
 export type EntryActionsMenuConfig = {
-  revisionsLoading: boolean;
-  onOpenRevisions: () => void;
-  /** Single publish-related control (publish, publish updates, or unpublish). */
-  publishItem: {
-    label: string;
+  visibility: {
+    visible: boolean;
     disabled: boolean;
-    onSelect: () => void;
+    onToggle: () => void;
   };
   onRequestDelete: () => void;
 };
@@ -22,12 +19,17 @@ export type EntryDeleteConfirmationConfig = {
   onConfirm: () => void;
 };
 
+export type EntryRevisionToolbarConfig = {
+  loading: boolean;
+  onOpen: () => void;
+};
+
 export type EntryEditorToolbarConfig = {
   onSave: () => void;
   saveDisabled: boolean;
   isSaving: boolean;
   secondary: EntryEditorSecondary;
-  /** Existing non-deleted entry: settings menu with revisions, publish cycle, delete. */
+  revisions?: EntryRevisionToolbarConfig;
   entryActionsMenu?: EntryActionsMenuConfig;
   deleteConfirmation?: EntryDeleteConfirmationConfig;
 };
