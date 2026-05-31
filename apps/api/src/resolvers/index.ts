@@ -37,7 +37,7 @@ import {
   type RouteManifestContentType,
   type RouteManifestEntry,
 } from '@notecms/routing';
-import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions } from '../site/entry-revision-service.js';
+import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions, type EntryRevisionPayload } from '../site/entry-revision-service.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
 import { persistImageUpload } from '../assets/persist-image-upload.js';
@@ -64,6 +64,18 @@ import { clampListArgs } from '../lib/list-args.js';
 import { bundleMutationResolvers, bundleQueryResolvers } from './bundles.js';
 import { backupMutationResolvers, backupQueryResolvers } from './backups.js';
 import { escapeRegexLiteral } from '../lib/regex-escape.js';
+import {
+  assertMetaNotDisabledForMutation,
+  emptyEntryMeta,
+  entryMetaDiffersFromPublished,
+  isMetaTaxonomyEnabled,
+  metaPayloadFromDoc,
+  metaToStored,
+  normalizeEntryMetaInput,
+  normalizeMetaTaxonomyOptions,
+  publishedMetaPayloadFromDoc,
+  resolveEntryMetaForReader,
+} from '../site/meta-taxonomy.js';
 
 const ENTRY_NAME_MAX = 200;
 const USER_DISPLAY_NAME_MAX = 80;
@@ -157,6 +169,7 @@ async function entryDocumentToGql(entry: any, ctx: RequestContext) {
     name: payload.name,
     slug: payload.slug,
     data: payload.data,
+    meta: resolveEntryMetaForReader(raw, ctx),
     lifecycleStatus: typeof raw.lifecycleStatus === 'string' ? raw.lifecycleStatus : 'published',
     publishedAt: raw.publishedAt ? new Date(raw.publishedAt as Date).toISOString() : null,
     scheduledPublishAt: raw.scheduledPublishAt ? new Date(raw.scheduledPublishAt as Date).toISOString() : null,
@@ -1198,6 +1211,11 @@ export const resolvers = {
         badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
       }
       try {
+        normalizedOptions = normalizeMetaTaxonomyOptions(normalizedSlug, normalizedOptions);
+      } catch (e) {
+        badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
+      }
+      try {
         const ct = await ContentTypeModel.create({
           siteId: sid,
           name,
@@ -1250,6 +1268,14 @@ export const resolvers = {
         } catch (e) {
           badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
         }
+        try {
+          rest.options = normalizeMetaTaxonomyOptions(slugKey, rest.options as Record<string, unknown>) as Record<
+            string,
+            unknown
+          >;
+        } catch (e) {
+          badUserInput(e instanceof Error ? e.message : 'Invalid content type options', ['options']);
+        }
       }
       try {
         const ct = await ContentTypeModel.findOneAndUpdate({ _id: id, siteId: sid }, rest, { new: true });
@@ -1273,13 +1299,15 @@ export const resolvers = {
       await bumpSiteContentRevision(sid);
       return true;
     },
-    createEntry: async (_: unknown, { siteId, contentTypeId, name, slug, data }: any, ctx: RequestContext) => {
+    createEntry: async (_: unknown, { siteId, contentTypeId, name, slug, data, meta: metaInput }: any, ctx: RequestContext) => {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'entries:write');
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'editor');
       const contentType = await ContentTypeModel.findOne({ _id: contentTypeId, siteId: sid }).lean();
       if (!contentType) throw new Error('Content type not found');
+      assertMetaNotDisabledForMutation(contentType, metaInput);
+      const entryMeta = normalizeEntryMetaInput(metaInput, { enabled: isMetaTaxonomyEnabled(contentType) });
       const displayName = normalizeEntryName(name);
       await assertEntryNameUnique(sid, contentTypeId, displayName);
       const hydratedFields = await hydrateRepeaterFields(sid, contentType.fields as FieldDef[]);
@@ -1297,6 +1325,8 @@ export const resolvers = {
         name: displayName,
         slug: resolvedSlug,
         data,
+        meta: entryMeta,
+        publishedMeta: { title: null, description: null },
         updatedBy: ctx.userId,
         lifecycleStatus: 'draft',
         publishedAt: null,
@@ -1319,6 +1349,7 @@ export const resolvers = {
           name: displayName,
           slug: resolvedSlug,
           data: data as Record<string, unknown>,
+          meta: entryMeta,
         },
       });
       const raw = (await EntryModel.findById(entry._id).lean()) as Record<string, unknown>;
@@ -1360,13 +1391,20 @@ export const resolvers = {
         if (!ct) throw new Error('Content type not found');
         rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug, nameForSlugResolution);
       }
+      if (Object.prototype.hasOwnProperty.call(rest, 'meta')) {
+        const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
+        if (!ct) throw new Error('Content type not found');
+        assertMetaNotDisabledForMutation(ct, rest.meta);
+        rest.meta = normalizeEntryMetaInput(rest.meta, { enabled: isMetaTaxonomyEnabled(ct) });
+      }
       const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...rest, updatedBy: ctx.userId }, { new: true }).lean();
       if (!entry) throw new Error('Entry not found');
       const hu =
         entry.lifecycleStatus === 'published' &&
         (entry.name !== entry.publishedName ||
           String(entry.slug ?? '') !== String(entry.publishedSlug ?? '') ||
-          JSON.stringify(entry.data ?? {}) !== JSON.stringify(entry.publishedData ?? {}));
+          JSON.stringify(entry.data ?? {}) !== JSON.stringify(entry.publishedData ?? {}) ||
+          entryMetaDiffersFromPublished(entry as Record<string, unknown>));
       await EntryModel.updateOne({ _id: id, siteId: sid }, { $set: { hasUnpublishedChanges: hu } });
       const saved = await EntryModel.findById(id).lean();
       if (saved) {
@@ -1380,12 +1418,13 @@ export const resolvers = {
           saved.data && typeof saved.data === 'object' && !Array.isArray(saved.data)
             ? (saved.data as Record<string, unknown>)
             : {};
+        const meta = metaToStored(metaPayloadFromDoc(saved as Record<string, unknown>));
         await appendEntryRevision({
           entryId: String(id),
           siteId: sid,
           userId: ctx.userId,
           kind: 'draft_save',
-          payload: { name, slug, data },
+          payload: { name, slug, data, meta },
           previousRevisionId: lastRev?._id ? String(lastRev._id) : null,
         });
       }
@@ -1840,6 +1879,7 @@ export const resolvers = {
           cur.publishedData && typeof cur.publishedData === 'object' && !Array.isArray(cur.publishedData)
             ? (cur.publishedData as Record<string, unknown>)
             : {},
+        meta: metaToStored(publishedMetaPayloadFromDoc(cur as Record<string, unknown>)),
       };
       const { revisionId } = await appendEntryRevision({
         entryId: String(id),
@@ -1858,6 +1898,7 @@ export const resolvers = {
             publishedName: null,
             publishedSlug: null,
             publishedData: null,
+            publishedMeta: { title: null, description: null },
             hasUnpublishedChanges: false,
             scheduledUnpublishAt: null,
             lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId),
@@ -1895,13 +1936,14 @@ export const resolvers = {
       const rev = await EntryRevisionModel.findOne({ _id: revisionId, siteId: sid }).lean();
       if (!rev) throw new Error('Revision not found');
       const entryId = String(rev.entryId);
-      const p = rev.payload as { name: string; slug: string | null; data: Record<string, unknown> };
+      const p = rev.payload as EntryRevisionPayload;
+      const meta = p.meta ? metaToStored(p.meta) : emptyEntryMeta();
       const { revisionId: newRevId } = await appendEntryRevision({
         entryId,
         siteId: sid,
         userId: ctx.userId,
         kind: 'rollback',
-        payload: p,
+        payload: { ...p, meta },
         previousRevisionId: String(rev._id),
       });
       const cur = await EntryModel.findOne({ _id: entryId, siteId: sid }).lean();
@@ -1909,12 +1951,14 @@ export const resolvers = {
         name: p.name,
         slug: p.slug,
         data: p.data,
+        meta,
         updatedBy: ctx.userId,
       };
       if (cur?.lifecycleStatus === 'published') {
         $set.publishedName = p.name;
         $set.publishedSlug = p.slug;
         $set.publishedData = p.data;
+        $set.publishedMeta = meta;
         $set.hasUnpublishedChanges = false;
         $set.lastPublishedRevisionId = new mongoose.Types.ObjectId(newRevId);
       }

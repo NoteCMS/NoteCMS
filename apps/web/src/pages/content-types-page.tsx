@@ -81,6 +81,7 @@ import type {
   VisibilityGroup,
   VisibilityRule,
 } from '@/types/app';
+import { PAGES_CONTENT_TYPE_SLUG } from '@/types/app';
 
 type ContentTypesPageProps = {
   token: string;
@@ -1600,6 +1601,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
   const [archivePath, setArchivePath] = useState('');
   const [homepageEnabled, setHomepageEnabled] = useState(false);
   const [homepageEntrySlug, setHomepageEntrySlug] = useState('home');
+  const [metaTaxonomyEnabled, setMetaTaxonomyEnabled] = useState(false);
   const [schemaBootstrap, setSchemaBootstrap] = useState<ContentTypeSchemaBootstrap | null>(null);
   const schemaRef = useRef<ContentTypeSchemaHandle | null>(null);
 
@@ -1635,6 +1637,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
         archivePath,
         homepageEnabled,
         homepageEntrySlug,
+        metaTaxonomyEnabled,
         schema,
       }),
     );
@@ -1664,6 +1667,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
     archivePath,
     homepageEnabled,
     homepageEntrySlug,
+    metaTaxonomyEnabled,
     schemaTick,
     schemaBootstrap,
   ]);
@@ -1700,6 +1704,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
             setArchivePath('');
             setHomepageEnabled(false);
             setHomepageEntrySlug('home');
+            setMetaTaxonomyEnabled(false);
             setError('');
             setSchemaBootstrap({
               fields: [createEmptyField()],
@@ -1737,6 +1742,7 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
             setHomepageEnabled(false);
             setHomepageEntrySlug('home');
           }
+          setMetaTaxonomyEnabled(Boolean(target.options?.metaTaxonomy?.enabled));
           setSchemaBootstrap({
             fields: target.fields?.length ? target.fields : [createEmptyField()],
             hasSlug: Boolean(target.options?.hasSlug),
@@ -1783,6 +1789,9 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
       optionsPayload.homepage = homepageEnabled
         ? { enabled: true, entrySlug: homepageEntrySlug.trim() || 'home' }
         : { enabled: false };
+    }
+    if (metaTaxonomyEnabled && committedSlug !== PAGES_CONTENT_TYPE_SLUG) {
+      optionsPayload.metaTaxonomy = { enabled: true };
     }
     setIsSaving(true);
     setError('');
@@ -2070,6 +2079,26 @@ export function ContentTypeEditorPage({ token, workspaceSiteId, sites, contentTy
                   ) : null}
                 </Item>
               ) : null}
+
+              <Item variant="muted" className="w-full flex-col flex-nowrap items-stretch" role="group" aria-label="SEO">
+                <div className="space-y-1 pb-2">
+                  <p className="text-sm font-medium text-foreground">SEO</p>
+                </div>
+                {committedSlug === PAGES_CONTENT_TYPE_SLUG ? (
+                  <p className="text-xs text-muted-foreground">Always on for Pages.</p>
+                ) : (
+                  <Field orientation="horizontal" className="items-start gap-3">
+                    <Checkbox
+                      id="ct-meta-taxonomy"
+                      checked={metaTaxonomyEnabled}
+                      onCheckedChange={(v) => setMetaTaxonomyEnabled(v === true)}
+                    />
+                    <FieldContent>
+                      <FieldLabel htmlFor="ct-meta-taxonomy">Search title and description on entries</FieldLabel>
+                    </FieldContent>
+                  </Field>
+                )}
+              </Item>
 
               <div className="flex flex-wrap gap-2">
                 <Button variant="outline" onClick={() => navigate('/content-types')}>

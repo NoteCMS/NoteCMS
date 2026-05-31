@@ -12,6 +12,7 @@ import { connectDb } from './db/mongoose.js';
 import { migrateEntryLifecycle } from './db/migrate-entry-lifecycle.js';
 import { migrateEntryNames } from './db/migrate-entry-names.js';
 import { migrateMembershipRoles } from './db/migrate-membership-roles.js';
+import { migrateMetaTaxonomy } from './db/migrate-meta-taxonomy.js';
 import { ensureBootstrapAdmin } from './config/bootstrap.js';
 import { buildCorsOptions } from './config/cors-options.js';
 import { env } from './config/env.js';
@@ -35,6 +36,7 @@ await connectDb();
 await migrateEntryNames();
 await migrateEntryLifecycle();
 await migrateMembershipRoles();
+await migrateMetaTaxonomy();
 await ensureBootstrapAdmin();
 startBackupScheduler();
 

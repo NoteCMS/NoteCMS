@@ -72,11 +72,11 @@ const M = {
     updateContentType(id: $id, siteId: $siteId, name: $name, slug: $slug, fields: $fields, options: $options) { id name slug }
   }`,
   deleteContentType: `mutation($id: ID!, $siteId: ID) { deleteContentType(id: $id, siteId: $siteId) }`,
-  createEntry: `mutation($siteId: ID, $contentTypeId: ID!, $name: String!, $slug: String, $data: JSON!) {
-    createEntry(siteId: $siteId, contentTypeId: $contentTypeId, name: $name, slug: $slug, data: $data) { id name slug }
+  createEntry: `mutation($siteId: ID, $contentTypeId: ID!, $name: String!, $slug: String, $data: JSON!, $meta: EntryMetaInput) {
+    createEntry(siteId: $siteId, contentTypeId: $contentTypeId, name: $name, slug: $slug, data: $data, meta: $meta) { id name slug }
   }`,
-  updateEntry: `mutation($id: ID!, $siteId: ID, $name: String, $slug: String, $data: JSON) {
-    updateEntry(id: $id, siteId: $siteId, name: $name, slug: $slug, data: $data) { id name slug }
+  updateEntry: `mutation($id: ID!, $siteId: ID, $name: String, $slug: String, $data: JSON, $meta: EntryMetaInput) {
+    updateEntry(id: $id, siteId: $siteId, name: $name, slug: $slug, data: $data, meta: $meta) { id name slug }
   }`,
   deleteEntry: `mutation($id: ID!, $siteId: ID) { deleteEntry(id: $id, siteId: $siteId) }`,
   updateSiteSettings: `mutation($siteId: ID, $input: SiteSettingsInput!) {
@@ -419,6 +419,8 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
         name: z.string(),
         slug: z.string().optional(),
         data: z.record(z.string(), z.unknown()).describe('Field key → value map matching the content type schema'),
+        metaTitle: z.string().optional().describe('SEO title override (top-level, not in data). Requires meta taxonomy on the content type.'),
+        metaDescription: z.string().optional().describe('Meta description for search engines (top-level, not in data).'),
       },
       annotations: { readOnlyHint: false },
     },
@@ -430,6 +432,9 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
           name: args!.name,
           slug: args?.slug ?? null,
           data: args!.data,
+          ...(args?.metaTitle !== undefined || args?.metaDescription !== undefined
+            ? { meta: { title: args?.metaTitle ?? '', description: args?.metaDescription ?? '' } }
+            : {}),
         }),
       ),
   );
@@ -446,6 +451,8 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
         name: z.string().optional(),
         slug: z.string().optional(),
         data: z.record(z.string(), z.unknown()).optional(),
+        metaTitle: z.string().optional().describe('SEO title override (top-level, not in data).'),
+        metaDescription: z.string().optional().describe('Meta description for search engines (top-level, not in data).'),
       },
       annotations: { readOnlyHint: false },
     },
@@ -457,6 +464,9 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
           name: args?.name,
           slug: args?.slug,
           data: args?.data as Record<string, unknown> | undefined,
+          ...(args?.metaTitle !== undefined || args?.metaDescription !== undefined
+            ? { meta: { title: args?.metaTitle ?? '', description: args?.metaDescription ?? '' } }
+            : {}),
         }),
       ),
   );

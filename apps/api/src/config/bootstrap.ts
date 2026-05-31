@@ -44,6 +44,11 @@ async function seedDemoWorkspace(ownerId: Types.ObjectId) {
     { siteId: site._id, slug: 'pages' },
     {
       name: 'Pages',
+      options: {
+        hasSlug: true,
+        permalinkTemplate: '/:slug',
+        metaTaxonomy: { enabled: true },
+      },
       fields: [
         { key: 'title', label: 'Title', type: 'text', required: true },
         { key: 'body', label: 'Body', type: 'textarea' },

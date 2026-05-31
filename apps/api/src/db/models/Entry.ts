@@ -8,6 +8,16 @@ const entrySchema = new Schema(
     name: { type: String, trim: true, required: true },
     slug: { type: String, default: null },
     data: { type: Schema.Types.Mixed, default: {} },
+    /** SEO working copy (draft). */
+    meta: {
+      title: { type: String, trim: true, default: '' },
+      description: { type: String, trim: true, default: '' },
+    },
+    /** SEO published snapshot. */
+    publishedMeta: {
+      title: { type: String, default: null },
+      description: { type: String, default: null },
+    },
     updatedBy: { type: Schema.Types.ObjectId, ref: 'User', default: null },
 
     lifecycleStatus: {

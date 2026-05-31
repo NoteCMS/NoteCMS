@@ -92,8 +92,20 @@ export type ContentType = {
     archivePath?: string;
     /** Map one entry slug to `/` (only allowed when permalink has no :typeSlug). */
     homepage?: { enabled: boolean; entrySlug?: string };
+    /** When enabled, entries expose SEO title + meta description (always on for slug `pages`). */
+    metaTaxonomy?: { enabled?: boolean };
   };
 };
+
+export type EntryMeta = { title?: string | null; description?: string | null };
+
+export const PAGES_CONTENT_TYPE_SLUG = 'pages';
+
+export function isMetaTaxonomyEnabled(contentType: Pick<ContentType, 'slug' | 'options'> | null | undefined): boolean {
+  if (!contentType) return false;
+  if (contentType.slug === PAGES_CONTENT_TYPE_SLUG) return true;
+  return contentType.options?.metaTaxonomy?.enabled === true;
+}
 
 export type FocalPoint = {
   x: number;
@@ -132,6 +144,7 @@ export type Entry = {
   name: string;
   slug: string | null;
   data: Record<string, unknown>;
+  meta?: EntryMeta;
   createdAt?: string;
   updatedAt: string;
   /** Canonical path from content type permalink rules (null when type has no URL slug). */

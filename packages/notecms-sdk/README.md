@@ -96,6 +96,28 @@ const paths = listStaticPaths(snapshot); // throws if archive + entry paths coll
 
 Entries include `lastEditedBy.email` as returned by the API. For public sites, consider whether that field should be stripped in your templates.
 
+## SEO metadata (`entry.meta`)
+
+When a content type has meta taxonomy enabled (`options.metaTaxonomy.enabled`, or always for slug `pages`), entries expose **`meta.title`** and **`meta.description`** as top-level fields (not inside `data`). Published sites should read the **published snapshot** (default for read-only API keys without `entries:draft:read`).
+
+```ts
+const page = await cms.entryBySlug('pages', 'about');
+
+// Next.js App Router — generateMetadata
+export async function generateMetadata() {
+  const entry = await cms.entryBySlug('pages', 'about');
+  const title = entry.meta?.title?.trim() || entry.name;
+  const description = entry.meta?.description?.trim() || undefined;
+  return {
+    title,
+    description,
+    openGraph: { title, description },
+  };
+}
+```
+
+**Fallbacks:** empty SEO title → use `entry.name` (often plus site title in the layout). Empty description → omit the tag or derive an excerpt from body fields in your frontend.
+
 ## MCP (AI agents)
 
 The API serves **Model Context Protocol** over **Streamable HTTP** at **`/api/mcp`** (same host as GraphQL). Configure your MCP client with that URL and the same `Authorization: Bearer <api_key>` or `x-api-key` header. Keys are **scoped**: grant only the permissions the agent needs. See the API package doc `apps/api/docs/mcp-and-scoped-keys.md` in the NoteCMS repo.

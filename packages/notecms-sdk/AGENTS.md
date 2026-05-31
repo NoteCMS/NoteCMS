@@ -12,7 +12,8 @@ Use that document whenever the task involves permalinks, homepage (`/`), content
 SSG path list     → fetchBuildSnapshot(cms) then listStaticPaths(snapshot)
 Entry by URL slug → snapshot.slugIndex[contentTypeSlug][entrySlug]
 Single entry path → defaultPathForEntry(typeSlug, entry, contentType)
-CMS options       → contentType.options: hasSlug, permalinkTemplate, homepage, archiveEnabled, archivePath
+CMS options       → contentType.options: hasSlug, permalinkTemplate, homepage, archiveEnabled, archivePath, metaTaxonomy
+Entry SEO         → entry.meta.title / entry.meta.description (top-level; not in data)
 ```
 
 ### Keywords → ROUTING.md

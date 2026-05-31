@@ -47,6 +47,7 @@ export type {
   ContentType,
   Entry,
   EntryEditor,
+  EntryMeta,
   FocalPoint,
   Json,
   MenuSlotResolved,

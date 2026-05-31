@@ -1,8 +1,20 @@
 import mongoose from 'mongoose';
 import { EntryModel } from '../db/models/Entry.js';
 import { EntryRevisionModel } from '../db/models/EntryRevision.js';
+import {
+  metaPayloadFromDoc,
+  metaToStored,
+  type EntryMetaFields,
+} from './meta-taxonomy.js';
 
 export type RevisionKind = 'migrate_initial' | 'draft_save' | 'publish' | 'rollback' | 'unpublish' | 'restore';
+
+export type EntryRevisionPayload = {
+  name: string;
+  slug: string | null;
+  data: Record<string, unknown>;
+  meta?: EntryMetaFields;
+};
 
 export async function getNextRevisionNumber(entryId: string): Promise<number> {
   const last = await EntryRevisionModel.findOne({ entryId }).sort({ revisionNumber: -1 }).select({ revisionNumber: 1 }).lean();
@@ -14,7 +26,7 @@ export async function appendEntryRevision(params: {
   siteId: string;
   userId: string | null;
   kind: RevisionKind;
-  payload: { name: string; slug: string | null; data: Record<string, unknown> };
+  payload: EntryRevisionPayload;
   previousRevisionId?: string | null;
 }): Promise<{ revisionId: string; revisionNumber: number }> {
   const entryOid = new mongoose.Types.ObjectId(params.entryId);
@@ -78,13 +90,14 @@ export async function applyPublishToEntry(
   const slug = typeof cur.slug === 'string' ? cur.slug : null;
   const data =
     cur.data && typeof cur.data === 'object' && !Array.isArray(cur.data) ? (cur.data as Record<string, unknown>) : {};
+  const meta = metaToStored(metaPayloadFromDoc(cur as Record<string, unknown>));
 
   const { revisionId } = await appendEntryRevision({
     entryId,
     siteId,
     userId,
     kind: 'publish',
-    payload: { name, slug, data },
+    payload: { name, slug, data, meta },
     previousRevisionId: cur.lastPublishedRevisionId ? String(cur.lastPublishedRevisionId) : null,
   });
 
@@ -98,6 +111,7 @@ export async function applyPublishToEntry(
         publishedName: name,
         publishedSlug: slug,
         publishedData: data,
+        publishedMeta: meta,
         hasUnpublishedChanges: false,
         lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId),
         scheduledPublishAt: null,

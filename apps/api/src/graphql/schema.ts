@@ -18,6 +18,16 @@ export const typeDefs = `#graphql
     createdById: ID
     payload: JSON!
   }
+  type EntryMeta {
+    title: String
+    description: String
+  }
+
+  input EntryMetaInput {
+    title: String
+    description: String
+  }
+
   type Entry {
     id: ID!
     siteId: ID!
@@ -25,6 +35,7 @@ export const typeDefs = `#graphql
     name: String!
     slug: String
     data: JSON!
+    meta: EntryMeta!
     lifecycleStatus: String!
     publishedAt: String
     scheduledPublishAt: String
@@ -351,8 +362,8 @@ export const typeDefs = `#graphql
     updateContentType(id: ID!, siteId: ID, name: String, slug: String, fields: [FieldInput!], options: JSON): ContentType!
     deleteContentType(id: ID!, siteId: ID): Boolean!
 
-    createEntry(siteId: ID, contentTypeId: ID!, name: String!, slug: String, data: JSON!): Entry!
-    updateEntry(id: ID!, siteId: ID, name: String, slug: String, data: JSON): Entry!
+    createEntry(siteId: ID, contentTypeId: ID!, name: String!, slug: String, data: JSON!, meta: EntryMetaInput): Entry!
+    updateEntry(id: ID!, siteId: ID, name: String, slug: String, data: JSON, meta: EntryMetaInput): Entry!
     """Soft-delete: sets deletedAt. Use restoreEntry to undo."""
     deleteEntry(id: ID!, siteId: ID): Boolean!
     publishEntry(id: ID!, siteId: ID): Entry!

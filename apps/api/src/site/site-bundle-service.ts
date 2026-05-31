@@ -16,6 +16,12 @@ import mongoose from 'mongoose';
 import { slugify } from '@notecms/routing';
 import { appendEntryRevision } from './entry-revision-service.js';
 import { EntryRevisionModel } from '../db/models/EntryRevision.js';
+import {
+  emptyEntryMeta,
+  metaToStored,
+  publishedMetaPayloadFromDoc,
+  type EntryMetaFields,
+} from './meta-taxonomy.js';
 
 const BUNDLE_VERSION = 1;
 const MAX_EXPORT_ASSETS = 120;
@@ -362,7 +368,7 @@ export async function exportSiteBundleService(
   }
 
   if (options.contentTypeSlugsForEntries?.length) {
-    const groups: Array<{ contentTypeSlug: string; items: Array<{ name: string; slug: string | null; data: unknown }> }> =
+    const groups: Array<{ contentTypeSlug: string; items: Array<{ name: string; slug: string | null; data: unknown; meta?: EntryMetaFields }> }> =
       [];
     for (const slug of options.contentTypeSlugsForEntries) {
       const ct = await ContentTypeModel.findOne({ siteId, slug }).lean();
@@ -393,7 +399,8 @@ export async function exportSiteBundleService(
                 : null;
           const dataRaw = (e as { publishedData?: unknown; data?: unknown }).publishedData ?? e.data ?? {};
           const data = dataRaw && typeof dataRaw === 'object' && !Array.isArray(dataRaw) ? dataRaw : {};
-          return { name, slug, data };
+          const meta = metaToStored(publishedMetaPayloadFromDoc(e as Record<string, unknown>));
+          return { name, slug, data, meta };
         }),
       });
     }
@@ -655,7 +662,7 @@ export async function importSiteBundleService(
   }
 
   if (options.contentTypeSlugsForEntries?.length && Array.isArray(bundle.entries)) {
-    const groups = bundle.entries as Array<{ contentTypeSlug: string; items: Array<{ name: string; slug: string | null; data: unknown }> }>;
+    const groups = bundle.entries as Array<{ contentTypeSlug: string; items: Array<{ name: string; slug: string | null; data: unknown; meta?: EntryMetaFields }> }>;
     for (const slug of options.contentTypeSlugsForEntries) {
       const group = groups.find((g) => g.contentTypeSlug === slug);
       if (!group?.items?.length) continue;
@@ -674,6 +681,7 @@ export async function importSiteBundleService(
         await assertAssetsBelongToSite(siteId, collectImageAssetIds(hydratedFields as FieldDef[], data));
         await assertReferencedEntriesBelongToSite(siteId, hydratedFields as FieldDef[], data);
         const resolvedSlug = resolveEntrySlug(ct as { options?: Record<string, unknown> }, data, item.slug, displayName);
+        const entryMeta = item.meta ? metaToStored(item.meta) : emptyEntryMeta();
 
         const existing = await EntryModel.findOne(
           resolvedSlug != null && resolvedSlug !== ''
@@ -691,6 +699,8 @@ export async function importSiteBundleService(
               name: displayName,
               slug: resolvedSlug,
               data,
+              meta: entryMeta,
+              publishedMeta: entryMeta,
               updatedBy: userId,
               lifecycleStatus: 'published',
               publishedAt,
@@ -708,7 +718,7 @@ export async function importSiteBundleService(
             siteId,
             userId,
             kind: 'publish',
-            payload: { name: displayName, slug: resolvedSlug, data },
+            payload: { name: displayName, slug: resolvedSlug, data, meta: entryMeta },
             previousRevisionId: prevRev,
           });
           await EntryModel.updateOne(
@@ -724,6 +734,8 @@ export async function importSiteBundleService(
             name: displayName,
             slug: resolvedSlug,
             data,
+            meta: entryMeta,
+            publishedMeta: entryMeta,
             updatedBy: userId,
             lifecycleStatus: 'published',
             publishedAt,
@@ -740,7 +752,7 @@ export async function importSiteBundleService(
             siteId,
             userId,
             kind: 'publish',
-            payload: { name: displayName, slug: resolvedSlug, data },
+            payload: { name: displayName, slug: resolvedSlug, data, meta: entryMeta },
             previousRevisionId: null,
           });
           await EntryModel.updateOne(

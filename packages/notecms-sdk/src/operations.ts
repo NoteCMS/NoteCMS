@@ -49,6 +49,10 @@ export const ENTRIES = /* GraphQL */ `
       name
       slug
       data
+      meta {
+        title
+        description
+      }
       lifecycleStatus
       publishedAt
       scheduledPublishAt
@@ -75,6 +79,10 @@ export const ENTRY = /* GraphQL */ `
       name
       slug
       data
+      meta {
+        title
+        description
+      }
       lifecycleStatus
       publishedAt
       scheduledPublishAt
@@ -101,6 +109,10 @@ export const ENTRY_BY_SLUG = /* GraphQL */ `
       name
       slug
       data
+      meta {
+        title
+        description
+      }
       lifecycleStatus
       publishedAt
       scheduledPublishAt

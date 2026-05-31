@@ -21,6 +21,7 @@ import {
   Images,
   Plus,
   RotateCcw,
+  Search,
   Trash2,
   Upload,
   X,
@@ -51,6 +52,7 @@ import { Input } from '@/components/ui/input';
 import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
 import { Item, ItemContent } from '@/components/ui/item';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -64,10 +66,11 @@ import {
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { cn } from '@/lib/utils';
 import type { Asset, ConditionOperator, ContentField, ContentType, Entry, ImageFieldValue, Site, VisibilityConfig } from '@/types/app';
+import { isMetaTaxonomyEnabled } from '@/types/app';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'sonner';
 
-const ENTRY_ADMIN_GQL = `id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges createdAt updatedAt canonicalPath lastEditedBy { id email }`;
+const ENTRY_ADMIN_GQL = `id siteId contentTypeId name slug data meta { title description } lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges createdAt updatedAt canonicalPath lastEditedBy { id email }`;
 
 const MarkdownEditor = lazy(() =>
   import('@/components/ui/markdown-editor').then((m) => ({ default: m.MarkdownEditor })),
@@ -1049,6 +1052,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   const [slug, setSlug] = useState('');
   const [isSlugManuallyEdited, setIsSlugManuallyEdited] = useState(false);
   const [data, setData] = useState<Record<string, unknown>>({});
+  const [metaTitle, setMetaTitle] = useState('');
+  const [metaDescription, setMetaDescription] = useState('');
   const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
   const [showDeleted, setShowDeleted] = useState(false);
   const [revisions, setRevisions] = useState<
@@ -1056,6 +1061,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   >([]);
   const [revisionsLoading, setRevisionsLoading] = useState(false);
   const [revisionSheetOpen, setRevisionSheetOpen] = useState(false);
+  const [seoSheetOpen, setSeoSheetOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
 
   const clearEntryFieldError = useCallback((path: string) => {
@@ -1069,6 +1075,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   const selectedType = useMemo(() => contentTypes.find((contentType) => contentType.id === selectedTypeId) ?? null, [contentTypes, selectedTypeId]);
   const requiresSlug = Boolean(selectedType?.options?.hasSlug);
+  const showMetaFields = isMetaTaxonomyEnabled(selectedType);
   const contentTypeFieldMap = useMemo(
     () => new Map(contentTypes.map((contentType) => [contentType.id, contentType.fields ?? []] as const)),
     [contentTypes],
@@ -1251,6 +1258,8 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
+      setMetaTitle('');
+      setMetaDescription('');
       setSavedSnapshot(null);
       return;
     }
@@ -1259,7 +1268,9 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       setSlug('');
       setIsSlugManuallyEdited(false);
       setData({});
-      setSavedSnapshot(stableJsonStringify({ entryName: '', slug: '', data: {} }));
+      setMetaTitle('');
+      setMetaDescription('');
+      setSavedSnapshot(stableJsonStringify({ entryName: '', slug: '', data: {}, metaTitle: '', metaDescription: '' }));
       return;
     }
 
@@ -1279,11 +1290,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         setIsSlugManuallyEdited(false);
         const nextData = (res.entry.data ?? {}) as Record<string, unknown>;
         setData(nextData);
+        const nextMetaTitle = res.entry.meta?.title ?? '';
+        const nextMetaDescription = res.entry.meta?.description ?? '';
+        setMetaTitle(nextMetaTitle);
+        setMetaDescription(nextMetaDescription);
         setSavedSnapshot(
           stableJsonStringify({
             entryName: (res.entry.name ?? '').trim(),
             slug: res.entry.slug ?? '',
             data: nextData,
+            metaTitle: nextMetaTitle,
+            metaDescription: nextMetaDescription,
           }),
         );
         setEntries((prev) => {
@@ -1301,11 +1318,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         setIsSlugManuallyEdited(false);
         const fallbackData = (entry.data ?? {}) as Record<string, unknown>;
         setData(fallbackData);
+        const fallbackMetaTitle = entry.meta?.title ?? '';
+        const fallbackMetaDescription = entry.meta?.description ?? '';
+        setMetaTitle(fallbackMetaTitle);
+        setMetaDescription(fallbackMetaDescription);
         setSavedSnapshot(
           stableJsonStringify({
             entryName: (entry.name ?? '').trim(),
             slug: entry.slug ?? '',
             data: fallbackData,
+            metaTitle: fallbackMetaTitle,
+            metaDescription: fallbackMetaDescription,
           }),
         );
       }
@@ -1339,29 +1362,34 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     );
     try {
       let savedEntryId: string;
+      const metaVars = showMetaFields
+        ? { meta: { title: metaTitle.trim(), description: metaDescription.trim() } }
+        : {};
       if (entryId && entryId !== 'new') {
         const response = await gqlRequest<{ updateEntry: { id: string } }>(
           token,
-          'mutation($id:ID!,$siteId:ID!,$name:String!,$slug:String,$data:JSON){ updateEntry(id:$id,siteId:$siteId,name:$name,slug:$slug,data:$data){ id } }',
+          'mutation($id:ID!,$siteId:ID!,$name:String!,$slug:String,$data:JSON,$meta:EntryMetaInput){ updateEntry(id:$id,siteId:$siteId,name:$name,slug:$slug,data:$data,meta:$meta){ id } }',
           {
             id: entryId,
             siteId: workspaceSiteId,
             name: entryName.trim(),
             slug: requiresSlug ? slug : null,
             data: payloadData,
+            ...metaVars,
           },
         );
         savedEntryId = response.updateEntry.id;
       } else {
         const response = await gqlRequest<{ createEntry: { id: string } }>(
           token,
-          'mutation($siteId:ID!,$contentTypeId:ID!,$name:String!,$slug:String,$data:JSON!){ createEntry(siteId:$siteId,contentTypeId:$contentTypeId,name:$name,slug:$slug,data:$data){ id } }',
+          'mutation($siteId:ID!,$contentTypeId:ID!,$name:String!,$slug:String,$data:JSON!,$meta:EntryMetaInput){ createEntry(siteId:$siteId,contentTypeId:$contentTypeId,name:$name,slug:$slug,data:$data,meta:$meta){ id } }',
           {
             siteId: workspaceSiteId,
             contentTypeId: selectedTypeId,
             name: entryName.trim(),
             slug: requiresSlug ? slug : null,
             data: payloadData,
+            ...metaVars,
           },
         );
         savedEntryId = response.createEntry.id;
@@ -1379,15 +1407,21 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
       }
       const r = refreshed.entry;
       const nextData = (r.data ?? {}) as Record<string, unknown>;
+      const nextMetaTitle = r.meta?.title ?? '';
+      const nextMetaDescription = r.meta?.description ?? '';
       const nextSnap = stableJsonStringify({
         entryName: (r.name ?? '').trim(),
         slug: r.slug ?? '',
         data: nextData,
+        metaTitle: nextMetaTitle,
+        metaDescription: nextMetaDescription,
       });
       flushSync(() => {
         setEntryName(r.name ?? '');
         setSlug(r.slug ?? '');
         setData(nextData);
+        setMetaTitle(nextMetaTitle);
+        setMetaDescription(nextMetaDescription);
         setSavedSnapshot(nextSnap);
         setEntries((prev) => {
           const exists = prev.some((e) => e.id === r.id);
@@ -1520,11 +1554,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           setEntryName(res.entry.name ?? '');
           setSlug(res.entry.slug ?? '');
           setData((res.entry.data ?? {}) as Record<string, unknown>);
+          const rolledMetaTitle = res.entry.meta?.title ?? '';
+          const rolledMetaDescription = res.entry.meta?.description ?? '';
+          setMetaTitle(rolledMetaTitle);
+          setMetaDescription(rolledMetaDescription);
           setSavedSnapshot(
             stableJsonStringify({
               entryName: (res.entry.name ?? '').trim(),
               slug: res.entry.slug ?? '',
               data: (res.entry.data ?? {}) as Record<string, unknown>,
+              metaTitle: rolledMetaTitle,
+              metaDescription: rolledMetaDescription,
             }),
           );
           setEntries((prev) => prev.map((e) => (e.id === res.entry!.id ? { ...e, ...res.entry } : e)));
@@ -1736,6 +1776,7 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
   );
 
   const editingEntry = entryId && entryId !== 'new' ? entries.find((item) => item.id === entryId) ?? null : null;
+  const canEditSeo = showMetaFields && !editingEntry?.deletedAt;
 
   const setEntryToolbar = useEntryEditorToolbarSetter();
   const toolbarActionsRef = useRef({
@@ -1841,8 +1882,10 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
         entryName: entryName.trim(),
         slug,
         data,
+        metaTitle,
+        metaDescription,
       }),
-    [entryName, slug, data],
+    [entryName, slug, data, metaTitle, metaDescription],
   );
 
   const isDirty = Boolean(
@@ -1888,6 +1931,13 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
                   onClick={() => void handleRestoreEntryById(editingEntry.id)}
                 >
                   Restore
+                </Button>
+              </CardAction>
+            ) : canEditSeo ? (
+              <CardAction className="sm:ml-auto">
+                <Button type="button" variant="outline" onClick={() => setSeoSheetOpen(true)}>
+                  <Search data-icon="inline-start" />
+                  SEO
                 </Button>
               </CardAction>
             ) : null}
@@ -1984,6 +2034,57 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
           </CardContent>
         </Card>
       </div>
+      <Sheet open={seoSheetOpen} onOpenChange={setSeoSheetOpen}>
+        <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
+          <SheetHeader className="shrink-0 space-y-1 border-b border-border px-6 py-5">
+            <SheetTitle>SEO</SheetTitle>
+            <SheetDescription>Optional text for search results and when this page is shared.</SheetDescription>
+          </SheetHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+            <FieldGroup className="gap-4">
+              <Field>
+                <FieldLabel htmlFor="entry-meta-title">Title</FieldLabel>
+                <FieldContent>
+                  <Input
+                    id="entry-meta-title"
+                    value={metaTitle}
+                    onChange={(event) => setMetaTitle(event.target.value)}
+                    placeholder="Same as display name if left blank"
+                    autoComplete="off"
+                  />
+                  {metaTitle.length > 60 ? (
+                    <FieldDescription className="text-amber-600 dark:text-amber-400">
+                      Shorter is better — try under 60 characters.
+                    </FieldDescription>
+                  ) : null}
+                </FieldContent>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="entry-meta-description">Description</FieldLabel>
+                <FieldContent>
+                  <Textarea
+                    id="entry-meta-description"
+                    value={metaDescription}
+                    onChange={(event) => setMetaDescription(event.target.value)}
+                    placeholder="A short summary of this page"
+                    rows={4}
+                  />
+                  {metaDescription.length > 160 ? (
+                    <FieldDescription className="text-amber-600 dark:text-amber-400">
+                      Shorter is better — try under 160 characters.
+                    </FieldDescription>
+                  ) : null}
+                </FieldContent>
+              </Field>
+            </FieldGroup>
+          </div>
+          <div className="shrink-0 border-t border-border px-6 py-4">
+            <Button type="button" className="w-full" onClick={() => setSeoSheetOpen(false)}>
+              Done
+            </Button>
+          </div>
+        </SheetContent>
+      </Sheet>
       <Sheet open={revisionSheetOpen} onOpenChange={setRevisionSheetOpen}>
         <SheetContent side="right" className="flex w-full flex-col gap-0 p-0 sm:max-w-md">
           <SheetHeader className="shrink-0 space-y-1 border-b border-border px-6 py-5">

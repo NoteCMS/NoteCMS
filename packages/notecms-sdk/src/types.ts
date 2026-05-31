@@ -16,6 +16,11 @@ export type EntryEditor = {
   email: string;
 };
 
+export type EntryMeta = {
+  title?: string | null;
+  description?: string | null;
+};
+
 export type Entry = {
   id: string;
   siteId: string;
@@ -23,6 +28,7 @@ export type Entry = {
   name: string;
   slug: string | null;
   data: Json;
+  meta?: EntryMeta;
   createdAt?: string;
   updatedAt: string;
   lastEditedBy: EntryEditor | null;

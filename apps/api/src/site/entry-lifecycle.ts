@@ -4,6 +4,7 @@ import mongoose from 'mongoose';
 import { EntryModel } from '../db/models/Entry.js';
 import { appendEntryRevision } from './entry-revision-service.js';
 import { fireContentWebhook } from './content-webhook.js';
+import { metaPayloadFromDoc, metaToStored, publishedMetaPayloadFromDoc } from './meta-taxonomy.js';
 
 export type EntryLifecycleStatus = 'draft' | 'published';
 
@@ -78,6 +79,7 @@ export async function activateScheduledEntries(siteId: string): Promise<number> 
     const slug = typeof row.slug === 'string' ? row.slug : null;
     const data =
       row.data && typeof row.data === 'object' && !Array.isArray(row.data) ? (row.data as Record<string, unknown>) : {};
+    const meta = metaToStored(metaPayloadFromDoc(row as Record<string, unknown>));
     const clash = await EntryModel.findOne({
       siteId,
       contentTypeId: row.contentTypeId,
@@ -96,7 +98,7 @@ export async function activateScheduledEntries(siteId: string): Promise<number> 
       siteId,
       userId: null,
       kind: 'publish',
-      payload: { name, slug, data },
+      payload: { name, slug, data, meta },
       previousRevisionId: row.lastPublishedRevisionId ? String(row.lastPublishedRevisionId) : null,
     });
 
@@ -109,6 +111,7 @@ export async function activateScheduledEntries(siteId: string): Promise<number> 
           publishedName: name,
           publishedSlug: slug,
           publishedData: data,
+          publishedMeta: meta,
           hasUnpublishedChanges: false,
           lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId),
           scheduledPublishAt: null,
@@ -133,6 +136,7 @@ export async function activateScheduledEntries(siteId: string): Promise<number> 
         row.publishedData && typeof row.publishedData === 'object' && !Array.isArray(row.publishedData)
           ? (row.publishedData as Record<string, unknown>)
           : {},
+      meta: metaToStored(publishedMetaPayloadFromDoc(row as Record<string, unknown>)),
     };
     const { revisionId } = await appendEntryRevision({
       entryId: id,
@@ -151,6 +155,7 @@ export async function activateScheduledEntries(siteId: string): Promise<number> 
           publishedName: null,
           publishedSlug: null,
           publishedData: null,
+          publishedMeta: { title: null, description: null },
           hasUnpublishedChanges: false,
           scheduledUnpublishAt: null,
           lastPublishedRevisionId: new mongoose.Types.ObjectId(revisionId),

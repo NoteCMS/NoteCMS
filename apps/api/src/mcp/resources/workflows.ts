@@ -22,7 +22,8 @@ Copy-paste patterns for common tasks. Adjust ids from **your** \`notecms_list_co
 2. (optional) notecms_upload_asset → hero image → assetId
 3. notecms_create_entry {
      contentTypeId, name, slug (if hasSlug),
-     data: { …field keys from schema… }
+     data: { …field keys from schema… },
+     metaTitle?, metaDescription? (when type has meta taxonomy)
    }
 4. notecms_publish_entry { id: "<new-entry-id>" }
 \`\`\`

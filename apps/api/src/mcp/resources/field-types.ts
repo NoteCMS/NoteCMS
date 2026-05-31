@@ -92,6 +92,7 @@ Fields may have \`config.visibility\` (rules on other field values). Hidden fiel
 |-------|-------|
 | \`name\` | Display title (top-level on entry, not inside \`data\`). |
 | \`slug\` | URL segment — only when content type \`options.hasSlug\` is true. Lowercase, unique per type when published. |
+| \`metaTitle\` / \`metaDescription\` | SEO fields (top-level on entry, **not** inside \`data\`). Enabled when \`options.metaTaxonomy.enabled\` is true, or always for slug \`pages\`. Use MCP args \`metaTitle\` / \`metaDescription\` or GraphQL \`meta { title description }\`. |
 
 ---
 
