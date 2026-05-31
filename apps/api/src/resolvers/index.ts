@@ -41,6 +41,7 @@ import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRe
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
 import { persistImageUpload } from '../assets/persist-image-upload.js';
+import { normalizeFocal01 } from '../assets/focal.js';
 import { ContentTypeModel } from '../db/models/ContentType.js';
 import { EntryModel } from '../db/models/Entry.js';
 import { EntryRevisionModel } from '../db/models/EntryRevision.js';
@@ -218,11 +219,6 @@ async function buildAssetUrls(asset: any) {
     large: web,
     xlarge,
   };
-}
-
-function normalizeFocal01(value: unknown, fallback = 0.5) {
-  if (typeof value !== 'number' || Number.isNaN(value)) return fallback;
-  return Math.min(1, Math.max(0, value));
 }
 
 async function toAsset(asset: any) {
@@ -1414,7 +1410,11 @@ export const resolvers = {
       void fireContentWebhook('entry.deleted', { siteId: sid, entryId: String(id) });
       return true;
     },
-    uploadAsset: async (_: unknown, { siteId, fileBase64, filename, mimeType, alt = '', title = '' }: any, ctx: RequestContext) => {
+    uploadAsset: async (
+      _: unknown,
+      { siteId, fileBase64, filename, mimeType, alt = '', title = '', focalX, focalY }: any,
+      ctx: RequestContext,
+    ) => {
       const sid = resolveSiteId(ctx, siteId);
       if (ctx.apiKey) requireApiKeyScope(ctx, 'assets:write');
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -1427,6 +1427,8 @@ export const resolvers = {
         mimeType,
         alt,
         title,
+        focalX: focalX ?? undefined,
+        focalY: focalY ?? undefined,
       });
       const asset = await AssetModel.findById(id).lean();
       if (!asset) throw new Error('Asset not found');

@@ -1,77 +1,30 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  MCP_RESOURCE_AGENT_GUIDE_URI,
+  MCP_RESOURCE_API_SCOPES_URI,
+  MCP_RESOURCE_FIELD_TYPES_URI,
+  MCP_RESOURCE_FRONTEND_SDK_URI,
+  MCP_RESOURCE_ROUTING_URI,
+  MCP_RESOURCE_TOOLS_URI,
+  MCP_RESOURCE_WORKFLOWS_URI,
+} from './resource-uris.js';
+import { AGENT_GUIDE_MARKDOWN } from './resources/agent-guide.js';
+import { API_SCOPES_MARKDOWN } from './resources/api-scopes.js';
+import { FIELD_TYPES_MARKDOWN } from './resources/field-types.js';
+import { FRONTEND_SDK_MARKDOWN } from './resources/frontend-sdk.js';
+import { ROUTING_MARKDOWN } from './resources/routing.js';
+import { TOOLS_MARKDOWN } from './resources/tools.js';
+import { WORKFLOWS_MARKDOWN } from './resources/workflows.js';
 
-/** Stable URIs for MCP resources/read (list_resources exposes these). */
-export const MCP_RESOURCE_AGENT_GUIDE_URI = 'note-cms://docs/agent-guide';
-export const MCP_RESOURCE_API_SCOPES_URI = 'note-cms://docs/api-scopes';
-
-export const AGENT_GUIDE_MARKDOWN = `# Note CMS MCP — agent guide
-
-## What this server is
-
-Note CMS is a **multi-site headless CMS**. This MCP server exposes **GraphQL-backed tools** for one workspace at a time. All mutations are enforced server-side (scopes + RBAC).
-
-## Before you change anything
-
-1. Call **\`notecms_api_key_info\`** when using an **API key** so you know **\`siteId\`**, **scopes**, and key name.
-2. Call **\`notecms_list_content_types\`** before creating entries so you use real **\`contentTypeId\`** values and understand **\`fields\`** / options (e.g. **\`hasSlug\`**).
-3. Prefer **read** tools (\`list_entries\`, \`get_entry\`, …) before **write** tools.
-
-## Workspace selection (\`siteId\`)
-
-- **Site API key:** the key is pinned to one site. You may **omit** \`siteId\` on tools; if you pass it, it **must** match the key’s site.
-- **JWT (dashboard session):** pass **\`siteId\`** for site-scoped operations when required.
-- Wrong or mismatched \`siteId\` → GraphQL errors / forbidden.
-
-## Scopes and writes
-
-- Each API key has a **scope list** (e.g. \`entries:read\`, \`entries:write\`). A tool fails if the key lacks permission.
-- Scopes ending in **\`:write\`** require an **acting user** on the key; the server runs mutations as that member for RBAC and audit fields.
-- Read the scope matrix: **\`${MCP_RESOURCE_API_SCOPES_URI}\`** (resource).
-
-## MCP toggle per workspace
-
-If **MCP is disabled** for a site, **\`/api/mcp\`** returns **403** for that workspace (API key or JWT with that \`siteId\`). GraphQL from the UI is unchanged.
-
-## Content and data shape
-
-- **Entries** store **\`data\`** as a JSON object keyed by **field \`key\`** from the content type schema. Respect **\`required\`**, field **\`type\`**, and **repeater** / nested shapes from \`contentTypes\` → \`fields\`.
-- **Slugs:** only when the type has **\`hasSlug\`** (or equivalent in \`options\`). Do not invent URL slugs for types that do not expose them.
-- **Site settings** updates (\`notecms_update_site_settings\`) can affect **menus**, **title**, **logo/favicon** ids — confirm values before saving.
-
-## Bundles
-
-- **\`export_site_bundle\`** / **\`import_site_bundle\`** are powerful. Import can **overwrite** large parts of a site. Use narrow **options**, verify **\`siteId\`**, and treat production imports as **destructive** unless you have a backup.
-
-## What not to do
-
-- Do **not** assume field keys or content type ids — always **list** first.
-- Do **not** retry destructive operations in a loop on failure — read the error (scope vs validation vs not found).
-- Do **not** expose or log raw API key tokens in user-visible text.
-
-## Hints on tool errors
-
-If a tool returns an error string, it often means **missing scope**, **wrong \`siteId\`**, **MCP disabled**, or **GraphQL validation**. Re-read **\`notecms_api_key_info\`** and this guide, then adjust.
-`;
-
-export const API_SCOPES_MARKDOWN = `# Note CMS — API key scopes (MCP / GraphQL)
-
-| Scope | Access |
-|--------|--------|
-| \`content_types:read\` | List/read content types |
-| \`content_types:write\` | Create/update/delete content types |
-| \`entries:read\` | List/read entries |
-| \`entries:write\` | Create/update/delete entries |
-| \`assets:read\` | List/read assets |
-| \`assets:write\` | Upload/update/delete assets |
-| \`site_settings:read\` | Read site settings |
-| \`site_settings:write\` | Update site settings |
-| \`bundles:read\` | Export site bundle |
-| \`bundles:write\` | Import site bundle |
-
-**Legacy keys** (created before scopes) behave as read-only for the rows above.
-
-**Write scopes** require an **acting user** (site member) on the key so the API can enforce RBAC.
-`;
+export {
+  MCP_RESOURCE_AGENT_GUIDE_URI,
+  MCP_RESOURCE_API_SCOPES_URI,
+  MCP_RESOURCE_FIELD_TYPES_URI,
+  MCP_RESOURCE_FRONTEND_SDK_URI,
+  MCP_RESOURCE_ROUTING_URI,
+  MCP_RESOURCE_TOOLS_URI,
+  MCP_RESOURCE_WORKFLOWS_URI,
+} from './resource-uris.js';
 
 function markdownResource(uri: string, body: string) {
   return {
@@ -85,48 +38,107 @@ function markdownResource(uri: string, body: string) {
   };
 }
 
+const RESOURCE_CATALOG: Array<{
+  name: string;
+  uri: string;
+  title: string;
+  description: string;
+  body: string;
+}> = [
+  {
+    name: 'agent-guide',
+    uri: MCP_RESOURCE_AGENT_GUIDE_URI,
+    title: 'Note CMS MCP — start here',
+    description: 'Mental model, auth, lifecycle, safety. Read first in a new session.',
+    body: AGENT_GUIDE_MARKDOWN,
+  },
+  {
+    name: 'workflows',
+    uri: MCP_RESOURCE_WORKFLOWS_URI,
+    title: 'Note CMS — agent workflows',
+    description: 'Step-by-step recipes: new page, publish, hero image, menu, sync.',
+    body: WORKFLOWS_MARKDOWN,
+  },
+  {
+    name: 'tools',
+    uri: MCP_RESOURCE_TOOLS_URI,
+    title: 'Note CMS MCP — tools catalog',
+    description: 'Every MCP tool, arguments, and required scopes.',
+    body: TOOLS_MARKDOWN,
+  },
+  {
+    name: 'field-types',
+    uri: MCP_RESOURCE_FIELD_TYPES_URI,
+    title: 'Note CMS — field types',
+    description: 'How to shape entry data: text, wysiwyg, image, repeater, entries picker.',
+    body: FIELD_TYPES_MARKDOWN,
+  },
+  {
+    name: 'api-scopes',
+    uri: MCP_RESOURCE_API_SCOPES_URI,
+    title: 'Note CMS — API key scopes',
+    description: 'Scope matrix, acting user, recommended key sets, tool mapping.',
+    body: API_SCOPES_MARKDOWN,
+  },
+  {
+    name: 'frontend-sdk',
+    uri: MCP_RESOURCE_FRONTEND_SDK_URI,
+    title: 'Note CMS — frontend SDK',
+    description: 'How to write site code with @notecms/sdk (SSR, SSG, env, security).',
+    body: FRONTEND_SDK_MARKDOWN,
+  },
+  {
+    name: 'routing',
+    uri: MCP_RESOURCE_ROUTING_URI,
+    title: 'Note CMS — URL routing',
+    description: 'Permalinks, homepage, archives, listStaticPaths, slug rules.',
+    body: ROUTING_MARKDOWN,
+  },
+];
+
 /** Registers static markdown resources + a bootstrap prompt for MCP clients. */
 export function registerAgentContextArtifacts(server: McpServer) {
-  server.registerResource(
-    'agent-guide',
-    MCP_RESOURCE_AGENT_GUIDE_URI,
-    {
-      title: 'Note CMS MCP — agent guide',
-      description: 'Conventions, siteId, safety, and what not to do. Read first in a new session.',
-      mimeType: 'text/markdown',
-    },
-    async (uri) => markdownResource(uri.href, AGENT_GUIDE_MARKDOWN),
-  );
-
-  server.registerResource(
-    'api-scopes',
-    MCP_RESOURCE_API_SCOPES_URI,
-    {
-      title: 'Note CMS — API key scopes',
-      description: 'Scope names and what each permission allows (for MCP tools and GraphQL).',
-      mimeType: 'text/markdown',
-    },
-    async (uri) => markdownResource(uri.href, API_SCOPES_MARKDOWN),
-  );
+  for (const doc of RESOURCE_CATALOG) {
+    server.registerResource(
+      doc.name,
+      doc.uri,
+      {
+        title: doc.title,
+        description: doc.description,
+        mimeType: 'text/markdown',
+      },
+      async (uri) => markdownResource(uri.href, doc.body),
+    );
+  }
 
   const bootstrapBody = `You are connected to **Note CMS** over MCP (headless CMS).
 
-**Do this before mutating data:**
-1. Use MCP **resources/read** on \`${MCP_RESOURCE_AGENT_GUIDE_URI}\` for full conventions.
-2. Use **resources/read** on \`${MCP_RESOURCE_API_SCOPES_URI}\` for the scope matrix.
-3. Call tool **notecms_api_key_info** if authenticated with an API key (ignore errors for JWT-only).
+**Read these resources before mutating data** (MCP \`resources/read\`):
 
-Then use read-only tools (content types, entries, settings) to learn the workspace, and only then use write tools with minimal scope.`;
+1. \`${MCP_RESOURCE_AGENT_GUIDE_URI}\` — start here (mental model, auth, lifecycle)
+2. \`${MCP_RESOURCE_WORKFLOWS_URI}\` — step-by-step recipes for common tasks
+3. \`${MCP_RESOURCE_FIELD_TYPES_URI}\` — how to shape entry \`data\`
+4. \`${MCP_RESOURCE_TOOLS_URI}\` — full tool catalog
+5. \`${MCP_RESOURCE_API_SCOPES_URI}\` — permissions (if using an API key)
+6. \`${MCP_RESOURCE_FRONTEND_SDK_URI}\` — when writing site/SSG code
+7. \`${MCP_RESOURCE_ROUTING_URI}\` — URLs, slugs, homepage
+
+**Then call tools:**
+- \`notecms_api_key_info\` if using an API key (skip for JWT-only)
+- \`notecms_list_content_types\` before any entry work
+- Read tools before write tools
+
+When building a frontend app, use \`@notecms/sdk\` server-side — never expose API keys to the browser.`;
 
   server.registerPrompt(
     'notecms_agent_bootstrap',
     {
       title: 'Note CMS — agent bootstrap',
       description:
-        'Optional starter prompt: tells the agent to read built-in MCP resources and api_key_info before writes.',
+        'Starter prompt: read built-in MCP docs (guide, workflows, field types) and api_key_info before writes.',
     },
     async () => ({
-      description: 'Pulls in onboarding text for Note CMS MCP.',
+      description: 'Onboarding for Note CMS MCP agents.',
       messages: [
         {
           role: 'user' as const,

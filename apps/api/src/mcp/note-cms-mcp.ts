@@ -6,8 +6,10 @@ import { executeGraphql } from '../graphql/execute-internal.js';
 import {
   MCP_RESOURCE_AGENT_GUIDE_URI,
   MCP_RESOURCE_API_SCOPES_URI,
-  registerAgentContextArtifacts,
-} from './mcp-agent-context.js';
+  MCP_RESOURCE_FIELD_TYPES_URI,
+  MCP_RESOURCE_WORKFLOWS_URI,
+} from './resource-uris.js';
+import { registerAgentContextArtifacts } from './mcp-agent-context.js';
 
 const siteIdOpt = z
   .string()
@@ -25,7 +27,7 @@ function jsonResult(payload: unknown, preface?: string) {
   return { content };
 }
 
-const graphqlErrorHint = `Hint: read MCP resources \`${MCP_RESOURCE_AGENT_GUIDE_URI}\` and \`${MCP_RESOURCE_API_SCOPES_URI}\`; call notecms_api_key_info when using an API key.`;
+const graphqlErrorHint = `Hint: read MCP resources \`${MCP_RESOURCE_AGENT_GUIDE_URI}\`, \`${MCP_RESOURCE_WORKFLOWS_URI}\`, \`${MCP_RESOURCE_FIELD_TYPES_URI}\`, \`${MCP_RESOURCE_API_SCOPES_URI}\`; call notecms_api_key_info when using an API key.`;
 
 async function graphqlTool<T>(run: () => Promise<T>, preface?: string) {
   try {
@@ -83,6 +85,16 @@ const M = {
   importBundle: `mutation($siteId: ID, $bundle: JSON!, $options: SiteBundlePartOptions!) {
     importSiteBundle(siteId: $siteId, bundle: $bundle, options: $options) {
       contentTypesUpserted entriesCreated entriesUpdated assetsImported siteSettingsApplied
+    }
+  }`,
+  uploadAsset: `mutation($siteId: ID, $fileBase64: String!, $filename: String!, $mimeType: String!, $alt: String, $title: String, $focalX: Float, $focalY: Float) {
+    uploadAsset(siteId: $siteId, fileBase64: $fileBase64, filename: $filename, mimeType: $mimeType, alt: $alt, title: $title, focalX: $focalX, focalY: $focalY) {
+      id siteId filename mimeType sizeBytes width height alt title focalPoint { x y } variants { original web thumbnail small medium large xlarge }
+    }
+  }`,
+  publishEntry: `mutation($id: ID!, $siteId: ID) {
+    publishEntry(id: $id, siteId: $siteId) {
+      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt hasUnpublishedChanges updatedAt
     }
   }`,
 };
@@ -221,6 +233,49 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
           query: args?.query ?? '',
           limit: args?.limit ?? 30,
           offset: args?.offset ?? 0,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'notecms_upload_asset',
+    {
+      title: 'Upload asset',
+      description:
+        'Uploads an image to the media library. Requires **assets:write**, **editor** role (or higher), and an acting user on API keys. Pass **fileBase64** (standard base64, no data-URL prefix). Supported types: JPEG, PNG, WebP, GIF, SVG, ICO. Optional **focalX** / **focalY** (0–1, default 0.5) set the crop focal point for responsive variants. Returns asset **id** for use in entry **data** image fields.',
+      inputSchema: {
+        siteId: siteIdOpt,
+        fileBase64: z.string().describe('File contents encoded as base64 (not a data: URL)'),
+        filename: z.string().describe('Original filename including extension, e.g. hero.webp'),
+        mimeType: z.string().describe('MIME type, e.g. image/webp'),
+        alt: z.string().optional().describe('Accessibility alt text'),
+        title: z.string().optional().describe('Optional display title'),
+        focalX: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe('Horizontal focal point 0 (left) – 1 (right); default 0.5'),
+        focalY: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe('Vertical focal point 0 (top) – 1 (bottom); default 0.5'),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) =>
+      graphqlTool(() =>
+        executeGraphql<{ uploadAsset: unknown }>(apollo, ctx, M.uploadAsset, {
+          siteId: args?.siteId ?? null,
+          fileBase64: args!.fileBase64,
+          filename: args!.filename,
+          mimeType: args!.mimeType,
+          alt: args?.alt ?? '',
+          title: args?.title ?? '',
+          focalX: args?.focalX ?? null,
+          focalY: args?.focalY ?? null,
         }),
       ),
   );
@@ -402,6 +457,27 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
           name: args?.name,
           slug: args?.slug,
           data: args?.data as Record<string, unknown> | undefined,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    'notecms_publish_entry',
+    {
+      title: 'Publish entry',
+      description:
+        'Makes the current draft live (**lifecycleStatus** → published). Requires **entries:write** and **editor** role (or higher). Fails if another published entry in the same content type already uses the same slug.',
+      inputSchema: {
+        id: z.string().describe('Entry id to publish'),
+        siteId: siteIdOpt,
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async (args) =>
+      graphqlTool(() =>
+        executeGraphql<{ publishEntry: unknown }>(apollo, ctx, M.publishEntry, {
+          id: args!.id,
+          siteId: args?.siteId ?? null,
         }),
       ),
   );

@@ -1,5 +1,6 @@
 import { env } from '../config/env.js';
 import { AssetModel } from '../db/models/Asset.js';
+import { normalizeFocal01 } from './focal.js';
 import { buildImageVariants, resolveUploadMimeType, sanitizeFilename } from './image.js';
 import { LocalStorageAdapter } from './local-storage.js';
 import { S3StorageAdapter } from './s3-storage.js';
@@ -37,8 +38,20 @@ export async function persistImageUpload(params: {
   mimeType: string;
   alt?: string;
   title?: string;
+  focalX?: number;
+  focalY?: number;
 }): Promise<string> {
-  const { siteId, userId, fileBase64, filename, mimeType, alt = '', title = '' } = params;
+  const {
+    siteId,
+    userId,
+    fileBase64,
+    filename,
+    mimeType,
+    alt = '',
+    title = '',
+    focalX,
+    focalY,
+  } = params;
   const original = Buffer.from(fileBase64, 'base64');
   if (!original.byteLength) throw new Error('Empty upload');
   if (original.byteLength > env.assetMaxUploadBytes) throw new Error('Upload exceeds file size limit');
@@ -77,6 +90,8 @@ export async function persistImageUpload(params: {
     height: variants.height,
     alt,
     title,
+    focalX: normalizeFocal01(focalX),
+    focalY: normalizeFocal01(focalY),
     storageKeyOriginal: originalKey,
     storageKeyWeb: webKey,
     storageKeyThumb: thumbKey,

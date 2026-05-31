@@ -364,7 +364,7 @@ export const typeDefs = `#graphql
     scheduleUnpublishEntry(id: ID!, siteId: ID, at: String!): Entry!
     cancelScheduledUnpublish(id: ID!, siteId: ID): Entry!
 
-    uploadAsset(siteId: ID, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String): Asset!
+    uploadAsset(siteId: ID, fileBase64: String!, filename: String!, mimeType: String!, alt: String, title: String, focalX: Float, focalY: Float): Asset!
     updateAssetMeta(id: ID!, siteId: ID, alt: String, title: String, focalX: Float, focalY: Float): Asset!
     deleteAsset(id: ID!, siteId: ID): Boolean!
 

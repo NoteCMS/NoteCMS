@@ -23,10 +23,15 @@ The MCP server exposes **read-only markdown resources** (via `resources/list` an
 
 | URI | Purpose |
 |-----|---------|
-| `note-cms://docs/agent-guide` | Site id rules, scopes, safety, bundles, what not to do |
-| `note-cms://docs/api-scopes` | Scope name → permission matrix |
+| `note-cms://docs/agent-guide` | **Start here** — mental model, auth, lifecycle, safety |
+| `note-cms://docs/workflows` | Step-by-step recipes (new page, publish, assets, menu) |
+| `note-cms://docs/tools` | Full MCP tool catalog with arguments |
+| `note-cms://docs/field-types` | Entry `data` shapes (image, repeater, wysiwyg, …) |
+| `note-cms://docs/api-scopes` | API key scope matrix and tool mapping |
+| `note-cms://docs/frontend-sdk` | Writing site code with `@notecms/sdk` |
+| `note-cms://docs/routing` | Permalinks, homepage, SSG paths |
 
-Prompt **`notecms_agent_bootstrap`** returns starter instructions that point at those URIs. Clients that support MCP prompts/resources should surface them to the model.
+Prompt **`notecms_agent_bootstrap`** returns starter instructions that point at these URIs. Clients that support MCP prompts/resources should surface them to the model.
 
 ## Site API keys
 
@@ -42,7 +47,7 @@ Prompt **`notecms_agent_bootstrap`** returns starter instructions that point at 
 | `content_types:read` | `contentTypes` |
 | `content_types:write` | create/update/delete content types |
 | `entries:read` | `entries`, `entry`, `entryBySlug` |
-| `entries:write` | create/update/delete entries |
+| `entries:write` | create/update/delete/**publish** entries |
 | `assets:read` | `listAssets` |
 | `assets:write` | upload/update/delete assets |
 | `site_settings:read` | `siteSettings` |
