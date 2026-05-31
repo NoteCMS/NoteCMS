@@ -7,6 +7,7 @@ import {
   buildStatusLine,
   buildTriggerBlockedReason,
   canTriggerBuild,
+  isBuildInProgress,
   type SiteBuildGql,
   triggerSiteBuildRequest,
 } from '@/lib/site-builds';

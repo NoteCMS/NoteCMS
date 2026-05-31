@@ -1457,12 +1457,22 @@ export const resolvers = {
         await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], patch.data as Record<string, unknown>));
         await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], patch.data as Record<string, unknown>);
         if (Object.prototype.hasOwnProperty.call(patch, 'slug')) {
-          patch.slug = resolveEntrySlug(ct as any, patch.data as Record<string, unknown>, patch.slug, nameForSlugResolution);
+          patch.slug = resolveEntrySlug(
+            ct as any,
+            patch.data as Record<string, unknown>,
+            typeof patch.slug === 'string' || patch.slug === null ? patch.slug : undefined,
+            nameForSlugResolution,
+          );
         }
       } else if (Object.prototype.hasOwnProperty.call(patch, 'slug')) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
-        patch.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, patch.slug, nameForSlugResolution);
+        patch.slug = resolveEntrySlug(
+          ct as any,
+          (current.data ?? {}) as Record<string, unknown>,
+          typeof patch.slug === 'string' || patch.slug === null ? patch.slug : undefined,
+          nameForSlugResolution,
+        );
       }
       if (Object.prototype.hasOwnProperty.call(patch, 'meta')) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
