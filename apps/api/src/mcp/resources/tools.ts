@@ -70,13 +70,17 @@ Fails if entries still exist.
 
 \`contentTypeId\`, \`name\`, optional \`slug\`, \`data\` object. Creates a **draft**.
 
+### \`notecms_get_entry\` / \`notecms_list_entries\`
+
+Include **data**, **meta** (\`title\`, \`description\`), lifecycle fields, and \`hasUnpublishedChanges\`.
+
 ### \`notecms_update_entry\`
 
-Patch \`name\`, \`slug\`, \`data\` by entry \`id\`. Merges/replaces \`data\` keys you send.
+Patch \`name\`, \`slug\`, \`data\`, \`metaTitle\`, \`metaDescription\` by entry \`id\`. **Only send fields you intend to change** — omitted fields are left unchanged. Always merge \`data\` with the current entry from \`notecms_get_entry\`.
 
 ### \`notecms_publish_entry\`
 
-Args: entry \`id\`. Makes draft live. Needs \`entries:write\` + editor role. Fails on slug collision within the same content type.
+Args: entry \`id\`. Makes draft live. Needs \`entries:write\` + editor role. Fails on slug collision or when draft data is empty but live content exists. Returns \`verification\`: \`meta\`, \`blockCount\`, \`publishedDataHash\`.
 
 ### \`notecms_delete_entry\`
 

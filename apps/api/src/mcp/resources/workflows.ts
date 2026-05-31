@@ -34,13 +34,20 @@ Verify: \`notecms_get_entry\` → \`lifecycleStatus: "published"\`.
 
 ## 3. Update live content safely
 
+**Required agent rule — never publish blind after an update.**
+
 \`\`\`
-1. notecms_get_entry { id }
-2. notecms_update_entry { id, data: { …merged changes… } }
-3. notecms_publish_entry { id }
+1. notecms_get_entry { id }                     # read current draft data (+ meta)
+2. notecms_update_entry { id, data: { …merged changes… } }   # only send fields you change
+3. notecms_get_entry { id }                     # verify draft again (or export bundle)
+4. Assert data.blocks.length > 0 when the page had body content
+5. notecms_publish_entry { id }
+6. Check response.verification.blockCount and publishedDataHash
 \`\`\`
 
 Published entries with draft edits show \`hasUnpublishedChanges: true\` after step 2.
+
+**Never** send \`data: null\` or partial \`data\` without merging from step 1 — the API rejects null data and publish blocks empty drafts when live content exists.
 
 ---
 
@@ -137,4 +144,6 @@ Save JSON off-site. **Do not** import to production without explicit user approv
 | \`MCP is not available\` | \`mcpEnabled: false\` on site settings |
 | \`Field X is required\` | Fix \`data\` shape — see \`note-cms://docs/field-types\` |
 | \`Another published entry already uses this slug\` | Pick a unique slug or unpublish the other entry (GraphQL) |
+| \`Refusing to publish: draft data is empty\` | Re-fetch entry, merge full \`data\`, verify blocks, then publish |
+| \`Cannot set entry data to null\` | Omit \`data\` or send merged content — never \`data: null\` |
 `;

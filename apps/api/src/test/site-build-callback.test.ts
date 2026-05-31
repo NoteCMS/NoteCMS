@@ -12,30 +12,38 @@ const token = generateReturnWebhookToken();
 const tokenHash = hashReturnWebhookToken(token);
 
 const findOneBuild = vi.fn();
-const findByIdBuild = vi.fn();
-const updateOneBuild = vi.fn();
-const findOneSettings = vi.fn();
 const findBuilds = vi.fn();
+const updateOneBuild = vi.fn();
 const updateOneSettings = vi.fn();
 const ensureMigrated = vi.fn();
 const consumeDispatchToken = vi.fn();
+const findDispatchCallback = vi.fn();
 
 vi.mock('../site/dispatch-callback-token.js', () => ({
   consumeDispatchCallbackToken: (...args: unknown[]) => consumeDispatchToken(...args),
+  findUnusedDispatchCallback: (...args: unknown[]) => findDispatchCallback(...args),
 }));
 
 vi.mock('../db/models/SiteBuild.js', () => ({
   SiteBuildModel: {
     findOne: (...args: unknown[]) => ({ select: () => ({ lean: () => findOneBuild(...args) }) }),
-    findById: (...args: unknown[]) => ({ select: () => ({ lean: () => findByIdBuild(...args) }) }),
-    updateOne: (...args: unknown[]) => updateOneBuild(...args),
+    findById: (...args: unknown[]) => ({
+      select: () => ({
+        lean: () => Promise.resolve({ publishReturnTokenHash: tokenHash }),
+      }),
+    }),
     find: (...args: unknown[]) => ({ select: () => ({ lean: () => findBuilds(...args) }) }),
+    updateOne: (...args: unknown[]) => updateOneBuild(...args),
   },
 }));
 
 vi.mock('../db/models/SiteSettings.js', () => ({
   SiteSettingsModel: {
-    findOne: (...args: unknown[]) => ({ select: () => ({ lean: () => findOneSettings(...args) }) }),
+    findOne: (...args: unknown[]) => ({
+      select: () => ({
+        lean: () => Promise.resolve(null),
+      }),
+    }),
     updateOne: (...args: unknown[]) => updateOneSettings(...args),
   },
 }));
@@ -66,12 +74,14 @@ describe('siteBuildCallbackHandler', () => {
     vi.clearAllMocks();
     ensureMigrated.mockResolvedValue(undefined);
     findOneBuild.mockResolvedValue({ _id: buildId });
-    findByIdBuild.mockResolvedValue({ publishReturnTokenHash: tokenHash });
+    findBuilds.mockResolvedValue([]);
     updateOneBuild.mockResolvedValue({ acknowledged: true });
+    updateOneSettings.mockResolvedValue({ acknowledged: true });
     consumeDispatchToken.mockResolvedValue(true);
+    findDispatchCallback.mockResolvedValue(null);
   });
 
-  it('accepts POST on /api/hooks path with token query param', async () => {
+  it('accepts POST with slug and persists to the matching build', async () => {
     const req = {
       method: 'POST',
       params: { siteId: String(siteId), buildSlug: 'staging' },
@@ -84,29 +94,53 @@ describe('siteBuildCallbackHandler', () => {
     await siteBuildCallbackHandler(req, res, 'staging');
 
     expect(res.statusCode).toBe(204);
-    expect(consumeDispatchToken).toHaveBeenCalledWith({
-      siteId: String(siteId),
-      token,
-      buildId,
-    });
     expect(updateOneBuild).toHaveBeenCalled();
+    expect(updateOneSettings).not.toHaveBeenCalled();
   });
 
-  it('falls back to static build token when dispatch token is not found', async () => {
-    consumeDispatchToken.mockResolvedValue(false);
+  it('uses dispatch token build id even without slug in the route', async () => {
+    findDispatchCallback.mockResolvedValue({ buildId });
     const req = {
       method: 'POST',
-      params: { siteId: String(siteId), buildSlug: 'staging' },
+      params: { siteId: String(siteId) },
       query: { token },
       headers: {},
       body: { status: 'success' },
     } as unknown as Request;
     const res = mockRes();
 
-    await siteBuildCallbackHandler(req, res, 'staging');
+    await siteBuildCallbackHandler(req, res);
 
     expect(res.statusCode).toBe(204);
-    expect(findByIdBuild).toHaveBeenCalled();
+    expect(updateOneBuild).toHaveBeenCalledWith(
+      { _id: buildId },
+      expect.objectContaining({
+        $set: expect.objectContaining({ publishLastReturnStatus: 'success' }),
+      }),
+    );
+    expect(consumeDispatchToken).toHaveBeenCalledWith({
+      siteId: String(siteId),
+      token,
+      buildId,
+    });
+  });
+
+  it('persists static build tokens to SiteBuild instead of SiteSettings', async () => {
+    findBuilds.mockResolvedValue([{ _id: buildId, publishReturnTokenHash: tokenHash }]);
+    const req = {
+      method: 'POST',
+      params: { siteId: String(siteId) },
+      query: { token },
+      headers: {},
+      body: { status: 'success' },
+    } as unknown as Request;
+    const res = mockRes();
+
+    await siteBuildCallbackHandler(req, res);
+
+    expect(res.statusCode).toBe(204);
+    expect(updateOneBuild).toHaveBeenCalled();
+    expect(updateOneSettings).not.toHaveBeenCalled();
   });
 
   it('returns 404 when token is missing', async () => {

@@ -52,6 +52,7 @@ import {
   type RouteManifestEntry,
 } from '@notecms/routing';
 import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions, type EntryRevisionPayload } from '../site/entry-revision-service.js';
+import { assertPublishPreservesContent, sanitizeEntryUpdateInput } from '../site/entry-data-guard.js';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
 import { persistImageUpload } from '../assets/persist-image-upload.js';
@@ -1435,40 +1436,41 @@ export const resolvers = {
       await requireRole(ctx.userId, sid, 'editor');
       const current = await EntryModel.findOne({ _id: id, siteId: sid }).lean();
       if (!current) throw new Error('Entry not found');
-      if (Object.prototype.hasOwnProperty.call(rest, 'name')) {
-        const displayName = normalizeEntryName(rest.name);
+      const patch = sanitizeEntryUpdateInput(rest);
+      if (Object.prototype.hasOwnProperty.call(patch, 'name')) {
+        const displayName = normalizeEntryName(patch.name);
         await assertEntryNameUnique(sid, current.contentTypeId, displayName, id);
-        rest.name = displayName;
+        patch.name = displayName;
       }
       const nameForSlugResolution =
-        typeof rest.name === 'string' ? rest.name : typeof current.name === 'string' ? current.name : null;
+        typeof patch.name === 'string' ? patch.name : typeof current.name === 'string' ? current.name : null;
 
-      if (rest.data) {
+      if (patch.data) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
         const hydratedFields = await hydrateRepeaterFields(sid, ct.fields as FieldDef[]);
         try {
-          validateEntryData(hydratedFields as any, rest.data as Record<string, unknown>);
+          validateEntryData(hydratedFields as any, patch.data as Record<string, unknown>);
         } catch (e) {
           rethrowEntryValidation(e);
         }
-        await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], rest.data as Record<string, unknown>));
-        await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], rest.data as Record<string, unknown>);
-        if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
-          rest.slug = resolveEntrySlug(ct as any, rest.data as Record<string, unknown>, rest.slug, nameForSlugResolution);
+        await assertAssetsBelongToSite(sid, collectImageAssetIds(hydratedFields as FieldDef[], patch.data as Record<string, unknown>));
+        await assertReferencedEntriesBelongToSite(sid, hydratedFields as FieldDef[], patch.data as Record<string, unknown>);
+        if (Object.prototype.hasOwnProperty.call(patch, 'slug')) {
+          patch.slug = resolveEntrySlug(ct as any, patch.data as Record<string, unknown>, patch.slug, nameForSlugResolution);
         }
-      } else if (Object.prototype.hasOwnProperty.call(rest, 'slug')) {
+      } else if (Object.prototype.hasOwnProperty.call(patch, 'slug')) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
-        rest.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, rest.slug, nameForSlugResolution);
+        patch.slug = resolveEntrySlug(ct as any, (current.data ?? {}) as Record<string, unknown>, patch.slug, nameForSlugResolution);
       }
-      if (Object.prototype.hasOwnProperty.call(rest, 'meta')) {
+      if (Object.prototype.hasOwnProperty.call(patch, 'meta')) {
         const ct = await ContentTypeModel.findOne({ _id: current.contentTypeId, siteId: sid }).lean();
         if (!ct) throw new Error('Content type not found');
-        assertMetaNotDisabledForMutation(ct, rest.meta);
-        rest.meta = normalizeEntryMetaInput(rest.meta, { enabled: isMetaTaxonomyEnabled(ct) });
+        assertMetaNotDisabledForMutation(ct, patch.meta);
+        patch.meta = normalizeEntryMetaInput(patch.meta, { enabled: isMetaTaxonomyEnabled(ct) });
       }
-      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...rest, updatedBy: ctx.userId }, { new: true }).lean();
+      const entry = await EntryModel.findOneAndUpdate({ _id: id, siteId: sid }, { ...patch, updatedBy: ctx.userId }, { new: true }).lean();
       if (!entry) throw new Error('Entry not found');
       const hu =
         entry.lifecycleStatus === 'published' &&
@@ -2054,6 +2056,7 @@ export const resolvers = {
           .lean();
         if (clash) badUserInput('Another published entry already uses this slug.', ['slug']);
       }
+      assertPublishPreservesContent(cur as Record<string, unknown>);
       const updated = await applyPublishToEntry(String(id), sid, ctx.userId);
       if (!updated) throw new Error('Entry not found');
       await bumpSiteContentRevision(sid);

@@ -59,6 +59,25 @@ export async function deleteDispatchCallbackToken(tokenId: string): Promise<void
   await SiteBuildDispatchCallbackModel.deleteOne({ _id: tokenId, usedAt: null });
 }
 
+/** Look up an unused one-time token issued when a build was triggered. */
+export async function findUnusedDispatchCallback(
+  siteId: string,
+  token: string,
+): Promise<{ buildId: unknown | null } | null> {
+  if (!mongoose.Types.ObjectId.isValid(siteId) || !token.trim()) return null;
+  const hash = hashReturnWebhookToken(token);
+  const doc = await SiteBuildDispatchCallbackModel.findOne({
+    siteId: new mongoose.Types.ObjectId(siteId),
+    tokenHash: hash,
+    usedAt: null,
+    expiresAt: { $gt: new Date() },
+  })
+    .select({ buildId: 1 })
+    .lean();
+  if (!doc) return null;
+  return { buildId: doc.buildId ?? null };
+}
+
 /** Atomically mark a one-time dispatch token as used. Returns true when valid and unused. */
 export async function consumeDispatchCallbackToken(params: {
   siteId: string;

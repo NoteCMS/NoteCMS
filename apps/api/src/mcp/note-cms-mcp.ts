@@ -10,6 +10,7 @@ import {
   MCP_RESOURCE_WORKFLOWS_URI,
 } from './resource-uris.js';
 import { registerAgentContextArtifacts } from './mcp-agent-context.js';
+import { buildUpdateEntryVariables, enrichPublishEntryResponse } from './mcp-entry-helpers.js';
 
 const siteIdOpt = z
   .string()
@@ -48,13 +49,13 @@ const Q = {
   contentTypes: `query($siteId: ID) { contentTypes(siteId: $siteId) { id siteId name slug fields options } }`,
   entries: `query($siteId: ID, $contentTypeId: ID!, $limit: Int, $offset: Int, $includeDrafts: Boolean, $includeDeleted: Boolean, $updatedSince: String) {
     entries(siteId: $siteId, contentTypeId: $contentTypeId, limit: $limit, offset: $offset, includeDrafts: $includeDrafts, includeDeleted: $includeDeleted, updatedSince: $updatedSince) {
-      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
+      id siteId contentTypeId name slug data meta { title description } lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
     }
   }`,
-  entry: `query($id: ID!, $siteId: ID) { entry(id: $id, siteId: $siteId) { id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email } } }`,
+  entry: `query($id: ID!, $siteId: ID) { entry(id: $id, siteId: $siteId) { id siteId contentTypeId name slug data meta { title description } lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email } } }`,
   entryBySlug: `query($siteId: ID, $contentTypeSlug: String!, $slug: String!) {
     entryBySlug(siteId: $siteId, contentTypeSlug: $contentTypeSlug, slug: $slug) {
-      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
+      id siteId contentTypeId name slug data meta { title description } lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt deletedAt hasUnpublishedChanges updatedAt lastEditedBy { id email }
     }
   }`,
   listAssets: `query($siteId: ID, $query: String, $limit: Int, $offset: Int) {
@@ -94,7 +95,7 @@ const M = {
   }`,
   publishEntry: `mutation($id: ID!, $siteId: ID) {
     publishEntry(id: $id, siteId: $siteId) {
-      id siteId contentTypeId name slug data lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt hasUnpublishedChanges updatedAt
+      id siteId contentTypeId name slug data meta { title description } lifecycleStatus publishedAt scheduledPublishAt scheduledUnpublishAt hasUnpublishedChanges updatedAt
     }
   }`,
 };
@@ -444,7 +445,7 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
     {
       title: 'Update entry',
       description:
-        'Patches name, slug, and/or **data**. Requires **entries:write**. Merge **data** carefully with existing document shape.',
+        'Patches name, slug, and/or **data**. Requires **entries:write**. Only send fields you intend to change — omitted fields are left unchanged. Always merge with existing **data** from **notecms_get_entry** before updating.',
       inputSchema: {
         id: z.string().describe('Entry id'),
         siteId: siteIdOpt,
@@ -458,16 +459,20 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
     },
     async (args) =>
       graphqlTool(() =>
-        executeGraphql<{ updateEntry: unknown }>(apollo, ctx, M.updateEntry, {
-          id: args!.id,
-          siteId: args?.siteId ?? null,
-          name: args?.name,
-          slug: args?.slug,
-          data: args?.data as Record<string, unknown> | undefined,
-          ...(args?.metaTitle !== undefined || args?.metaDescription !== undefined
-            ? { meta: { title: args?.metaTitle ?? '', description: args?.metaDescription ?? '' } }
-            : {}),
-        }),
+        executeGraphql<{ updateEntry: unknown }>(
+          apollo,
+          ctx,
+          M.updateEntry,
+          buildUpdateEntryVariables({
+            id: args!.id,
+            siteId: args?.siteId,
+            name: args?.name,
+            slug: args?.slug,
+            data: args?.data as Record<string, unknown> | undefined,
+            metaTitle: args?.metaTitle,
+            metaDescription: args?.metaDescription,
+          }),
+        ),
       ),
   );
 
@@ -476,7 +481,7 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
     {
       title: 'Publish entry',
       description:
-        'Makes the current draft live (**lifecycleStatus** → published). Requires **entries:write** and **editor** role (or higher). Fails if another published entry in the same content type already uses the same slug.',
+        'Makes the current draft live (**lifecycleStatus** → published). Requires **entries:write** and **editor** role (or higher). Fails if draft data is empty while live content exists, or if another published entry uses the same slug. Response includes **verification** (meta, blockCount, publishedDataHash).',
       inputSchema: {
         id: z.string().describe('Entry id to publish'),
         siteId: siteIdOpt,
@@ -484,12 +489,13 @@ export function createNoteCmsMcpServer(apollo: ApolloServer<RequestContext>, ctx
       annotations: { readOnlyHint: false },
     },
     async (args) =>
-      graphqlTool(() =>
-        executeGraphql<{ publishEntry: unknown }>(apollo, ctx, M.publishEntry, {
+      graphqlTool(async () => {
+        const result = await executeGraphql<{ publishEntry: Record<string, unknown> }>(apollo, ctx, M.publishEntry, {
           id: args!.id,
           siteId: args?.siteId ?? null,
-        }),
-      ),
+        });
+        return enrichPublishEntryResponse(result as Parameters<typeof enrichPublishEntryResponse>[0]);
+      }),
   );
 
   server.registerTool(

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Loader2, Rocket } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Item, ItemContent, ItemGroup } from '@/components/ui/item';
@@ -32,6 +32,15 @@ export function SiteBuildsRunList({
   emptyMessage = 'No builds yet.',
 }: SiteBuildsRunListProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
+  const hasRunningBuild = builds.some(isBuildInProgress);
+
+  useEffect(() => {
+    if (!hasRunningBuild || !onTriggered) return;
+    const timer = window.setInterval(() => {
+      void onTriggered();
+    }, 8000);
+    return () => window.clearInterval(timer);
+  }, [hasRunningBuild, onTriggered]);
 
   async function handleRun(build: SiteBuildGql) {
     setBusyId(build.id);

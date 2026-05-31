@@ -4,7 +4,10 @@ import { SiteBuildModel } from '../db/models/SiteBuild.js';
 import { SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { parseLastPublishedWatermarkFromDetail } from '../site/publish-watermark-detail.js';
 import { verifyReturnWebhookToken } from '../site/publish-webhook-token.js';
-import { consumeDispatchCallbackToken } from '../site/dispatch-callback-token.js';
+import {
+  consumeDispatchCallbackToken,
+  findUnusedDispatchCallback,
+} from '../site/dispatch-callback-token.js';
 import { ensureLegacySiteBuildMigrated } from '../site/site-build-service.js';
 
 const ALLOWED_STATUS = new Set(['success', 'failure', 'cancelled']);
@@ -36,46 +39,61 @@ type CallbackTarget =
   | { kind: 'legacy-settings'; siteId: string }
   | { kind: 'site-build'; siteId: string; buildId: unknown };
 
-async function resolveCallbackTarget(siteId: string, buildSlug?: string): Promise<CallbackTarget | null> {
-  if (!mongoose.Types.ObjectId.isValid(siteId)) return null;
-  const siteOid = new mongoose.Types.ObjectId(siteId);
+type ResolvedCallback = {
+  target: CallbackTarget;
+  /** When set, the request matched a one-time dispatch token from triggerSiteBuild. */
+  dispatch: { buildId: unknown | null } | null;
+};
 
+async function resolveCallbackTarget(siteId: string, token: string, buildSlug?: string): Promise<ResolvedCallback | null> {
+  if (!mongoose.Types.ObjectId.isValid(siteId)) return null;
+
+  const dispatch = await findUnusedDispatchCallback(siteId, token);
+  if (dispatch?.buildId) {
+    return {
+      target: { kind: 'site-build', siteId, buildId: dispatch.buildId },
+      dispatch,
+    };
+  }
+
+  const siteOid = new mongoose.Types.ObjectId(siteId);
   if (buildSlug) {
     await ensureLegacySiteBuildMigrated(siteId);
     const slug = buildSlug.trim().toLowerCase();
     const build = await SiteBuildModel.findOne({ siteId: siteOid, slug }).select({ _id: 1 }).lean();
     if (!build) return null;
-    return { kind: 'site-build', siteId, buildId: build._id };
+    return {
+      target: { kind: 'site-build', siteId, buildId: build._id },
+      dispatch,
+    };
   }
-  return { kind: 'legacy-settings', siteId };
+
+  return {
+    target: { kind: 'legacy-settings', siteId },
+    dispatch,
+  };
 }
 
-async function verifyCallbackToken(target: CallbackTarget, token: string): Promise<boolean> {
-  if (target.kind === 'site-build') {
-    if (
-      await consumeDispatchCallbackToken({
-        siteId: target.siteId,
-        token,
-        buildId: target.buildId,
-      })
-    ) {
-      return true;
-    }
+async function matchStaticBuildToken(siteId: string, token: string): Promise<unknown | null> {
+  await ensureLegacySiteBuildMigrated(siteId);
+  const builds = await SiteBuildModel.find({ siteId: new mongoose.Types.ObjectId(siteId) })
+    .select({ _id: 1, publishReturnTokenHash: 1 })
+    .lean();
+  for (const build of builds) {
+    const hash = typeof build.publishReturnTokenHash === 'string' ? build.publishReturnTokenHash.trim() : '';
+    if (hash && verifyReturnWebhookToken(token, hash)) return build._id;
+  }
+  return null;
+}
 
+async function verifyCallbackToken(target: CallbackTarget, token: string, dispatch: ResolvedCallback['dispatch']): Promise<boolean> {
+  if (dispatch) return true;
+
+  if (target.kind === 'site-build') {
     const build = await SiteBuildModel.findById(target.buildId).select({ publishReturnTokenHash: 1 }).lean();
     const hash =
       build && typeof build.publishReturnTokenHash === 'string' ? build.publishReturnTokenHash.trim() : '';
     return Boolean(hash && verifyReturnWebhookToken(token, hash));
-  }
-
-  if (
-    await consumeDispatchCallbackToken({
-      siteId: target.siteId,
-      token,
-      buildId: null,
-    })
-  ) {
-    return true;
   }
 
   const doc = await SiteSettingsModel.findOne({ siteId: new mongoose.Types.ObjectId(target.siteId) })
@@ -153,15 +171,24 @@ export async function siteBuildCallbackHandler(req: Request, res: Response, buil
     return;
   }
 
-  const target = await resolveCallbackTarget(siteId, buildSlug);
-  if (!target) {
+  const resolved = await resolveCallbackTarget(siteId, token, buildSlug);
+  if (!resolved) {
     res.status(404).end();
     return;
   }
 
-  if (!(await verifyCallbackToken(target, token))) {
+  const { target: initialTarget, dispatch } = resolved;
+  let target = initialTarget;
+  if (!(await verifyCallbackToken(target, token, dispatch))) {
     res.status(404).end();
     return;
+  }
+
+  if (target.kind === 'legacy-settings') {
+    const staticBuildId = await matchStaticBuildToken(siteId, token);
+    if (staticBuildId) {
+      target = { kind: 'site-build', siteId, buildId: staticBuildId };
+    }
   }
 
   const body = req.body;
@@ -178,5 +205,14 @@ export async function siteBuildCallbackHandler(req: Request, res: Response, buil
   }
 
   await persistCallbackResult(target, body as Record<string, unknown>);
+
+  if (dispatch) {
+    await consumeDispatchCallbackToken({
+      siteId,
+      token,
+      buildId: dispatch.buildId ?? undefined,
+    });
+  }
+
   res.status(204).end();
 }

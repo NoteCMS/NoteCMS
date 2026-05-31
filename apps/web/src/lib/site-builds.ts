@@ -60,17 +60,38 @@ export function buildTriggerBlockedReason(
   return 'You cannot run this build';
 }
 
+function formatBuildOutcome(status: string | null | undefined): string | null {
+  const st = status?.trim().toLowerCase();
+  if (st === 'success') return 'Succeeded';
+  if (st === 'failure') return 'Failed';
+  if (st === 'cancelled') return 'Cancelled';
+  return st ? st : null;
+}
+
+export function isBuildInProgress(build: SiteBuildGql): boolean {
+  if (!build.publishLastTriggerAt || build.publishLastTriggerOk === false) return false;
+  const triggerMs = new Date(build.publishLastTriggerAt).getTime();
+  const returnMs = build.publishLastReturnAt ? new Date(build.publishLastReturnAt).getTime() : 0;
+  return triggerMs > returnMs;
+}
+
 export function buildStatusLine(build: SiteBuildGql): string {
-  if (build.publishLastReturnAt) {
-    const when = new Date(build.publishLastReturnAt).toLocaleString();
-    const st = build.publishLastReturnStatus?.trim();
-    return `Last finished ${when}${st ? ` · ${st}` : ''}`;
+  const returnMs = build.publishLastReturnAt ? new Date(build.publishLastReturnAt).getTime() : 0;
+  const triggerMs = build.publishLastTriggerAt ? new Date(build.publishLastTriggerAt).getTime() : 0;
+
+  if (returnMs && returnMs >= triggerMs) {
+    const when = new Date(build.publishLastReturnAt!).toLocaleString();
+    const outcome = formatBuildOutcome(build.publishLastReturnStatus);
+    return outcome ? `${outcome} ${when}` : `Finished ${when}`;
   }
-  if (build.publishLastTriggerAt) {
-    const when = new Date(build.publishLastTriggerAt).toLocaleString();
+
+  if (triggerMs) {
+    const when = new Date(build.publishLastTriggerAt!).toLocaleString();
     if (build.publishLastTriggerOk === false) return `Started ${when} · something went wrong`;
+    if (isBuildInProgress(build)) return `Running since ${when}`;
     return `Started ${when}`;
   }
+
   if (isBuildDispatchReady(build)) return 'Ready to run';
   return 'Needs setup';
 }
@@ -83,11 +104,13 @@ export function buildsSummaryFromList(builds: SiteBuildGql[], loading: boolean):
   const latest = [...builds]
     .filter((b) => b.publishLastReturnAt || b.publishLastTriggerAt)
     .sort((a, b) => {
-      const ta = new Date(b.publishLastReturnAt ?? b.publishLastTriggerAt ?? 0).getTime();
-      const tb = new Date(a.publishLastReturnAt ?? a.publishLastTriggerAt ?? 0).getTime();
+      const ta = new Date(a.publishLastReturnAt ?? a.publishLastTriggerAt ?? 0).getTime();
+      const tb = new Date(b.publishLastReturnAt ?? b.publishLastTriggerAt ?? 0).getTime();
       return ta - tb;
     })[0];
-  if (latest?.publishLastReturnAt) {
+  const latestReturnMs = latest?.publishLastReturnAt ? new Date(latest.publishLastReturnAt).getTime() : 0;
+  const latestTriggerMs = latest?.publishLastTriggerAt ? new Date(latest.publishLastTriggerAt).getTime() : 0;
+  if (latest?.publishLastReturnAt && latestReturnMs >= latestTriggerMs) {
     return `${builds.length} build${builds.length === 1 ? '' : 's'} · last finished ${new Date(latest.publishLastReturnAt).toLocaleString()}`;
   }
   return `${builds.length} build${builds.length === 1 ? '' : 's'} · ${suffix}`;

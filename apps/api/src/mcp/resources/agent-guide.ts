@@ -74,10 +74,14 @@ Use **read** tools before **write** tools. Never guess ids or field keys.
 
 **Typical edit flow:**
 
-1. \`notecms_create_entry\` or \`notecms_update_entry\` — writes **draft**.
-2. \`notecms_publish_entry\` — copies draft → published; entry appears on site / in SSG.
+1. \`notecms_get_entry\` — read current draft **data** and **meta** first.
+2. \`notecms_create_entry\` or \`notecms_update_entry\` — writes **draft** (only send fields you intend to change).
+3. \`notecms_get_entry\` again — verify draft **data** (e.g. \`data.blocks.length > 0\`) before publishing.
+4. \`notecms_publish_entry\` — copies draft → published; check \`verification\` in the response.
 
 \`hasUnpublishedChanges: true\` on a published entry means draft differs from live.
+
+**Never publish immediately after update without re-reading the entry.** The API rejects publishing an empty draft when live content still exists.
 
 API keys **without** \`entries:draft:read\` only see **published** content in list/get tools.
 
