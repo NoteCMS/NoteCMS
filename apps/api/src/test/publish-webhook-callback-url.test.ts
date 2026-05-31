@@ -11,7 +11,7 @@ import { buildPublishCompletionCallbackUrl } from '../site/publish-webhook-servi
 describe('buildPublishCompletionCallbackUrl', () => {
   it('embeds token as query param', () => {
     const url = buildPublishCompletionCallbackUrl('507f1f77bcf86cd799439011', 'tok_en');
-    expect(url).toBe('https://api.example.com/hooks/site-build/507f1f77bcf86cd799439011?token=tok_en');
+    expect(url).toBe('https://api.example.com/api/hooks/site-build/507f1f77bcf86cd799439011?token=tok_en');
   });
 
   it('encodes token for query string', () => {

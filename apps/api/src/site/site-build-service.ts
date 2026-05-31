@@ -10,6 +10,7 @@ import {
   triggerRepositoryDispatch,
 } from './publish-webhook-service.js';
 import { generateReturnWebhookToken, hashReturnWebhookToken } from './publish-webhook-token.js';
+import { buildSiteBuildHookPath } from '../http/site-build-hook-paths.js';
 import { env } from '../config/env.js';
 
 export type SiteBuildLean = SiteBuildDoc;
@@ -39,7 +40,7 @@ export function buildSiteBuildWebhookPostUrl(siteId: string, buildSlug: string):
   if (!base) {
     throw new Error('PUBLIC_API_BASE_URL is not set; cannot build callback URL for workflows.');
   }
-  return `${base}/hooks/site-build/${encodeURIComponent(siteId)}/${encodeURIComponent(buildSlug)}`;
+  return `${base}${buildSiteBuildHookPath(siteId, buildSlug)}`;
 }
 
 export function buildSiteBuildCompletionCallbackUrl(siteId: string, buildSlug: string, plainToken: string): string {
@@ -49,7 +50,7 @@ export function buildSiteBuildCompletionCallbackUrl(siteId: string, buildSlug: s
       'PUBLIC_API_BASE_URL must be set on the API so we can give you a completion callback URL. Ask whoever hosts this CMS.',
     );
   }
-  const url = new URL(`${base}/hooks/site-build/${encodeURIComponent(siteId)}/${encodeURIComponent(buildSlug)}`);
+  const url = new URL(`${base}${buildSiteBuildHookPath(siteId, buildSlug)}`);
   url.searchParams.set('token', plainToken);
   return url.toString();
 }
@@ -393,6 +394,7 @@ export async function triggerSiteBuild(params: {
     siteId: params.siteId,
     triggeredByUserId: params.triggeredByUserId,
     settings: build,
+    buildId: String(build._id),
     buildSlug: build.slug,
     buildLabel: build.label,
     onTriggerResult: async (triggerResult) => {

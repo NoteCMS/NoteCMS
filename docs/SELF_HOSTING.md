@@ -88,7 +88,7 @@ Run only **one** API replica with `BACKUP_SCHEDULER_ENABLED=true` to avoid dupli
 | `GRAPHQL_RATE_LIMIT_MAX`, `GRAPHQL_RATE_LIMIT_WINDOW_MS`               | Per-IP GraphQL rate limit (default 400 requests / 15 minutes).                                    |
 | `MCP_RATE_LIMIT_UNAUTH_MAX`, `MCP_RATE_LIMIT_WINDOW_MS` | Unauthenticated MCP `/api/mcp` probes per IP (default **60** / 15 minutes). Authenticated requests are not rate limited. Set `MCP_RATE_LIMIT_UNAUTH_MAX=0` to disable. |
 | `CSP_CONNECT_SRC_EXTRA`                                              | Optional space- or comma-separated extra `connect-src` tokens for the **web** container CSP (e.g. another API origin). Used when generating `serve.json` at container start. |
-| `PUBLIC_API_BASE_URL`                                                | Public origin of the **API** (no trailing slash), e.g. `https://api.example.com`. Used so the admin UI can generate GitHub **build completion** callback URLs (`POST /hooks/site-build/:siteId`). |
+| `PUBLIC_API_BASE_URL`                                                | Public origin of the **API** (no trailing slash), e.g. `https://api.example.com` or `https://cms.example.com` when `/api/*` is proxied to the API. Used so the admin UI can generate GitHub **build completion** callback URLs (`POST /api/hooks/site-build/:siteId/...`). |
 
 The web image runs [`serve`](https://github.com/vercel/serve) with a generated **`serve.json`** that sets **Content-Security-Policy** and related headers. Tighten `connect-src` by setting `NOTECMS_GRAPHQL_URL` and/or `PUBLIC_URL` so the API origin is explicit; with only `NOTECMS_GRAPHQL_PORT`, the CSP allows `http:` and `https:` for API calls (different port than the SPA).
 
@@ -106,7 +106,7 @@ You can point `NOTECMS_API_IMAGE=notecms-api:local` and `NOTECMS_WEB_IMAGE=notec
 
 ## Reverse proxy (Caddy) — external
 
-Run Caddy (or similar) on the host or in another stack. Example: terminate TLS for `cms.example.com`, proxy `/` to `127.0.0.1:5173`, `/graphql` to `127.0.0.1:4000/graphql`, and `/api/*` to `127.0.0.1:4000` if you use path-based routing on one hostname; or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
+Run Caddy (or similar) on the host or in another stack. Example: terminate TLS for `cms.example.com`, proxy `/` to `127.0.0.1:5173`, `/graphql` to `127.0.0.1:4000/graphql`, and `/api/*` to `127.0.0.1:4000` (covers MCP and build completion callbacks at `/api/hooks/site-build/...`). Legacy callbacks at `/hooks/site-build/...` still work if you proxy that path to the API too. Or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
 
 ## Logs
 

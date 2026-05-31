@@ -482,6 +482,11 @@ export function SiteBuildsSheet({
 
                               <div className="space-y-2 border-t border-border/60 pt-4">
                                 <p className="text-sm font-medium">After the workflow finishes</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Each Run sends a one-time completion URL in the GitHub payload as{' '}
+                                  <span className="font-mono">buildCallbackUrl</span>. Your workflow can POST to that when
+                                  it finishes — no manual secret needed.
+                                </p>
                                 {build.publishLastReturnRunUrl ? (
                                   <a
                                     href={build.publishLastReturnRunUrl}
@@ -494,38 +499,53 @@ export function SiteBuildsSheet({
                                 ) : null}
                                 {build.publishWebhookPostUrl ? (
                                   <p className="text-xs text-muted-foreground break-all">
-                                    Callback base: {build.publishWebhookPostUrl}
+                                    Callback base (legacy): {build.publishWebhookPostUrl}
                                   </p>
                                 ) : null}
-                                <div className="flex flex-wrap gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="outline"
-                                    size="sm"
-                                    disabled={formRotating}
-                                    onClick={() => void handleRotateReturn()}
-                                  >
-                                    {formRotating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                                    {build.hasPublishReturnToken ? 'New completion link' : 'Generate completion link'}
-                                  </Button>
-                                  {build.hasPublishReturnToken ? (
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="sm"
-                                      className="text-muted-foreground"
-                                      disabled={formDisablingReturn}
-                                      onClick={() => void handleDisableReturn()}
-                                    >
-                                      Stop listening
-                                    </Button>
-                                  ) : null}
-                                </div>
-                                {returnSetup?.buildId === build.id ? (
-                                  <p className="rounded-md bg-muted/60 p-2 font-mono text-xs break-all">
-                                    {returnSetup.callbackUrl}
-                                  </p>
-                                ) : null}
+                                <details className="text-xs text-muted-foreground">
+                                  <summary className="cursor-pointer select-none">Optional: static completion link</summary>
+                                  <div className="mt-2 space-y-2">
+                                    <p>
+                                      Only needed if your workflow cannot read{' '}
+                                      <span className="font-mono">github.event.client_payload.buildCallbackUrl</span>.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        disabled={formRotating}
+                                        onClick={() => void handleRotateReturn()}
+                                      >
+                                        {formRotating ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                                        {build.hasPublishReturnToken ? 'New static link' : 'Generate static link'}
+                                      </Button>
+                                      {build.hasPublishReturnToken ? (
+                                        <Button
+                                          type="button"
+                                          variant="ghost"
+                                          size="sm"
+                                          className="text-muted-foreground"
+                                          disabled={formDisablingReturn}
+                                          onClick={() => void handleDisableReturn()}
+                                        >
+                                          Stop listening
+                                        </Button>
+                                      ) : null}
+                                    </div>
+                                    {returnSetup?.buildId === build.id ? (
+                                      <div className="space-y-2">
+                                        <p className="rounded-md bg-muted/60 p-2 font-mono text-xs break-all">
+                                          {returnSetup.callbackUrl}
+                                        </p>
+                                        <p className="text-xs text-muted-foreground">
+                                          GitHub must POST to this URL when the workflow finishes. Opening it in a browser
+                                          will not work.
+                                        </p>
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                </details>
                               </div>
                             </div>
                           ) : null}

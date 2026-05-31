@@ -4,6 +4,7 @@ import { SiteBuildModel } from '../db/models/SiteBuild.js';
 import { SiteSettingsModel } from '../db/models/SiteSettings.js';
 import { parseLastPublishedWatermarkFromDetail } from '../site/publish-watermark-detail.js';
 import { verifyReturnWebhookToken } from '../site/publish-webhook-token.js';
+import { consumeDispatchCallbackToken } from '../site/dispatch-callback-token.js';
 import { ensureLegacySiteBuildMigrated } from '../site/site-build-service.js';
 
 const ALLOWED_STATUS = new Set(['success', 'failure', 'cancelled']);
@@ -36,10 +37,13 @@ type CallbackTarget =
   | { kind: 'site-build'; siteId: string; buildId: unknown };
 
 async function resolveCallbackTarget(siteId: string, buildSlug?: string): Promise<CallbackTarget | null> {
+  if (!mongoose.Types.ObjectId.isValid(siteId)) return null;
+  const siteOid = new mongoose.Types.ObjectId(siteId);
+
   if (buildSlug) {
     await ensureLegacySiteBuildMigrated(siteId);
     const slug = buildSlug.trim().toLowerCase();
-    const build = await SiteBuildModel.findOne({ siteId, slug }).select({ _id: 1 }).lean();
+    const build = await SiteBuildModel.findOne({ siteId: siteOid, slug }).select({ _id: 1 }).lean();
     if (!build) return null;
     return { kind: 'site-build', siteId, buildId: build._id };
   }
@@ -48,18 +52,42 @@ async function resolveCallbackTarget(siteId: string, buildSlug?: string): Promis
 
 async function verifyCallbackToken(target: CallbackTarget, token: string): Promise<boolean> {
   if (target.kind === 'site-build') {
+    if (
+      await consumeDispatchCallbackToken({
+        siteId: target.siteId,
+        token,
+        buildId: target.buildId,
+      })
+    ) {
+      return true;
+    }
+
     const build = await SiteBuildModel.findById(target.buildId).select({ publishReturnTokenHash: 1 }).lean();
     const hash =
       build && typeof build.publishReturnTokenHash === 'string' ? build.publishReturnTokenHash.trim() : '';
     return Boolean(hash && verifyReturnWebhookToken(token, hash));
   }
 
-  const doc = await SiteSettingsModel.findOne({ siteId: target.siteId }).select({ publishReturnTokenHash: 1 }).lean();
+  if (
+    await consumeDispatchCallbackToken({
+      siteId: target.siteId,
+      token,
+      buildId: null,
+    })
+  ) {
+    return true;
+  }
+
+  const doc = await SiteSettingsModel.findOne({ siteId: new mongoose.Types.ObjectId(target.siteId) })
+    .select({ publishReturnTokenHash: 1 })
+    .lean();
   const hash = doc && typeof doc.publishReturnTokenHash === 'string' ? doc.publishReturnTokenHash.trim() : '';
   if (hash && verifyReturnWebhookToken(token, hash)) return true;
 
   await ensureLegacySiteBuildMigrated(target.siteId);
-  const builds = await SiteBuildModel.find({ siteId: target.siteId }).select({ publishReturnTokenHash: 1 }).lean();
+  const builds = await SiteBuildModel.find({ siteId: new mongoose.Types.ObjectId(target.siteId) })
+    .select({ publishReturnTokenHash: 1 })
+    .lean();
   return builds.some((b) => {
     const h = typeof b.publishReturnTokenHash === 'string' ? b.publishReturnTokenHash.trim() : '';
     return Boolean(h && verifyReturnWebhookToken(token, h));
@@ -91,7 +119,7 @@ async function persistCallbackResult(target: CallbackTarget, body: Record<string
     return;
   }
 
-  await SiteSettingsModel.updateOne({ siteId: target.siteId }, { $set: baseSet });
+  await SiteSettingsModel.updateOne({ siteId: new mongoose.Types.ObjectId(target.siteId) }, { $set: baseSet });
 }
 
 /**

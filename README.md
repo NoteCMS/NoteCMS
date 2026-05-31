@@ -113,14 +113,32 @@ Per-workspace **outbound** webhooks call GitHub’s [`repository_dispatch`](http
 **Environment (API)**
 
 - GitHub PATs at rest are encrypted with the same key material as **`JWT_SECRET`** unless you set optional **`PUBLISH_WEBHOOK_ENCRYPTION_KEY`** (use that only if you want PAT ciphertext isolated from JWT rotation).
-- `PUBLIC_API_BASE_URL` — public origin of this API with no trailing slash (for example `https://api.example.com`). Required so the admin UI can generate the completion callback URL (`POST /hooks/site-build/:siteId` with `?token=`).
+- `PUBLIC_API_BASE_URL` — public origin of this API with no trailing slash (for example `https://api.example.com` or your CMS hostname when `/api/*` is proxied to the API). Required so the admin UI can generate the completion callback URL (`POST /api/hooks/site-build/:siteId/...` with `?token=`).
 - Optional: `HOOKS_RATE_LIMIT_MAX`, `HOOKS_RATE_LIMIT_WINDOW_MS` — rate limit for the public callback route (per IP).
 
 **GitHub workflow**
 
 1. Add `on: repository_dispatch: types: [your_event_type]` matching the event type configured in the CMS.
-2. From the CMS, generate a **completion callback URL** (owner or platform admin). It includes the signing secret in the query string — store that entire URL as one repository secret (for example `CMS_BUILD_CALLBACK_URL`).
-3. At the end of the workflow (success or failure), POST JSON to that URL (no separate Bearer secret needed):
+2. Each Run from the CMS includes a **one-time completion URL** in `github.event.client_payload.buildCallbackUrl`. POST to that URL when the workflow finishes (success or failure) — no repository secret required.
+3. Optional legacy: generate a **static completion link** in site settings if your workflow cannot read `client_payload`. Store that full URL as a repository secret (for example `CMS_BUILD_CALLBACK_URL`).
+4. At the end of the workflow (success or failure), POST JSON to the callback URL (no separate Bearer secret needed when using the full URL from `buildCallbackUrl`):
+
+```yaml
+- name: Tell Note CMS the build finished
+  if: always()
+  env:
+    CALLBACK_URL: ${{ github.event.client_payload.buildCallbackUrl }}
+  run: |
+    if [ -z "$CALLBACK_URL" ]; then
+      echo "No buildCallbackUrl in dispatch payload; skipping CMS callback."
+      exit 0
+    fi
+    curl -sS -X POST "$CALLBACK_URL" \
+      -H "Content-Type: application/json" \
+      -d '{"status":"'"${{ job.status == 'success' && 'success' || 'failure' }}"'","runUrl":"'"$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"'"}'
+```
+
+Legacy static secret workflow:
 
 ```bash
 curl -sS -X POST "$CMS_BUILD_CALLBACK_URL" \

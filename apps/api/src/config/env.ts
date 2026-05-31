@@ -48,6 +48,8 @@ export const env = {
   publicApiBaseUrl: process.env.PUBLIC_API_BASE_URL?.trim().replace(/\/$/, '') || undefined,
   hooksRateLimitMax: Number(process.env.HOOKS_RATE_LIMIT_MAX ?? 120),
   hooksRateLimitWindowMs: Number(process.env.HOOKS_RATE_LIMIT_WINDOW_MS ?? 900_000),
+  /** Hours until an unused dispatch completion token expires (default 168 = 7 days). */
+  dispatchCallbackTtlHours: Number(process.env.DISPATCH_CALLBACK_TTL_HOURS ?? 168),
   /** When set, POST JSON `{ event, idempotencyKey, at, ...payload }` on entry publish/unpublish/delete/restore/rollback. */
   contentWebhookUrl: process.env.CONTENT_WEBHOOK_URL?.trim() || undefined,
   /** Optional HMAC-SHA256 secret; when set, `X-NoteCMS-Signature: sha256=<hex>` is sent for the raw body. */

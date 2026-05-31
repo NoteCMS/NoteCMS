@@ -23,6 +23,7 @@ import { resolvers } from './resolvers/index.js';
 import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
 import { assertMcpEndpointEnabledForContext } from './mcp/mcp-site-gate.js';
 import { siteBuildCallbackHandler } from './http/site-build-callback.js';
+import { SITE_BUILD_HOOK_BASE, SITE_BUILD_HOOK_LEGACY_BASE } from './http/site-build-hook-paths.js';
 import { startBackupScheduler } from './backups/scheduler.js';
 import { getPlatformMaintenanceMode } from './db/models/PlatformState.js';
 
@@ -94,28 +95,46 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/hooks/site-build/:siteId', hooksLimiter, async (req, res) => {
-  try {
-    await siteBuildCallbackHandler(req, res);
-  } catch (err) {
-    if (!res.headersSent) {
-      console.error('[hooks/site-build]', err);
-      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
-    }
-  }
-});
+const siteBuildHookMethodNotAllowed = (_req: express.Request, res: express.Response) => {
+  res
+    .status(405)
+    .setHeader('Allow', 'POST')
+    .json({
+      message:
+        'Build completion callbacks must be POST requests with JSON {"status":"success"|"failure"|"cancelled"} and a valid token.',
+    });
+};
 
-app.post('/hooks/site-build/:siteId/:buildSlug', hooksLimiter, async (req, res) => {
-  try {
-    const buildSlug = typeof req.params.buildSlug === 'string' ? req.params.buildSlug : undefined;
-    await siteBuildCallbackHandler(req, res, buildSlug);
-  } catch (err) {
-    if (!res.headersSent) {
-      console.error('[hooks/site-build]', err);
-      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
+function registerSiteBuildHookRoutes(basePath: string) {
+  app.post(`${basePath}/:siteId/:buildSlug`, hooksLimiter, async (req, res) => {
+    try {
+      const buildSlug = typeof req.params.buildSlug === 'string' ? req.params.buildSlug : undefined;
+      await siteBuildCallbackHandler(req, res, buildSlug);
+    } catch (err) {
+      if (!res.headersSent) {
+        console.error('[hooks/site-build]', err);
+        res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
+      }
     }
-  }
-});
+  });
+
+  app.post(`${basePath}/:siteId`, hooksLimiter, async (req, res) => {
+    try {
+      await siteBuildCallbackHandler(req, res);
+    } catch (err) {
+      if (!res.headersSent) {
+        console.error('[hooks/site-build]', err);
+        res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Callback failed' });
+      }
+    }
+  });
+
+  app.get(`${basePath}/:siteId/:buildSlug`, hooksLimiter, siteBuildHookMethodNotAllowed);
+  app.get(`${basePath}/:siteId`, hooksLimiter, siteBuildHookMethodNotAllowed);
+}
+
+registerSiteBuildHookRoutes(SITE_BUILD_HOOK_BASE);
+registerSiteBuildHookRoutes(SITE_BUILD_HOOK_LEGACY_BASE);
 
 app.use(
   '/graphql',

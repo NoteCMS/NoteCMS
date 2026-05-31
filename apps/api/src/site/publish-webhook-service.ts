@@ -1,3 +1,5 @@
+import { buildSiteBuildHookPath } from '../http/site-build-hook-paths.js';
+import { createDispatchCallbackToken, deleteDispatchCallbackToken } from './dispatch-callback-token.js';
 import { env } from '../config/env.js';
 import { SiteModel } from '../db/models/Site.js';
 import { SiteSettingsModel } from '../db/models/SiteSettings.js';
@@ -83,7 +85,7 @@ export function buildPublishCompletionCallbackUrl(siteId: string, plainToken: st
       'PUBLIC_API_BASE_URL must be set on the API so we can give you a completion callback URL. Ask whoever hosts this CMS.',
     );
   }
-  const url = new URL(`${base}/hooks/site-build/${encodeURIComponent(siteId)}`);
+  const url = new URL(`${base}${buildSiteBuildHookPath(siteId)}`);
   url.searchParams.set('token', plainToken);
   return url.toString();
 }
@@ -101,11 +103,12 @@ export async function triggerRepositoryDispatch(params: {
   siteId: string;
   triggeredByUserId: string;
   settings: SiteSettingsLean;
+  buildId?: string | null;
   buildSlug?: string;
   buildLabel?: string;
   onTriggerResult?: (result: { ok: boolean; statusCode: number; message: string }) => Promise<void>;
 }): Promise<{ ok: boolean; statusCode: number; message: string }> {
-  const { siteId, triggeredByUserId, settings, buildSlug, buildLabel, onTriggerResult } = params;
+  const { siteId, triggeredByUserId, settings, buildId, buildSlug, buildLabel, onTriggerResult } = params;
 
   const enabled =
     settings.enabled !== undefined && settings.enabled !== null
@@ -139,9 +142,7 @@ export async function triggerRepositoryDispatch(params: {
 
   let postUrl = '';
   try {
-    postUrl = buildSlug
-      ? `${env.publicApiBaseUrl}/hooks/site-build/${encodeURIComponent(siteId)}/${encodeURIComponent(buildSlug)}`
-      : buildPublishWebhookPostUrl(siteId);
+    postUrl = buildSlug ? `${env.publicApiBaseUrl}${buildSiteBuildHookPath(siteId, buildSlug)}` : buildPublishWebhookPostUrl(siteId);
   } catch {
     postUrl = '';
   }
@@ -160,6 +161,15 @@ export async function triggerRepositoryDispatch(params: {
   }
   if (postUrl) {
     clientPayload.buildCallbackPostUrl = postUrl;
+  }
+
+  const dispatchCallback = await createDispatchCallbackToken({
+    siteId,
+    buildId: buildId ?? null,
+    buildSlug,
+  });
+  if (dispatchCallback) {
+    clientPayload.buildCallbackUrl = dispatchCallback.callbackUrl;
   }
 
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/dispatches`;
@@ -204,6 +214,9 @@ export async function triggerRepositoryDispatch(params: {
       await persistTrigger(result);
       return result;
     }
+    if (dispatchCallback) {
+      await deleteDispatchCallbackToken(dispatchCallback.tokenId);
+    }
     const text = await res.text().catch(() => '');
     const safe = text.length > 500 ? `${text.slice(0, 500)}…` : text;
     const message =
@@ -216,6 +229,9 @@ export async function triggerRepositoryDispatch(params: {
     await persistTrigger({ ok: false, statusCode, message });
     return { ok: false, statusCode, message };
   } catch (e) {
+    if (dispatchCallback) {
+      await deleteDispatchCallbackToken(dispatchCallback.tokenId);
+    }
     const msg = e instanceof Error && e.name === 'AbortError' ? 'Request to GitHub timed out.' : 'Could not reach GitHub.';
     const persistTrigger = async (result: { ok: boolean; statusCode: number; message: string }) => {
       if (onTriggerResult) {
