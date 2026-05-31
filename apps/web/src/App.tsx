@@ -508,6 +508,8 @@ export function App() {
               sites={sites}
               showSiteAdminTools={showSiteAdminTools}
               isGlobalAdmin={isAdmin}
+              userDisplayName={userDisplayName}
+              userEmail={userEmail}
             />
           ) : (
             <div className="text-sm text-muted-foreground">Page under construction.</div>

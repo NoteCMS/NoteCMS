@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
-  FileText,
+  Clock,
+  ExternalLink,
   Globe,
   Image,
   KeyRound,
   LayoutGrid,
   Loader2,
+  Plus,
   RefreshCw,
   Settings,
   Shapes,
@@ -14,17 +16,14 @@ import {
 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { LoadErrorAlert } from '@/components/load-error-alert';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import {
   Item,
   ItemContent,
   ItemDescription,
   ItemGroup,
-  ItemMedia,
   ItemTitle,
 } from '@/components/ui/item';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -37,6 +36,8 @@ type EntryListRow = {
   contentTypeId: string;
   updatedAt: string;
   lastEditedBy: { email: string } | null;
+  lifecycleStatus?: string;
+  hasUnpublishedChanges?: boolean;
 };
 
 type WorkspaceOverview = {
@@ -58,9 +59,10 @@ type DashboardPageProps = {
   token: string;
   workspaceSiteId: string;
   sites: Site[];
-  /** Site owner: API keys, integration hints */
   showSiteAdminTools: boolean;
   isGlobalAdmin: boolean;
+  userDisplayName?: string | null;
+  userEmail?: string | null;
 };
 
 function siteUrlHref(url: string): string {
@@ -75,7 +77,7 @@ function formatRelativeUpdated(iso: string): string {
   if (Number.isNaN(t)) return '';
   const diff = Date.now() - t;
   const mins = Math.floor(diff / 60_000);
-  if (mins < 1) return 'just now';
+  if (mins < 1) return 'Just now';
   if (mins < 60) return `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
@@ -84,16 +86,12 @@ function formatRelativeUpdated(iso: string): string {
   return new Date(iso).toLocaleDateString();
 }
 
-function initialsFromEmail(email: string): string {
-  const local = email.split('@')[0]?.trim() ?? '';
-  if (!local) return '?';
-  const segments = local.split(/[._\s-]+/).filter(Boolean);
-  if (segments.length >= 2) {
-    const a = segments[0]?.[0];
-    const b = segments[1]?.[0];
-    if (a && b) return `${a}${b}`.toUpperCase();
-  }
-  return local.slice(0, 2).toUpperCase();
+function getGreeting(name?: string | null): string {
+  const hr = new Date().getHours();
+  const userName = name?.split(' ')[0]?.trim() || 'Bram';
+  if (hr < 12) return `Good morning, ${userName}`;
+  if (hr < 18) return `Good afternoon, ${userName}`;
+  return `Good evening, ${userName}`;
 }
 
 export function DashboardPage({
@@ -102,6 +100,8 @@ export function DashboardPage({
   sites,
   showSiteAdminTools,
   isGlobalAdmin,
+  userDisplayName,
+  userEmail,
 }: DashboardPageProps) {
   const activeSite = sites.find((s) => s.id === workspaceSiteId);
   const siteTitle = activeSite?.name?.trim() || 'Workspace';
@@ -170,7 +170,7 @@ export function DashboardPage({
         types.map((t) =>
           gqlRequest<{ entries: EntryListRow[] }>(
             token,
-            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId,limit:8,offset:0){ id name contentTypeId updatedAt lastEditedBy { email } } }',
+            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId,limit:5,offset:0){ id name contentTypeId updatedAt lastEditedBy { email } lifecycleStatus hasUnpublishedChanges } }',
             { siteId: workspaceSiteId, contentTypeId: t.id },
           ).catch(() => ({ entries: [] as EntryListRow[] })),
         ),
@@ -188,7 +188,7 @@ export function DashboardPage({
         }
       }
       merged.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
-      setRecentEntries(merged.slice(0, 14));
+      setRecentEntries(merged.slice(0, 5));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load dashboard');
       setContentTypes([]);
@@ -203,317 +203,332 @@ export function DashboardPage({
     void load();
   }, [load]);
 
-  const roleLabel = activeSite?.role ? activeSite.role.charAt(0).toUpperCase() + activeSite.role.slice(1) : 'Member';
+  const isOwner = activeSite?.role === 'owner';
+  const canCreateEntries = isOwner || activeSite?.role === 'editor';
+  const liveSiteUrl = activeSite?.url?.trim() ?? '';
 
-  const canCreateEntries =
-    activeSite?.role === 'owner' || activeSite?.role === 'editor';
-
-  const firstSidebarType = useMemo(
+  const sidebarContentTypes = useMemo(
     () =>
       contentTypes
         .filter((c) => c.options?.showInSidebar)
-        .sort((a, b) => (a.options?.sidebarOrder ?? 100) - (b.options?.sidebarOrder ?? 100))[0],
+        .sort((a, b) => (a.options?.sidebarOrder ?? 100) - (b.options?.sidebarOrder ?? 100)),
     [contentTypes],
   );
+
+  const primaryCreate = useMemo(() => {
+    if (sidebarContentTypes[0]) {
+      const type = sidebarContentTypes[0];
+      return {
+        label: type.options?.sidebarLabel?.trim() || type.name,
+        to: `/content/${type.slug}/new`,
+      };
+    }
+    return { label: 'entry', to: '/entries/new' };
+  }, [sidebarContentTypes]);
+
+  const contentTypeLinks = useMemo(() => {
+    const fromOverview = overview?.byContentType ?? [];
+    if (fromOverview.length > 0) {
+      return [...fromOverview].sort((a, b) => b.entryCount - a.entryCount);
+    }
+    return contentTypes.map((t) => ({
+      contentTypeId: t.id,
+      name: t.name,
+      slug: t.slug,
+      entryCount: 0,
+    }));
+  }, [overview?.byContentType, contentTypes]);
 
   const showAdminCard = showSiteAdminTools || isGlobalAdmin;
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-6">
+    <div className="w-full space-y-6">
       {error ? (
-        <LoadErrorAlert
-          title="Dashboard couldn't load"
-          message={error}
-          onRetry={() => void load()}
-        />
+        <LoadErrorAlert title="Dashboard couldn't load" message={error} onRetry={() => void load()} />
       ) : null}
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="border-border/80 bg-card lg:col-span-2">
-          <CardHeader className="pb-2">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div className="space-y-1">
-                <CardTitle className="text-xl font-semibold tracking-tight">{siteTitle}</CardTitle>
-                {overview?.siteTitle && overview.siteTitle !== siteTitle ? (
-                  <p className="text-sm text-muted-foreground">
-                    Public title: <span className="text-foreground">{overview.siteTitle}</span>
-                  </p>
-                ) : null}
-                <CardDescription className="flex flex-wrap items-center gap-2">
-                  {activeSite?.url ? (
-                    <a
-                      href={siteUrlHref(activeSite.url)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="text-primary underline-offset-4 hover:underline"
-                    >
-                      {activeSite.url.replace(/^https?:\/\//i, '')}
-                    </a>
-                  ) : (
-                    <span>No URL set</span>
-                  )}
-                </CardDescription>
-              </div>
-              <Badge variant="secondary">{roleLabel}</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {loading ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  {Array.from({ length: 4 }).map((_, i) => (
-                    <Skeleton key={i} className="h-16 w-full rounded-xl" />
-                  ))}
-                </div>
-                <Skeleton className="h-20 w-full rounded-xl" />
-              </div>
-            ) : overview ? (
-              <>
-                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                  <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-                    <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">{overview.entryCount}</p>
-                    <p className="text-xs font-medium text-muted-foreground">Entries</p>
-                  </div>
-                  <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-                    <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">{overview.contentTypeCount}</p>
-                    <p className="text-xs font-medium text-muted-foreground">Content types</p>
-                  </div>
-                  <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-                    <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">{overview.assetCount}</p>
-                    <p className="text-xs font-medium text-muted-foreground">Assets</p>
-                  </div>
-                  <div className="rounded-xl border border-border/60 bg-muted/30 px-3 py-2.5">
-                    <p className="text-2xl font-semibold tabular-nums tracking-tight text-foreground">{overview.memberCount}</p>
-                    <p className="text-xs font-medium text-muted-foreground">Members</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span>
-                    {overview.lastEntryActivity ? (
-                      <>
-                        Last entry activity{' '}
-                        <span className="font-medium text-foreground">{formatRelativeUpdated(overview.lastEntryActivity)}</span>
-                      </>
-                    ) : (
-                      'No entries in this workspace yet'
-                    )}
-                  </span>
-                  <Button variant="link" className="h-auto p-0 text-xs" asChild>
-                    <Link to="/entries">Browse all entries</Link>
-                  </Button>
-                </div>
-                <Separator />
-                <div className="space-y-2">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">By content type</p>
-                  {overview.byContentType.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No content types yet — create one to start publishing.</p>
-                  ) : (
-                    <div className="flex flex-wrap gap-2">
-                      {overview.byContentType.map((row) => (
-                        <Button key={row.contentTypeId} variant="secondary" size="sm" className="h-8 gap-1.5 font-normal" asChild>
-                          <Link to={`/content/${row.slug}`}>
-                            <span>{row.name}</span>
-                            <Badge variant="outline" className="tabular-nums font-normal">
-                              {row.entryCount}
-                            </Badge>
-                          </Link>
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            ) : null}
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/80 bg-card">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Quick actions</CardTitle>
-            <CardDescription>Common tasks for this site</CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-2">
-            {canCreateEntries ? (
-              <>
-                <Button variant="outline" className="justify-start gap-2" asChild>
-                  <Link to="/entries/new">
-                    <FileText className="size-4 shrink-0" />
-                    New entry
-                  </Link>
-                </Button>
-                {firstSidebarType ? (
-                  <Button variant="outline" className="justify-start gap-2" asChild>
-                    <Link to={`/content/${firstSidebarType.slug}/new`}>
-                      <FileText className="size-4 shrink-0" />
-                      New {firstSidebarType.options?.sidebarLabel || firstSidebarType.name}
-                    </Link>
-                  </Button>
-                ) : null}
-              </>
-            ) : (
-              <p className="rounded-xl border border-dashed border-border/80 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                Viewers can browse entries and assets; ask an editor or site owner to create new content.
-              </p>
-            )}
-            <Button variant="outline" className="justify-start gap-2" asChild>
-              <Link to="/content-types">
-                <Shapes className="size-4 shrink-0" />
-                Content types
-              </Link>
+      {/* Greeting & Header Section */}
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between py-1 px-1">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+            {getGreeting(userDisplayName || userEmail)}
+          </h1>
+          <p className="text-sm text-muted-foreground">
+            Welcome back to your workspace. Here is an overview of your content and activity.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-3">
+          {liveSiteUrl ? (
+            <Button variant="outline" size="sm" className="h-9 gap-1.5" asChild>
+              <a href={siteUrlHref(liveSiteUrl)} target="_blank" rel="noreferrer">
+                <Globe className="size-4" />
+                <span>Visit website</span>
+                <ExternalLink className="size-3 opacity-60" />
+              </a>
             </Button>
-            <Button variant="outline" className="justify-start gap-2" asChild>
-              <Link to="/entries">
-                <LayoutGrid className="size-4 shrink-0" />
-                All entries
-              </Link>
-            </Button>
-            <Button variant="outline" className="justify-start gap-2" asChild>
-              <Link to="/assets">
-                <Image className="size-4 shrink-0" />
-                Assets
-              </Link>
-            </Button>
-            <Button variant="outline" className="justify-start gap-2" asChild>
-              <Link to="/site-settings">
-                <Settings className="size-4 shrink-0" />
-                Site settings
-              </Link>
-            </Button>
-          </CardContent>
-        </Card>
+          ) : null}
+          <Button variant="ghost" size="sm" className="h-9 w-9 p-0" onClick={() => void load()} disabled={loading}>
+            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
+          </Button>
+        </div>
       </div>
 
-      <Card className="border-border/80 bg-card">
-        <CardHeader className="flex flex-row flex-wrap items-start justify-between gap-3 space-y-0">
-          <div>
-            <CardTitle className="text-base">Recent activity</CardTitle>
-            <CardDescription>Latest updates across all types in this workspace</CardDescription>
-          </div>
-          <Button variant="ghost" size="sm" className="gap-1.5" onClick={() => void load()} disabled={loading}>
-            {loading ? <Loader2 className="size-4 animate-spin" /> : <RefreshCw className="size-4" />}
-            Refresh
-          </Button>
-        </CardHeader>
-        <CardContent>
-          {loading ? (
-            <div className="space-y-3">
-              {Array.from({ length: 5 }).map((_, i) => (
-                <Skeleton key={i} className="h-14 w-full rounded-2xl" />
-              ))}
-            </div>
-          ) : recentEntries.length === 0 ? (
-            <div className="rounded-2xl border border-dashed border-border/80 bg-muted/30 px-4 py-8 text-center text-sm text-muted-foreground">
-              <p className="mb-3">No entries yet. Create a content type, then add your first entry.</p>
-              <Button asChild size="sm">
-                <Link to="/content-types">Content types</Link>
-              </Button>
-            </div>
-          ) : (
-            <ItemGroup className="gap-2">
-              {recentEntries.map((entry) => (
-                <Item key={entry.id} variant="outline" size="sm" asChild>
-                  <Link to={`/content/${entry.contentTypeSlug}/${entry.id}`}>
-                    <ItemMedia variant="icon">
-                      <Avatar className="size-8">
-                        <AvatarFallback className="text-xs">
-                          {initialsFromEmail(entry.lastEditedBy?.email ?? entry.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>{entry.name || 'Untitled'}</ItemTitle>
-                      <ItemDescription>
-                        {entry.contentTypeName}
-                        {entry.lastEditedBy?.email ? ` · ${entry.lastEditedBy.email}` : ''}
-                        {' · '}
-                        {formatRelativeUpdated(entry.updatedAt)}
-                      </ItemDescription>
-                    </ItemContent>
-                  </Link>
-                </Item>
-              ))}
-            </ItemGroup>
-          )}
-        </CardContent>
-      </Card>
-
-      {showAdminCard ? (
-        <Card className="border-border/80 bg-card">
-          <CardHeader>
-            <CardTitle className="text-base">Admin &amp; integrations</CardTitle>
-            <CardDescription>Tools that affect access, automation, or the whole platform</CardDescription>
+      {/* Main Grid: Evenly Spaced 3-Column Layout */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        {/* Column 1: Recently Updated (1 Unit Wide) */}
+        <Card className="border-border bg-card shadow-sm flex flex-col">
+          <CardHeader className="pb-3 shrink-0">
+            <CardTitle className="text-base font-semibold">Recently updated</CardTitle>
+            <CardDescription>Pick up where you left off</CardDescription>
           </CardHeader>
-          <CardContent>
-            <ItemGroup className="gap-2">
-              {showSiteAdminTools ? (
-                <>
-                  <Item variant="outline" size="sm" asChild>
-                    <Link to="/admin/api-keys">
-                      <ItemMedia variant="icon">
-                        <KeyRound className="size-4 text-muted-foreground" />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>API keys</ItemTitle>
-                        <ItemDescription>
-                          {apiKeyCount !== null ? (
-                            <>
-                              <strong className="text-foreground">{apiKeyCount}</strong> active key
-                              {apiKeyCount === 1 ? '' : 's'}
-                            </>
-                          ) : (
-                            'Scoped tokens for scripts and MCP clients'
-                          )}
-                        </ItemDescription>
-                      </ItemContent>
+          <CardContent className="flex-1 pb-6">
+            {loading ? (
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, i) => (
+                  <Skeleton key={i} className="h-14 w-full rounded-xl" />
+                ))}
+              </div>
+            ) : recentEntries.length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-muted/20 py-12 text-center h-full">
+                <Clock className="size-8 text-muted-foreground/60 mb-2" />
+                <p className="text-sm text-muted-foreground mb-4">No content has been created yet.</p>
+                {canCreateEntries && (
+                  <Button size="sm" asChild>
+                    <Link to={primaryCreate.to}>
+                      <Plus className="size-4 mr-1.5" /> New {primaryCreate.label}
                     </Link>
-                  </Item>
-                  <Item variant="outline" size="sm" asChild>
-                    <Link to="/site-settings">
-                      <ItemMedia variant="icon">
-                        <Settings className="size-4 text-muted-foreground" />
-                      </ItemMedia>
-                      <ItemContent>
-                        <ItemTitle>MCP for this site</ItemTitle>
-                        <ItemDescription>
-                          {mcpEnabled === null
-                            ? 'Open site settings to manage the MCP endpoint'
-                            : mcpEnabled
-                              ? 'MCP is enabled — agents can use tools when authenticated'
-                              : 'MCP is off — enable it in Site settings if you use AI agents'}
-                        </ItemDescription>
-                      </ItemContent>
-                    </Link>
-                  </Item>
-                </>
-              ) : null}
-              <Item variant="outline" size="sm" asChild>
-                <Link to="/users">
-                  <ItemMedia variant="icon">
-                    <Users className="size-4 text-muted-foreground" />
-                  </ItemMedia>
-                  <ItemContent>
-                    <ItemTitle>Users &amp; roles</ItemTitle>
-                    <ItemDescription>Who can access this workspace and what they can do</ItemDescription>
-                  </ItemContent>
-                </Link>
-              </Item>
-              {isGlobalAdmin ? (
-                <Item variant="outline" size="sm" asChild>
-                  <Link to="/admin/sites">
-                    <ItemMedia variant="icon">
-                      <Globe className="size-4 text-muted-foreground" />
-                    </ItemMedia>
-                    <ItemContent>
-                      <ItemTitle>All sites</ItemTitle>
-                      <ItemDescription>Create sites and manage platform-level access</ItemDescription>
-                    </ItemContent>
-                  </Link>
-                </Item>
-              ) : null}
-            </ItemGroup>
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <ItemGroup className="gap-2.5">
+                {recentEntries.map((entry) => {
+                  const isLive = entry.lifecycleStatus === 'published';
+                  const hasEdits = isLive && entry.hasUnpublishedChanges;
+
+                  return (
+                    <Item key={entry.id} variant="outline" size="xs" asChild>
+                      <Link to={`/content/${entry.contentTypeSlug}/${entry.id}`} className="hover:bg-muted/40 transition-colors">
+                        <ItemContent className="flex-row items-center justify-between gap-3 w-full">
+                          <div className="min-w-0 flex-1 space-y-0.5">
+                            <div className="flex items-center gap-2">
+                              <ItemTitle className="text-sm font-medium text-foreground truncate max-w-[120px] sm:max-w-full">
+                                {entry.name || 'Untitled'}
+                              </ItemTitle>
+                              <Badge variant="outline" className="text-[9px] font-normal font-mono px-1 py-0 shrink-0">
+                                {entry.contentTypeName}
+                              </Badge>
+                            </div>
+                            <ItemDescription className="text-[11px] text-muted-foreground truncate">
+                              {formatRelativeUpdated(entry.updatedAt)}
+                            </ItemDescription>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {hasEdits ? (
+                              <Badge variant="secondary" className="bg-amber-50 text-amber-700 dark:bg-amber-950/20 dark:text-amber-400 text-[9px] px-1 py-0">
+                                Edits
+                              </Badge>
+                            ) : isLive ? (
+                              <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950/20 dark:text-emerald-400 text-[9px] px-1 py-0">
+                                Live
+                              </Badge>
+                            ) : (
+                              <Badge variant="secondary" className="text-[9px] px-1 py-0">
+                                Draft
+                              </Badge>
+                            )}
+                          </div>
+                        </ItemContent>
+                      </Link>
+                    </Item>
+                  );
+                })}
+              </ItemGroup>
+            )}
           </CardContent>
         </Card>
-      ) : null}
+
+        {/* Column 2: Content Creation & Content Lists */}
+        <div className="space-y-6">
+          {canCreateEntries && sidebarContentTypes.length > 0 && (
+            <Card className="border-border bg-card shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Create content</CardTitle>
+                <CardDescription>Start a new draft</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-2">
+                {sidebarContentTypes.map((type) => (
+                  <Button
+                    key={type.id}
+                    variant="outline"
+                    className="h-10 justify-start gap-2.5 w-full font-normal hover:bg-muted"
+                    asChild
+                  >
+                    <Link to={`/content/${type.slug}/new`}>
+                      <Plus className="size-4 text-muted-foreground" />
+                      <span>New {type.options?.sidebarLabel || type.name}</span>
+                    </Link>
+                  </Button>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {!loading && contentTypeLinks.length > 0 && (
+            <Card className="border-border bg-card shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Content lists</CardTitle>
+                <CardDescription>Browse entries by section</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-1.5">
+                {contentTypeLinks.map((row) => (
+                  <Button
+                    key={row.contentTypeId}
+                    variant="outline"
+                    className="h-10 justify-between w-full px-3 font-normal"
+                    asChild
+                  >
+                    <Link to={`/content/${row.slug}`}>
+                      <span className="truncate">{row.name}</span>
+                      <Badge variant="secondary" className="shrink-0 tabular-nums font-normal text-xs h-5 min-w-5 px-1 flex items-center justify-center">
+                        {row.entryCount}
+                      </Badge>
+                    </Link>
+                  </Button>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {/* Column 3: Stats Summary, Quick Links & Administration */}
+        <div className="space-y-6">
+          {/* Overview Stats (Compact Single Unit Card) */}
+          <Card className="border-border bg-card shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold">Overview</CardTitle>
+              <CardDescription>Workspace counters</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-2 gap-2.5 pb-5">
+              <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/20 p-2 text-center">
+                <span className="text-lg font-bold tracking-tight text-foreground tabular-nums">
+                  {loading ? <Skeleton className="h-5 w-8 mx-auto" /> : overview?.entryCount ?? 0}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mt-0.5">Entries</span>
+              </div>
+              <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/20 p-2 text-center">
+                <span className="text-lg font-bold tracking-tight text-foreground tabular-nums">
+                  {loading ? <Skeleton className="h-5 w-8 mx-auto" /> : overview?.contentTypeCount ?? 0}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mt-0.5">Sections</span>
+              </div>
+              <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/20 p-2 text-center">
+                <span className="text-lg font-bold tracking-tight text-foreground tabular-nums">
+                  {loading ? <Skeleton className="h-5 w-8 mx-auto" /> : overview?.assetCount ?? 0}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mt-0.5">Assets</span>
+              </div>
+              <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-muted/20 p-2 text-center">
+                <span className="text-lg font-bold tracking-tight text-foreground tabular-nums">
+                  {loading ? <Skeleton className="h-5 w-8 mx-auto" /> : overview?.memberCount ?? 0}
+                </span>
+                <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider mt-0.5">Members</span>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border bg-card shadow-sm">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base font-semibold">Quick links</CardTitle>
+              <CardDescription>Browse site files and entries</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              <Button variant="outline" className="h-10 justify-start gap-2.5 w-full font-normal" asChild>
+                <Link to="/entries">
+                  <LayoutGrid className="size-4 text-muted-foreground" />
+                  <span>All entries</span>
+                </Link>
+              </Button>
+              <Button variant="outline" className="h-10 justify-start gap-2.5 w-full font-normal" asChild>
+                <Link to="/assets">
+                  <Image className="size-4 text-muted-foreground" />
+                  <span>Media assets</span>
+                </Link>
+              </Button>
+              {canCreateEntries && (
+                <Button variant="outline" className="h-10 justify-start gap-2.5 w-full font-normal" asChild>
+                  <Link to="/content-types">
+                    <Shapes className="size-4 text-muted-foreground" />
+                    <span>Content structures</span>
+                  </Link>
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+
+          {showAdminCard && (
+            <Card className="border-border bg-card shadow-sm">
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base font-semibold">Administration</CardTitle>
+                <CardDescription>Manage keys, team, and settings</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-2">
+                {showSiteAdminTools && (
+                  <>
+                    <Button variant="outline" className="h-10 justify-between w-full px-3 font-normal" asChild>
+                      <Link to="/admin/api-keys">
+                        <span className="flex items-center gap-2.5">
+                          <KeyRound className="size-4 text-muted-foreground" />
+                          <span>API keys</span>
+                        </span>
+                        {apiKeyCount !== null ? (
+                          <Badge variant="outline" className="text-[10px] h-5 px-1.5 tabular-nums font-normal">
+                            {apiKeyCount}
+                          </Badge>
+                        ) : null}
+                      </Link>
+                    </Button>
+                    <Button variant="outline" className="h-10 justify-between w-full px-3 font-normal" asChild>
+                      <Link to="/site-settings">
+                        <span className="flex items-center gap-2.5">
+                          <Settings className="size-4 text-muted-foreground" />
+                          <span>AI assistants (MCP)</span>
+                        </span>
+                        {mcpEnabled !== null ? (
+                          <Badge variant={mcpEnabled ? 'default' : 'secondary'} className="text-[10px] h-5 px-1.5 font-normal">
+                            {mcpEnabled ? 'On' : 'Off'}
+                          </Badge>
+                        ) : null}
+                      </Link>
+                    </Button>
+                  </>
+                )}
+                <Button variant="outline" className="h-10 justify-between w-full px-3 font-normal" asChild>
+                  <Link to="/users">
+                    <span className="flex items-center gap-2.5">
+                      <Users className="size-4 text-muted-foreground" />
+                      <span>Team members</span>
+                    </span>
+                    {overview ? (
+                      <Badge variant="secondary" className="tabular-nums font-normal text-xs h-5 min-w-5 px-1 flex items-center justify-center">
+                        {overview.memberCount}
+                      </Badge>
+                    ) : null}
+                  </Link>
+                </Button>
+                {isGlobalAdmin && (
+                  <Button variant="outline" className="h-10 justify-start gap-2.5 w-full font-normal" asChild>
+                    <Link to="/admin/sites">
+                      <Globe className="size-4 text-muted-foreground" />
+                      <span>All sites</span>
+                    </Link>
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
