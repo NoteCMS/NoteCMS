@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Database, Loader2, RotateCcw, Trash2 } from 'lucide-react';
+import { Loader2, RotateCcw, Trash2 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
@@ -144,39 +144,29 @@ export function AdminSettingsPage({ token, isGlobalAdmin }: AdminSettingsPagePro
 
   if (!isGlobalAdmin) {
     return (
-      <Card>
-        <CardHeader>
-          <CardTitle>Admin settings</CardTitle>
-          <CardDescription>Platform administrator access required.</CardDescription>
-        </CardHeader>
-      </Card>
+      <div className="w-full">
+        <Card className="w-full">
+          <CardHeader>
+            <CardTitle>Admin settings</CardTitle>
+            <CardDescription>Platform administrator access required.</CardDescription>
+          </CardHeader>
+        </Card>
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="w-full space-y-4">
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            Platform backups
-          </CardTitle>
-          <CardDescription>
-            Full MongoDB + asset volume snapshots. Retention: hourly (24), daily (7), weekly (4). Restore affects{' '}
-            <strong>all sites and users</strong>.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {maintenance ? (
-            <LoadErrorAlert message="Platform is in maintenance mode (restore may be in progress)." />
-          ) : null}
-          {error ? <LoadErrorAlert message={error} /> : null}
-
-          <div className="flex flex-wrap gap-2">
-            <Button type="button" onClick={() => void handleCreate()} disabled={busy}>
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-              Create platform backup
-            </Button>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Platform backups</CardTitle>
+            <CardDescription>
+              Full MongoDB + asset volume snapshots. Retention: hourly (24), daily (7), weekly (4). Restore affects{' '}
+              <strong>all sites and users</strong>.
+            </CardDescription>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
             <select
               className="h-9 rounded-md border border-input bg-background px-3 text-sm"
               value={tierFilter}
@@ -188,7 +178,17 @@ export function AdminSettingsPage({ token, isGlobalAdmin }: AdminSettingsPagePro
               <option value="weekly">Weekly</option>
               <option value="manual">Manual</option>
             </select>
+            <Button type="button" onClick={() => void handleCreate()} disabled={busy}>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              Create backup
+            </Button>
           </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {maintenance ? (
+            <LoadErrorAlert message="Platform is in maintenance mode (restore may be in progress)." />
+          ) : null}
+          {error ? <LoadErrorAlert message={error} /> : null}
 
           {loading ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
