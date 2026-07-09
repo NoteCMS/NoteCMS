@@ -40,6 +40,23 @@ function resolvedDisplayLabel(email: string, displayName: string | null) {
   return getDefaultName(email);
 }
 
+function authErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return 'Could not sign in. Try again.';
+
+  if (/networkerror|failed to fetch|load failed/i.test(error.message)) {
+    return 'Could not reach the server. Check that the API is running and try again.';
+  }
+
+  switch (error.message) {
+    case 'Invalid credentials':
+      return 'Wrong email or password.';
+    case 'Login failed':
+      return 'Could not sign in. Try again.';
+    default:
+      return error.message;
+  }
+}
+
 export function useAuth() {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) ?? '');
   const [userEmail, setUserEmail] = useState<string>(() => localStorage.getItem(USER_EMAIL_KEY) ?? '');
@@ -161,7 +178,7 @@ export function useAuth() {
       setUserDisplayName(data.login.user?.displayName ?? null);
       await loadSites(data.login.token);
     } catch (loginError) {
-      setError(loginError instanceof Error ? loginError.message : 'Login failed');
+      setError(authErrorMessage(loginError));
     } finally {
       setIsSubmitting(false);
     }
@@ -198,7 +215,7 @@ export function useAuth() {
       setBootstrapSecret('');
       await loadSites(data.setInitialPassword.token);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not set password');
+      setError(authErrorMessage(e));
     } finally {
       setIsSubmitting(false);
     }

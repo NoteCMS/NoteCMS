@@ -48,7 +48,7 @@ export default defineConfig(({ command, mode }) => {
             '/graphql': {
               target: portlessApi,
               changeOrigin: true,
-              secure: true,
+              secure: false,
             },
           }
         : undefined,

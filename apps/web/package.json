@@ -10,12 +10,13 @@
     "preview": "vite preview --host 0.0.0.0 --port 5173"
   },
   "dependencies": {
-    "@note/types": "*",
     "@base-ui/react": "^1.4.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/inter": "^5.2.8",
+    "@fontsource/inknut-antiqua": "^5.2.8",
+    "@note/types": "*",
     "@platejs/basic-nodes": "^52.3.10",
     "@platejs/list-classic": "^52.3.10",
     "@platejs/markdown": "^52.3.22",
@@ -24,7 +25,6 @@
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
-    "tw-animate-css": "^1.4.0",
     "emblor-maintained": "^1.4.11",
     "lucide-react": "^0.542.0",
     "next-themes": "^0.4.6",
@@ -35,10 +35,11 @@
     "react-dropzone": "^15.0.0",
     "react-router": "^7.14.1",
     "react-router-dom": "^7.14.1",
-    "slate": "^0.124.0",
     "shadcn": "^4.2.0",
+    "slate": "^0.124.0",
     "sonner": "^2.0.7",
-    "tailwind-merge": "^3.5.0"
+    "tailwind-merge": "^3.5.0",
+    "tw-animate-css": "^1.4.0"
   },
   "optionalDependencies": {
     "lightningcss-darwin-arm64": "1.32.0",

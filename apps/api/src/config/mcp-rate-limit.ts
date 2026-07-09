@@ -1,5 +1,5 @@
 import type { NextFunction, Request, Response } from 'express';
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import { env } from './env.js';
 
 /** True when the client sent a credential MCP would accept (before verification). */
@@ -12,7 +12,7 @@ export function mcpRequestHasCredential(req: Request): boolean {
 
 /** Bucket unauthenticated probes by client IP. */
 export function mcpUnauthRateLimitKey(req: Request): string {
-  return `mcp:ip:${req.ip ?? 'unknown'}`;
+  return `mcp:${ipKeyGenerator(req.ip ?? 'unknown')}`;
 }
 
 export function createMcpLimiter() {

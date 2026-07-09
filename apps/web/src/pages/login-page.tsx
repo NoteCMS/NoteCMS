@@ -1,11 +1,41 @@
-import type { FormEvent } from 'react';
+import type { FormEvent, ReactNode } from 'react';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { ModeToggle } from '@/components/mode-toggle';
+import { NoteWordmark } from '@/components/note-wordmark';
 import { buildPageTitle, useDocumentTitle } from '@/lib/page-title';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardDescription } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
+
+function AuthShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="relative flex min-h-svh items-center justify-center bg-muted p-4 sm:p-6">
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
+        <ModeToggle />
+      </div>
+      <div className="w-full max-w-sm">{children}</div>
+    </div>
+  );
+}
+
+type AuthCardProps = {
+  description: ReactNode;
+  children: ReactNode;
+};
+
+function AuthCard({ description, children }: AuthCardProps) {
+  return (
+    <Card className="w-full">
+      <div className="space-y-8 text-center">
+        <div className="space-y-1.5">
+          <NoteWordmark className="text-5xl sm:text-5xl" />
+          <CardDescription>{description}</CardDescription>
+        </div>
+        {children}
+      </div>
+    </Card>
+  );
+}
 
 type LoginPageProps = {
   authStep: 'login' | 'setPassword';
@@ -50,109 +80,96 @@ export function LoginPage({
 
   if (authStep === 'setPassword') {
     return (
-      <div className="relative flex min-h-svh items-center justify-center bg-background p-4">
-        <div className="absolute top-4 right-4 z-10">
-          <ModeToggle />
-        </div>
-        <Card className="w-full max-w-sm">
-          <CardHeader>
-            <CardTitle>Set your password</CardTitle>
-            <CardDescription>
-              This account does not have a password yet. Choose one to finish signing in ({email}).
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <form className="space-y-4" onSubmit={onSetPasswordSubmit}>
-              <div className="space-y-2">
-                <Label htmlFor="new-password">New password</Label>
+      <AuthShell>
+        <AuthCard description={<>Set a password for {email}</>}>
+          <form className="space-y-4 text-left" onSubmit={onSetPasswordSubmit}>
+            <Input
+              id="new-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder="New password"
+              aria-label="New password"
+              value={newPassword}
+              onChange={(event) => onNewPasswordChange(event.target.value)}
+              required
+              minLength={8}
+            />
+            <Input
+              id="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              placeholder="Confirm password"
+              aria-label="Confirm password"
+              value={confirmPassword}
+              onChange={(event) => onConfirmPasswordChange(event.target.value)}
+              required
+              minLength={8}
+            />
+            {setupRequiresSecret ? (
+              <>
                 <Input
-                  id="new-password"
+                  id="bootstrap-secret"
                   type="password"
-                  autoComplete="new-password"
-                  value={newPassword}
-                  onChange={(event) => onNewPasswordChange(event.target.value)}
+                  autoComplete="off"
+                  placeholder="Setup key"
+                  aria-label="Setup key"
+                  value={bootstrapSecret}
+                  onChange={(event) => onBootstrapSecretChange(event.target.value)}
                   required
-                  minLength={8}
                 />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="confirm-password">Confirm password</Label>
-                <Input
-                  id="confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirmPassword}
-                  onChange={(event) => onConfirmPasswordChange(event.target.value)}
-                  required
-                  minLength={8}
-                />
-              </div>
-              {setupRequiresSecret ? (
-                <div className="space-y-2">
-                  <Label htmlFor="bootstrap-secret">Setup key</Label>
-                  <Input
-                    id="bootstrap-secret"
-                    type="password"
-                    autoComplete="off"
-                    value={bootstrapSecret}
-                    onChange={(event) => onBootstrapSecretChange(event.target.value)}
-                    required
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Optional lock: must match BOOTSTRAP_SECRET on the API if your deployment sets it.
-                  </p>
-                </div>
-              ) : null}
-              {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
+                <p className="text-center text-xs text-muted-foreground">
+                  Required when your server uses a setup key.
+                </p>
+              </>
+            ) : null}
+            {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
+            <div className="space-y-3 pt-2">
               <Button type="submit" className="w-full" disabled={isSubmitting}>
-                {isSubmitting ? 'Saving...' : 'Save password and continue'}
+                {isSubmitting ? 'Saving...' : 'Save and continue'}
               </Button>
               <Button type="button" variant="ghost" className="w-full" onClick={onBackToLogin}>
                 Back to sign in
               </Button>
-            </form>
-          </CardContent>
-        </Card>
-      </div>
+            </div>
+          </form>
+        </AuthCard>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="relative flex min-h-svh items-center justify-center bg-background p-4">
-      <div className="absolute top-4 right-4 z-10">
-        <ModeToggle />
-      </div>
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Login</CardTitle>
-          <CardDescription>Sign in to your Note CMS dashboard.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form className="space-y-4" onSubmit={onLoginSubmit}>
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input id="email" type="email" value={email} onChange={(event) => onEmailChange(event.target.value)} required />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(event) => onPasswordChange(event.target.value)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Leave empty if you have not set a password yet (you will be asked to create one).
-              </p>
-            </div>
-            {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? 'Signing in...' : 'Sign in'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <AuthShell>
+      <AuthCard description="Sign in to continue">
+        <form className="space-y-4 text-left" onSubmit={onLoginSubmit}>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            placeholder="Email"
+            aria-label="Email"
+            value={email}
+            onChange={(event) => onEmailChange(event.target.value)}
+            required
+            autoFocus
+          />
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            placeholder="Password"
+            aria-label="Password"
+            value={password}
+            onChange={(event) => onPasswordChange(event.target.value)}
+          />
+          <p className="text-center text-xs text-muted-foreground">
+            No password yet? Leave blank to set one.
+          </p>
+          {error ? <LoadErrorAlert compact title="Can't sign in" message={error} /> : null}
+          <Button type="submit" className="mt-2 w-full" disabled={isSubmitting}>
+            {isSubmitting ? 'Signing in...' : 'Sign in'}
+          </Button>
+        </form>
+      </AuthCard>
+    </AuthShell>
   );
 }

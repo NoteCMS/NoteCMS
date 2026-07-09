@@ -6,7 +6,7 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present",
     "dev": "concurrently -n api,web -c magenta,cyan \"npm run dev -w @note/api\" \"npm run dev -w @note/web\"",
-    "dev:portless": "concurrently -n api,web -c magenta,cyan \"portless api.notecms -- npm run dev -w @note/api\" \"cross-env VITE_USE_GRAPHQL_PROXY=true NOTECMS_PORTLESS_API=https://api.notecms.localhost portless web.notecms -- npm exec --workspace=@note/web vite -- --mode portless --strictPort\"",
+    "dev:portless": "concurrently -n api,web -c magenta,cyan \"cross-env API_PORT=4000 portless api.notecms -- npm run dev -w @note/api\" \"cross-env VITE_USE_GRAPHQL_PROXY=true NOTECMS_PORTLESS_API=http://127.0.0.1:4000 portless web.notecms -- npm exec --workspace=@note/web vite -- --mode portless --strictPort\"",
     "build": "npm run build --workspaces --if-present",
     "dev:db": "docker compose -f infra/docker-compose.yml up -d mongo",
     "dev:full": "npm run dev:db && npm run dev",
