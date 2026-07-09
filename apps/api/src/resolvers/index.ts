@@ -658,9 +658,13 @@ export const resolvers = {
       const actor = await UserModel.findById(ctx.userId).select({ isAdmin: 1 }).lean();
 
       const membershipFilter: Record<string, unknown> = {};
+      // Platform admins listing the full directory (no site/role filter) must include accounts
+      // without workspace memberships — e.g. createGlobalUser before site access is assigned.
+      let scopeViaMemberships = true;
       if (actor?.isAdmin) {
         if (role) membershipFilter.role = role;
         if (siteId) membershipFilter.siteId = siteId;
+        if (!role && !siteId) scopeViaMemberships = false;
       } else {
         const ownerMemberships = await MembershipModel.find({ userId: ctx.userId, role: 'owner' }).lean();
         const allowedSiteIds = ownerMemberships.map((membership) => String(membership.siteId));
@@ -674,13 +678,27 @@ export const resolvers = {
         if (role) membershipFilter.role = role;
       }
 
-      const memberships = await MembershipModel.find(membershipFilter).lean();
-      const uniqueUserIds = [...new Set(memberships.map((membership) => String(membership.userId)))];
-      const userFilter: Record<string, unknown> = { _id: { $in: uniqueUserIds } };
+      const userFilter: Record<string, unknown> = {};
       if (status) userFilter.status = status;
       if (isAdmin !== undefined) userFilter.isAdmin = isAdmin;
 
-      const users = await UserModel.find(userFilter).lean();
+      let users: Array<Record<string, unknown> & { _id: unknown; email: string; status: string; isAdmin?: boolean }>;
+      let memberships: Array<Record<string, unknown> & { userId: unknown; siteId: unknown; role: string }>;
+
+      if (scopeViaMemberships) {
+        memberships = await MembershipModel.find(membershipFilter).lean();
+        const uniqueUserIds = [...new Set(memberships.map((membership) => String(membership.userId)))];
+        userFilter._id = { $in: uniqueUserIds };
+        users = await UserModel.find(userFilter).lean();
+      } else {
+        users = await UserModel.find(userFilter).lean();
+        const userIds = users.map((user) => user._id);
+        memberships =
+          userIds.length > 0
+            ? await MembershipModel.find({ userId: { $in: userIds } }).lean()
+            : [];
+      }
+
       const userIdSet = new Set(users.map((user) => String(user._id)));
       const filteredMemberships = memberships.filter((membership) => userIdSet.has(String(membership.userId)));
       const visibleSiteIds = [...new Set(filteredMemberships.map((membership) => String(membership.siteId)))];
