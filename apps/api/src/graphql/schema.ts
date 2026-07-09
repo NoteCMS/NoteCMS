@@ -60,6 +60,22 @@ export const typeDefs = `#graphql
     initialPasswordRequiresSecret: Boolean!
   }
 
+  type MailConfigStatus {
+    enabled: Boolean!
+    configured: Boolean!
+  }
+
+  type PasswordResetRequestResult {
+    ok: Boolean!
+  }
+
+  enum EmailTokenStatus {
+    valid
+    used
+    expired
+    invalid
+  }
+
   type AssetVariantUrls {
     original: String!
     web: String!
@@ -356,6 +372,8 @@ export const typeDefs = `#graphql
 
   type Query {
     bootstrapAuthStatus: BootstrapAuthStatus!
+    mailConfigStatus: MailConfigStatus!
+    emailTokenStatus(token: String!, purpose: String!): EmailTokenStatus!
     me: User
     listMySites: [Site!]!
     globalUsers(role: String, siteId: ID, status: String, isAdmin: Boolean): [GlobalUser!]!
@@ -404,6 +422,9 @@ export const typeDefs = `#graphql
     register(email: String!, password: String!): AuthPayload!
     login(email: String!, password: String, siteId: ID): LoginPayload!
     setInitialPassword(email: String!, newPassword: String!, bootstrapSecret: String): AuthPayload!
+    requestPasswordReset(email: String!): PasswordResetRequestResult!
+    completePasswordReset(token: String!, newPassword: String!): AuthPayload!
+    completeAccountInvite(token: String!, newPassword: String!): AuthPayload!
 
     """Update the signed-in user's display name. Pass an empty string to clear it."""
     updateMyProfile(displayName: String!): User!
@@ -411,13 +432,15 @@ export const typeDefs = `#graphql
 
     createSite(name: String!, url: String!): Site!
     updateSite(siteId: ID!, name: String, url: String): Site!
-    createGlobalUser(email: String!, password: String!, status: String, isAdmin: Boolean): GlobalUser!
+    createGlobalUser(email: String!, password: String, status: String, isAdmin: Boolean): GlobalUser!
     """Create a user with access to one site (never platform isAdmin). Site owners: viewer or editor only. Platform administrators may also set site owner."""
-    createSiteUser(siteId: ID!, email: String!, password: String!, role: String!): GlobalUser!
+    createSiteUser(siteId: ID!, email: String!, password: String, role: String!): GlobalUser!
     updateUserStatus(userId: ID!, status: String!): GlobalUser!
     setUserAdmin(userId: ID!, isAdmin: Boolean!): GlobalUser!
     setUserSiteRole(userId: ID!, siteId: ID!, role: String!): GlobalUser!
     removeUserSiteAccess(userId: ID!, siteId: ID!): GlobalUser!
+    """Permanently delete a user account (platform administrators only)."""
+    deleteGlobalUser(userId: ID!): Boolean!
     inviteUser(siteId: ID!, email: String!, role: String!): Membership!
     setRole(siteId: ID!, userId: ID!, role: String!): Membership!
 

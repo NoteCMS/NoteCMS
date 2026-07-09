@@ -36,6 +36,7 @@ export type UsersManagementViewProps = {
   workspaceSiteId: string;
   isGlobalAdmin: boolean;
   isSiteOwner: boolean;
+  currentUserEmail?: string;
 };
 
 export function UsersManagementView({
@@ -45,6 +46,7 @@ export function UsersManagementView({
   workspaceSiteId,
   isGlobalAdmin,
   isSiteOwner,
+  currentUserEmail = '',
 }: UsersManagementViewProps) {
   const isWorkspace = variant === 'workspace';
   const isPlatform = variant === 'platform';
@@ -91,12 +93,26 @@ export function UsersManagementView({
     loadUsers,
     createUser,
     createSiteOnlyUser,
+    mailConfigured,
+    createSuccessMessage,
+    setCreateSuccessMessage,
     updateStatus,
     updateAdmin,
     openManageAccess,
     saveAccessChanges,
+    deleteUser,
+    deleteOpen,
+    setDeleteOpen,
+    deleteConfirmEmail,
+    setDeleteConfirmEmail,
+    isDeletingUser,
     manageSites,
   } = useUsers(token, sites, true, workspaceSiteId, variant);
+
+  const canDeleteUser =
+    canManagePlatformFields &&
+    managedUser != null &&
+    managedUser.email.toLowerCase() !== currentUserEmail.toLowerCase();
 
   const columns = useMemo<ColumnDef<GlobalUser>[]>(() => {
     const emailCol: ColumnDef<GlobalUser> = {
@@ -201,6 +217,7 @@ export function UsersManagementView({
             open={createOpen}
             onOpenChange={(open) => {
               setCreateOpen(open);
+              if (!open) setCreateSuccessMessage('');
               if (open && canCreateSiteUser) setNewSiteUserRole('viewer');
             }}
           >
@@ -244,8 +261,15 @@ export function UsersManagementView({
                     type="password"
                     value={newUserPassword}
                     onChange={(event) => setNewUserPassword(event.target.value)}
-                    required
+                    required={!mailConfigured}
                   />
+                  {mailConfigured ? (
+                    <p className="text-xs text-muted-foreground">
+                      {newUserPassword.trim()
+                        ? 'They will get a welcome email with a sign-in link.'
+                        : 'Leave blank to email them a link to set their password.'}
+                    </p>
+                  ) : null}
                 </div>
                 {canCreateGlobalUser ? (
                   <>
@@ -302,6 +326,11 @@ export function UsersManagementView({
           </Dialog>
         </CardHeader>
         <CardContent className="space-y-4">
+          {createSuccessMessage ? (
+            <p className="text-sm text-muted-foreground" role="status">
+              {createSuccessMessage}
+            </p>
+          ) : null}
           {usersError && !createOpen && !manageOpen ? (
             <LoadErrorAlert title="Users" message={usersError} onRetry={() => void loadUsers()} />
           ) : null}
@@ -502,8 +531,71 @@ export function UsersManagementView({
             </div>
           </div>
 
-          <DialogFooter>
+          <DialogFooter className="sm:justify-between">
+            {canManagePlatformFields ? (
+              <Button
+                type="button"
+                variant="destructive"
+                className="mr-auto"
+                disabled={!canDeleteUser}
+                onClick={() => {
+                  setDeleteConfirmEmail('');
+                  setDeleteOpen(true);
+                }}
+              >
+                Delete account
+              </Button>
+            ) : null}
             <Button onClick={() => void saveAccessChanges()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={deleteOpen}
+        onOpenChange={(open) => {
+          setDeleteOpen(open);
+          if (!open) setDeleteConfirmEmail('');
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this account?</DialogTitle>
+            <DialogDescription>
+              This permanently removes {managedUser?.email ?? 'this user'} and revokes their workspace access. Their
+              past edits stay in the history. This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          {usersError && deleteOpen ? (
+            <LoadErrorAlert compact title={null} message={usersError} onRetry={() => void loadUsers()} />
+          ) : null}
+          <div className="space-y-2">
+            <Label htmlFor="delete-user-confirm">Type their email to confirm</Label>
+            <Input
+              id="delete-user-confirm"
+              type="email"
+              autoComplete="off"
+              placeholder={managedUser?.email ?? 'Email'}
+              value={deleteConfirmEmail}
+              onChange={(event) => setDeleteConfirmEmail(event.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setDeleteOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={
+                isDeletingUser ||
+                !managedUser ||
+                deleteConfirmEmail.trim().toLowerCase() !== managedUser.email.toLowerCase()
+              }
+              onClick={() => void deleteUser()}
+            >
+              {isDeletingUser ? 'Deleting...' : 'Delete account'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

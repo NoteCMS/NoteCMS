@@ -16,6 +16,7 @@ import { migrateMetaTaxonomy } from './db/migrate-meta-taxonomy.js';
 import { ensureBootstrapAdmin } from './config/bootstrap.js';
 import { buildCorsOptions } from './config/cors-options.js';
 import { env } from './config/env.js';
+import { isMailConfigured, getMailConfigStatus } from './config/mail.js';
 import { apiSecurityHeaders } from './config/security-headers.js';
 import { createMcpLimiter } from './config/mcp-rate-limit.js';
 import { typeDefs } from './graphql/schema.js';
@@ -40,6 +41,14 @@ await migrateMembershipRoles();
 await migrateMetaTaxonomy();
 await ensureBootstrapAdmin();
 startBackupScheduler();
+
+if (env.mailEnabled && !isMailConfigured()) {
+  console.warn(
+    '[mail] MAIL_ENABLED is true but email is not fully configured (need SMTP_HOST, MAIL_FROM, and PUBLIC_URL).',
+  );
+} else if (getMailConfigStatus().configured) {
+  console.log('[mail] Transactional email is enabled.');
+}
 
 const app = express();
 if (env.trustProxy) {

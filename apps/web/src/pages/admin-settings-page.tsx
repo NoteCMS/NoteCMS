@@ -59,6 +59,8 @@ export function AdminSettingsPage({ token, isGlobalAdmin }: AdminSettingsPagePro
 
   const [backups, setBackups] = useState<PlatformBackup[]>([]);
   const [maintenance, setMaintenance] = useState(false);
+  const [mailConfigured, setMailConfigured] = useState(false);
+  const [mailEnabled, setMailEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -71,15 +73,22 @@ export function AdminSettingsPage({ token, isGlobalAdmin }: AdminSettingsPagePro
     setLoading(true);
     setError('');
     try {
-      const res = await gqlRequest<{ platformBackups: PlatformBackup[]; platformMaintenanceMode: boolean }>(
+      const res = await gqlRequest<{
+        platformBackups: PlatformBackup[];
+        platformMaintenanceMode: boolean;
+        mailConfigStatus: { enabled: boolean; configured: boolean };
+      }>(
         token,
         `query {
           platformBackups(limit:100) { id tier trigger status label createdAt completedAt sizeBytes errorMessage }
           platformMaintenanceMode
+          mailConfigStatus { enabled configured }
         }`,
       );
       setBackups(res.platformBackups);
       setMaintenance(res.platformMaintenanceMode);
+      setMailEnabled(res.mailConfigStatus.enabled);
+      setMailConfigured(res.mailConfigStatus.configured);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load platform backups');
     } finally {
@@ -157,6 +166,19 @@ export function AdminSettingsPage({ token, isGlobalAdmin }: AdminSettingsPagePro
 
   return (
     <div className="w-full space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle>Email</CardTitle>
+          <CardDescription>
+            {mailConfigured
+              ? 'Password reset and invite emails are enabled.'
+              : mailEnabled
+                ? 'Email is turned on but not fully configured. Set SMTP_HOST, MAIL_FROM, and PUBLIC_URL on the API service.'
+                : 'Not configured. Set MAIL_ENABLED and SMTP settings in your environment to send password reset and invite emails.'}
+          </CardDescription>
+        </CardHeader>
+      </Card>
+
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>

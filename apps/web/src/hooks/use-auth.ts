@@ -23,11 +23,24 @@ type AuthPayloadResponse = {
     token: string;
     user: { email: string; isAdmin: boolean; displayName: string | null };
   };
+  completePasswordReset: {
+    token: string;
+    user: { email: string; isAdmin: boolean; displayName: string | null };
+  };
+  completeAccountInvite: {
+    token: string;
+    user: { email: string; isAdmin: boolean; displayName: string | null };
+  };
 };
 
 type BootstrapStatusResponse = {
   bootstrapAuthStatus: { initialPasswordRequiresSecret: boolean };
+  mailConfigStatus: { enabled: boolean; configured: boolean };
 };
+
+export type PublicAuthView = 'login' | 'forgotPassword' | 'resetPassword' | 'invitePassword';
+
+export type TokenLinkStatus = 'idle' | 'loading' | 'valid' | 'used' | 'expired' | 'invalid' | 'missing';
 
 function getDefaultName(email: string) {
   const base = email.split('@')[0] ?? 'User';
@@ -52,12 +65,14 @@ function authErrorMessage(error: unknown): string {
       return 'Wrong email or password.';
     case 'Login failed':
       return 'Could not sign in. Try again.';
-    default:
-      return error.message;
+    case 'Check your email for a link to set your password.':
+      return 'Check your email for a link to set your password.';
   }
+
+  return error.message;
 }
 
-export function useAuth() {
+export function useAuth(publicAuthView: PublicAuthView = 'login', resetToken: string | null = null) {
   const [token, setToken] = useState<string>(() => localStorage.getItem(TOKEN_KEY) ?? '');
   const [userEmail, setUserEmail] = useState<string>(() => localStorage.getItem(USER_EMAIL_KEY) ?? '');
   const [userDisplayName, setUserDisplayName] = useState<string | null>(null);
@@ -68,9 +83,11 @@ export function useAuth() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [bootstrapSecret, setBootstrapSecret] = useState('');
   const [setupRequiresSecret, setSetupRequiresSecret] = useState(false);
-  const [authStep, setAuthStep] = useState<'login' | 'setPassword'>('login');
+  const [mailConfigured, setMailConfigured] = useState(false);
+  const [authStep, setAuthStep] = useState<'login' | 'setPassword' | 'forgotPasswordSent'>('login');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isValidatingSession, setIsValidatingSession] = useState(false);
+  const [tokenLinkStatus, setTokenLinkStatus] = useState<TokenLinkStatus>('idle');
   const [error, setError] = useState('');
   const [sites, setSites] = useState<Site[]>([]);
 
@@ -90,17 +107,58 @@ export function useAuth() {
       try {
         const data = await gqlRequest<BootstrapStatusResponse>(
           '',
-          '{ bootstrapAuthStatus { initialPasswordRequiresSecret } }',
+          '{ bootstrapAuthStatus { initialPasswordRequiresSecret } mailConfigStatus { enabled configured } }',
         );
-        if (!cancelled) setSetupRequiresSecret(data.bootstrapAuthStatus.initialPasswordRequiresSecret);
+        if (!cancelled) {
+          setSetupRequiresSecret(data.bootstrapAuthStatus.initialPasswordRequiresSecret);
+          setMailConfigured(data.mailConfigStatus.configured);
+        }
       } catch {
-        if (!cancelled) setSetupRequiresSecret(false);
+        if (!cancelled) {
+          setSetupRequiresSecret(false);
+          setMailConfigured(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (publicAuthView !== 'resetPassword' && publicAuthView !== 'invitePassword') {
+      setTokenLinkStatus('idle');
+      return;
+    }
+
+    const trimmed = resetToken?.trim() ?? '';
+    if (!trimmed) {
+      setTokenLinkStatus('missing');
+      return;
+    }
+
+    let cancelled = false;
+    setTokenLinkStatus('loading');
+
+    const purpose = publicAuthView === 'invitePassword' ? 'account_invite' : 'password_reset';
+
+    void (async () => {
+      try {
+        const data = await gqlRequest<{ emailTokenStatus: TokenLinkStatus }>(
+          '',
+          'query($token:String!,$purpose:String!){ emailTokenStatus(token:$token,purpose:$purpose) }',
+          { token: trimmed, purpose },
+        );
+        if (!cancelled) setTokenLinkStatus(data.emailTokenStatus);
+      } catch {
+        if (!cancelled) setTokenLinkStatus('invalid');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicAuthView, resetToken]);
 
   const userName = useMemo(
     () => resolvedDisplayLabel(userEmail || email, userDisplayName),
@@ -155,6 +213,22 @@ export function useAuth() {
     };
   }, [token, loadMe]);
 
+  async function finishAuthFromPayload(payload: {
+    token: string;
+    user: { email: string; isAdmin: boolean; displayName: string | null };
+  }) {
+    setToken(payload.token);
+    setUserEmail(payload.user.email);
+    setIsAdmin(Boolean(payload.user.isAdmin));
+    setUserDisplayName(payload.user.displayName ?? null);
+    setAuthStep('login');
+    setNewPassword('');
+    setConfirmPassword('');
+    setBootstrapSecret('');
+    setPassword('');
+    await loadSites(payload.token);
+  }
+
   async function handleLogin(event: FormEvent) {
     event.preventDefault();
     setError('');
@@ -172,11 +246,10 @@ export function useAuth() {
         return;
       }
       if (!data.login.token) throw new Error('Login failed');
-      setToken(data.login.token);
-      setUserEmail(data.login.user?.email ?? email);
-      setIsAdmin(Boolean(data.login.user?.isAdmin));
-      setUserDisplayName(data.login.user?.displayName ?? null);
-      await loadSites(data.login.token);
+      await finishAuthFromPayload({
+        token: data.login.token,
+        user: data.login.user ?? { email, isAdmin: false, displayName: null },
+      });
     } catch (loginError) {
       setError(authErrorMessage(loginError));
     } finally {
@@ -205,15 +278,56 @@ export function useAuth() {
         'mutation($email:String!,$newPassword:String!,$bootstrapSecret:String){ setInitialPassword(email:$email,newPassword:$newPassword,bootstrapSecret:$bootstrapSecret){ token user { email isAdmin displayName } } }',
         variables,
       );
-      setToken(data.setInitialPassword.token);
-      setUserEmail(data.setInitialPassword.user.email);
-      setIsAdmin(Boolean(data.setInitialPassword.user.isAdmin));
-      setUserDisplayName(data.setInitialPassword.user.displayName ?? null);
-      setAuthStep('login');
-      setNewPassword('');
-      setConfirmPassword('');
-      setBootstrapSecret('');
-      await loadSites(data.setInitialPassword.token);
+      await finishAuthFromPayload(data.setInitialPassword);
+    } catch (e) {
+      setError(authErrorMessage(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleRequestPasswordReset(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    if (!mailConfigured) {
+      setError('Password reset is not set up on this server. Ask whoever runs your workspace.');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      await gqlRequest(
+        '',
+        'mutation($email:String!){ requestPasswordReset(email:$email){ ok } }',
+        { email },
+      );
+      setAuthStep('forgotPasswordSent');
+    } catch (e) {
+      setError(authErrorMessage(e));
+    } finally {
+      setIsSubmitting(false);
+    }
+  }
+
+  async function handleCompletePasswordWithToken(event: FormEvent) {
+    event.preventDefault();
+    setError('');
+    if (!resetToken?.trim()) {
+      setError('This link is missing a token. Request a new one from the sign-in page.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Passwords do not match');
+      return;
+    }
+    setIsSubmitting(true);
+    try {
+      const mutation =
+        publicAuthView === 'invitePassword'
+          ? 'mutation($token:String!,$newPassword:String!){ completeAccountInvite(token:$token,newPassword:$newPassword){ token user { email isAdmin displayName } } }'
+          : 'mutation($token:String!,$newPassword:String!){ completePasswordReset(token:$token,newPassword:$newPassword){ token user { email isAdmin displayName } } }';
+      const field = publicAuthView === 'invitePassword' ? 'completeAccountInvite' : 'completePasswordReset';
+      const data = await gqlRequest<AuthPayloadResponse>('', mutation, { token: resetToken, newPassword });
+      await finishAuthFromPayload(data[field]);
     } catch (e) {
       setError(authErrorMessage(e));
     } finally {
@@ -264,16 +378,22 @@ export function useAuth() {
     bootstrapSecret,
     setBootstrapSecret,
     setupRequiresSecret,
+    mailConfigured,
+    publicAuthView,
+    resetToken,
     authStep,
     setAuthStep,
     isSubmitting,
     isValidatingSession,
+    tokenLinkStatus,
     error,
     sites,
     refreshSites,
     refreshProfile,
     handleLogin,
     handleSetInitialPassword,
+    handleRequestPasswordReset,
+    handleCompletePasswordWithToken,
     cancelPasswordSetup,
     handleLogout,
   };

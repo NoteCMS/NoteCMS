@@ -92,10 +92,25 @@ export function AccountSettingsPage({
   const [showCurrentPassword, setShowCurrentPassword] = useState(false);
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [mailConfigured, setMailConfigured] = useState(false);
 
   useEffect(() => {
     setDisplayNameDraft(userDisplayName ?? '');
   }, [userDisplayName]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const data = await gqlRequest<{ mailConfigStatus: { configured: boolean } }>(
+          token,
+          '{ mailConfigStatus { configured } }',
+        );
+        setMailConfigured(data.mailConfigStatus.configured);
+      } catch {
+        setMailConfigured(false);
+      }
+    })();
+  }, [token]);
 
   async function onSaveProfile(event: FormEvent) {
     event.preventDefault();
@@ -206,6 +221,11 @@ export function AccountSettingsPage({
             <CardDescription>Something you’ll remember, with letters and numbers.</CardDescription>
           </CardHeader>
           <CardContent>
+            {mailConfigured ? (
+              <p className="mb-4 text-sm text-muted-foreground">
+                Forgot your password? Sign out and use the reset link on the sign-in page.
+              </p>
+            ) : null}
             <form onSubmit={onChangePassword} className="space-y-4">
               {passwordError ? <LoadErrorAlert message={passwordError} compact /> : null}
               {passwordMessage ? (

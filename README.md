@@ -9,6 +9,7 @@ Open-source, multi-site headless CMS with a clean admin UI, GraphQL API, and an 
 - Asset library with local storage
 - GraphQL API at `/graphql`
 - MCP (Streamable HTTP) endpoint at `/api/mcp`
+- Optional SMTP email for password reset and user invites (configure via environment variables)
 - TypeScript SDK (`@notecms/sdk`) for server-side and static site pipelines
 
 ## How the CMS workflow works

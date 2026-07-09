@@ -26,10 +26,11 @@ type PlatformUsersPageProps = {
   token: string;
   sites: Site[];
   workspaceSiteId: string;
+  currentUserEmail: string;
 };
 
 /** Admin nav: platform-wide user directory (platform administrators only). */
-export function PlatformUsersPage({ token, sites, workspaceSiteId }: PlatformUsersPageProps) {
+export function PlatformUsersPage({ token, sites, workspaceSiteId, currentUserEmail }: PlatformUsersPageProps) {
   return (
     <UsersManagementView
       variant="platform"
@@ -38,6 +39,7 @@ export function PlatformUsersPage({ token, sites, workspaceSiteId }: PlatformUse
       workspaceSiteId={workspaceSiteId}
       isGlobalAdmin
       isSiteOwner={false}
+      currentUserEmail={currentUserEmail}
     />
   );
 }

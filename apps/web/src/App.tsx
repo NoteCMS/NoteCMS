@@ -27,7 +27,7 @@ import { Separator } from '@/components/ui/separator';
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { gqlRequest } from '@/api/graphql';
-import { useAuth } from '@/hooks/use-auth';
+import { useAuth, type PublicAuthView } from '@/hooks/use-auth';
 import { buildPageTitle } from '@/lib/page-title';
 import { ContentTypeEditorPage, ContentTypesPage } from '@/pages/content-types-page';
 import { AssetsPage } from '@/pages/assets-page';
@@ -147,6 +147,20 @@ function EntryToolbarHeaderActions() {
 }
 
 export function App() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const path = location.pathname;
+
+  const publicAuthView: PublicAuthView =
+    path === '/forgot-password'
+      ? 'forgotPassword'
+      : path === '/reset-password'
+        ? 'resetPassword'
+        : path === '/invite'
+          ? 'invitePassword'
+          : 'login';
+  const resetToken = new URLSearchParams(location.search).get('token');
+
   const {
     token,
     userEmail,
@@ -163,9 +177,11 @@ export function App() {
     bootstrapSecret,
     setBootstrapSecret,
     setupRequiresSecret,
+    mailConfigured,
     authStep,
     isSubmitting,
     isValidatingSession,
+    tokenLinkStatus,
     error,
     sites,
     isAdmin,
@@ -173,19 +189,24 @@ export function App() {
     refreshProfile,
     handleLogin,
     handleSetInitialPassword,
+    handleRequestPasswordReset,
+    handleCompletePasswordWithToken,
     cancelPasswordSetup,
     handleLogout,
-  } = useAuth();
+  } = useAuth(publicAuthView, resetToken);
   const [activeSiteId, setActiveSiteId] = useState(() => localStorage.getItem('notecms_active_site_id') ?? '');
   const [sidebarContentTypes, setSidebarContentTypes] = useState<ContentType[]>([]);
-
-  const location = useLocation();
-  const navigate = useNavigate();
-  const path = location.pathname;
 
   useEffect(() => {
     if (path === '/') navigate('/dashboard', { replace: true });
   }, [path, navigate]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (path === '/reset-password' || path === '/invite' || path === '/forgot-password') {
+      navigate('/dashboard', { replace: true });
+    }
+  }, [token, path, navigate]);
 
   useEffect(() => {
     const legacy: Record<string, string> = {
@@ -277,6 +298,7 @@ export function App() {
   if (!token) {
     return (
       <LoginPage
+        publicAuthView={publicAuthView}
         authStep={authStep}
         email={email}
         password={password}
@@ -284,8 +306,10 @@ export function App() {
         confirmPassword={confirmPassword}
         bootstrapSecret={bootstrapSecret}
         setupRequiresSecret={setupRequiresSecret}
+        mailConfigured={mailConfigured}
         error={error}
         isSubmitting={isSubmitting}
+        tokenLinkStatus={tokenLinkStatus}
         onEmailChange={setEmail}
         onPasswordChange={setPassword}
         onNewPasswordChange={setNewPassword}
@@ -293,6 +317,8 @@ export function App() {
         onBootstrapSecretChange={setBootstrapSecret}
         onLoginSubmit={handleLogin}
         onSetPasswordSubmit={handleSetInitialPassword}
+        onForgotPasswordSubmit={handleRequestPasswordReset}
+        onCompleteTokenPasswordSubmit={handleCompletePasswordWithToken}
         onBackToLogin={cancelPasswordSetup}
       />
     );
@@ -451,7 +477,12 @@ export function App() {
             />
           ) : path === '/admin/users' ? (
             isAdmin ? (
-              <PlatformUsersPage token={token} sites={sites} workspaceSiteId={activeSiteId} />
+              <PlatformUsersPage
+                token={token}
+                sites={sites}
+                workspaceSiteId={activeSiteId}
+                currentUserEmail={userEmail}
+              />
             ) : (
               <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 p-6 text-center text-sm text-muted-foreground">
                 <p>All users is only available to platform administrators.</p>

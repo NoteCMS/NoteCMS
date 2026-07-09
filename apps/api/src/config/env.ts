@@ -1,6 +1,10 @@
 import dotenv from 'dotenv';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const repoRootEnv = path.resolve(__dirname, '../../../..', '.env');
+dotenv.config({ path: repoRootEnv });
 dotenv.config();
 
 function computeTrustProxy(): boolean {
@@ -73,4 +77,19 @@ export const env = {
   backupRetentionDaily: Number(process.env.BACKUP_RETENTION_DAILY ?? 7),
   backupRetentionWeekly: Number(process.env.BACKUP_RETENTION_WEEKLY ?? 4),
   backupRetentionManual: Number(process.env.BACKUP_RETENTION_MANUAL ?? 5),
+
+  /** When true, outbound email (password reset, invites) is allowed if SMTP is configured. */
+  mailEnabled: (process.env.MAIL_ENABLED ?? 'false').toLowerCase() === 'true',
+  smtpHost: process.env.SMTP_HOST?.trim() || undefined,
+  smtpPort: Number(process.env.SMTP_PORT ?? 587),
+  smtpSecure: (process.env.SMTP_SECURE ?? 'false').toLowerCase() === 'true',
+  smtpUser: process.env.SMTP_USER?.trim() || undefined,
+  smtpPass: process.env.SMTP_PASS?.trim() || undefined,
+  mailFrom: process.env.MAIL_FROM?.trim() || undefined,
+  /** Public admin UI origin (no trailing slash) for links in email. Set on API when mail is enabled. */
+  publicUrl: process.env.PUBLIC_URL?.trim().replace(/\/$/, '') || undefined,
+  mailTokenTtlResetMinutes: Number(process.env.MAIL_TOKEN_TTL_RESET_MINUTES ?? 60),
+  mailTokenTtlInviteHours: Number(process.env.MAIL_TOKEN_TTL_INVITE_HOURS ?? 168),
+  mailRateLimitMax: Number(process.env.MAIL_RATE_LIMIT_MAX ?? 3),
+  mailRateLimitWindowMs: Number(process.env.MAIL_RATE_LIMIT_WINDOW_MS ?? 3_600_000),
 };

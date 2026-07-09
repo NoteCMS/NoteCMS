@@ -11,9 +11,18 @@ import {
   scopesRequireActingUser,
 } from '../auth/api-key-scopes.js';
 import { assertStrongPassword, compareBootstrapSecret } from '../auth/password-policy.js';
+import { completePasswordWithEmailToken } from '../auth/complete-password-token.js';
+import { deleteGlobalUserAccount } from '../auth/delete-user.js';
+import { inspectEmailToken } from '../auth/email-tokens.js';
 import { encryptPublishPat } from '../auth/publish-webhook-crypto.js';
 import { comparePassword, hashPassword, signToken } from '../auth/security.js';
 import { env } from '../config/env.js';
+import { getMailConfigStatus, isMailConfigured } from '../config/mail.js';
+import {
+  sendAccountInviteEmail,
+  sendAccountWelcomeEmail,
+  sendPasswordResetEmail,
+} from '../mail/account-emails.js';
 import {
   assertPublishGithubIds,
   buildPublishCompletionCallbackUrl,
@@ -624,6 +633,16 @@ export const resolvers = {
     bootstrapAuthStatus: () => ({
       initialPasswordRequiresSecret: Boolean(env.bootstrapSecret),
     }),
+    mailConfigStatus: () => getMailConfigStatus(),
+    emailTokenStatus: async (
+      _: unknown,
+      { token, purpose }: { token: string; purpose: string },
+    ) => {
+      if (purpose !== 'password_reset' && purpose !== 'account_invite') {
+        throw new Error('Invalid purpose');
+      }
+      return inspectEmailToken(token, purpose);
+    },
     me: async (_: unknown, __: unknown, ctx: RequestContext) => {
       if (!ctx.userId) return null;
       const user = await UserModel.findById(ctx.userId).lean();
@@ -682,8 +701,8 @@ export const resolvers = {
       if (status) userFilter.status = status;
       if (isAdmin !== undefined) userFilter.isAdmin = isAdmin;
 
-      let users: Array<Record<string, unknown> & { _id: unknown; email: string; status: string; isAdmin?: boolean }>;
-      let memberships: Array<Record<string, unknown> & { userId: unknown; siteId: unknown; role: string }>;
+      let users;
+      let memberships;
 
       if (scopeViaMemberships) {
         memberships = await MembershipModel.find(membershipFilter).lean();
@@ -1028,8 +1047,13 @@ export const resolvers = {
       if (user.status !== 'active') throw new Error('Invalid credentials');
       const pass = typeof password === 'string' ? password : '';
       if (!user.passwordHash) {
-        if (!user.isAdmin) throw new Error('Invalid credentials');
-        return { token: null, requiresPasswordSetup: true, user: toId(user.toObject()) };
+        if (user.isAdmin && env.bootstrapAdminEmail && user.email === env.bootstrapAdminEmail) {
+          return { token: null, requiresPasswordSetup: true, user: toId(user.toObject()) };
+        }
+        if (isMailConfigured()) {
+          throw new Error('Check your email for a link to set your password.');
+        }
+        throw new Error('Invalid credentials');
       }
       if (!pass.length) throw new Error('Password is required');
       if (!(await comparePassword(pass, user.passwordHash))) throw new Error('Invalid credentials');
@@ -1069,6 +1093,27 @@ export const resolvers = {
       );
       if (!updated) throw new Error('User not found');
       return { token: signToken({ userId: String(updated._id) }), user: toId(updated.toObject()) };
+    },
+    requestPasswordReset: async (_: unknown, { email }: { email: string }) => {
+      const normalized = email.toLowerCase().trim();
+      if (!normalized) return { ok: true };
+      try {
+        if (isMailConfigured()) {
+          const user = await UserModel.findOne({ email: normalized }).lean();
+          if (user && user.status === 'active') {
+            await sendPasswordResetEmail(String(user._id), user.email);
+          }
+        }
+      } catch (error) {
+        console.error('[auth] requestPasswordReset:', error instanceof Error ? error.message : error);
+      }
+      return { ok: true };
+    },
+    completePasswordReset: async (_: unknown, { token, newPassword }: { token: string; newPassword: string }) => {
+      return completePasswordWithEmailToken(token, newPassword, 'password_reset');
+    },
+    completeAccountInvite: async (_: unknown, { token, newPassword }: { token: string; newPassword: string }) => {
+      return completePasswordWithEmailToken(token, newPassword, 'account_invite');
     },
     updateMyProfile: async (_: unknown, { displayName }: { displayName: string }, ctx: RequestContext) => {
       if (!ctx.userId || ctx.apiKey) throw new Error('Unauthorized');
@@ -1147,11 +1192,22 @@ export const resolvers = {
         throw error;
       }
     },
-    createGlobalUser: async (_: unknown, { email, password, status = 'active', isAdmin = false }: any, ctx: RequestContext) => {
+    createGlobalUser: async (
+      _: unknown,
+      { email, password, status = 'active', isAdmin = false }: { email: string; password?: string | null; status?: string; isAdmin?: boolean },
+      ctx: RequestContext,
+    ) => {
       if (!ctx.userId) throw new Error('Unauthorized');
       const actor = await UserModel.findById(ctx.userId).lean();
       if (!actor?.isAdmin) throw new Error('Only platform administrators can create accounts');
-      assertStrongPassword(password);
+
+      const pass = typeof password === 'string' ? password.trim() : '';
+      const mailOn = isMailConfigured();
+      if (!pass && !mailOn) {
+        throw new Error('Password is required when email is not configured');
+      }
+      if (pass) assertStrongPassword(pass);
+
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
       if (existing) throw new Error('Email already in use');
@@ -1159,16 +1215,28 @@ export const resolvers = {
 
       const user = await UserModel.create({
         email: normalizedEmail,
-        passwordHash: await hashPassword(password),
+        ...(pass ? { passwordHash: await hashPassword(pass) } : {}),
         status,
         isAdmin,
       });
+
+      if (mailOn) {
+        try {
+          if (pass) {
+            await sendAccountWelcomeEmail(user.email);
+          } else {
+            await sendAccountInviteEmail(String(user._id), user.email, { invitedBy: actor.email });
+          }
+        } catch (error) {
+          console.error('[auth] createGlobalUser email:', error instanceof Error ? error.message : error);
+        }
+      }
 
       return toGlobalUser(String(user._id));
     },
     createSiteUser: async (
       _: unknown,
-      { siteId, email, password, role }: { siteId: string; email: string; password: string; role: string },
+      { siteId, email, password, role }: { siteId: string; email: string; password?: string | null; role: string },
       ctx: RequestContext,
     ) => {
       if (!ctx.userId) throw new Error('Unauthorized');
@@ -1182,19 +1250,44 @@ export const resolvers = {
         }
       }
 
-      assertStrongPassword(password);
+      const pass = typeof password === 'string' ? password.trim() : '';
+      const mailOn = isMailConfigured();
+      if (!pass && !mailOn) {
+        throw new Error('Password is required when email is not configured');
+      }
+      if (pass) assertStrongPassword(pass);
+
       const normalizedEmail = email.toLowerCase();
       const existing = await UserModel.findOne({ email: normalizedEmail });
       if (existing) throw new Error('Email already in use');
 
+      const actor = await UserModel.findById(ctx.userId).select({ email: 1 }).lean();
+      const site = await SiteModel.findById(siteId).select({ name: 1 }).lean();
+
       const user = await UserModel.create({
         email: normalizedEmail,
-        passwordHash: await hashPassword(password),
+        ...(pass ? { passwordHash: await hashPassword(pass) } : {}),
         status: 'active',
         isAdmin: false,
       });
 
       await MembershipModel.create({ userId: user._id, siteId, role });
+
+      if (mailOn) {
+        try {
+          const siteName = typeof site?.name === 'string' ? site.name : undefined;
+          if (pass) {
+            await sendAccountWelcomeEmail(user.email, { siteName });
+          } else {
+            await sendAccountInviteEmail(String(user._id), user.email, {
+              invitedBy: actor?.email,
+              siteName,
+            });
+          }
+        } catch (error) {
+          console.error('[auth] createSiteUser email:', error instanceof Error ? error.message : error);
+        }
+      }
 
       return toGlobalUser(String(user._id));
     },
@@ -1247,6 +1340,13 @@ export const resolvers = {
       }
       await MembershipModel.deleteOne({ userId, siteId });
       return toGlobalUser(String(userId));
+    },
+    deleteGlobalUser: async (_: unknown, { userId }: { userId: string }, ctx: RequestContext) => {
+      if (!ctx.userId) throw new Error('Unauthorized');
+      const actor = await UserModel.findById(ctx.userId).lean();
+      if (!actor?.isAdmin) throw new Error('Only platform administrators can delete accounts');
+      await deleteGlobalUserAccount(String(ctx.userId), userId);
+      return true;
     },
     inviteUser: async (_: unknown, { siteId, email, role }: any, ctx: RequestContext) => {
       if (!ctx.userId) throw new Error('Unauthorized');

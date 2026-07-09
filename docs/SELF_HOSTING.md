@@ -89,8 +89,26 @@ Run only **one** API replica with `BACKUP_SCHEDULER_ENABLED=true` to avoid dupli
 | `MCP_RATE_LIMIT_UNAUTH_MAX`, `MCP_RATE_LIMIT_WINDOW_MS` | Unauthenticated MCP `/api/mcp` probes per IP (default **60** / 15 minutes). Authenticated requests are not rate limited. Set `MCP_RATE_LIMIT_UNAUTH_MAX=0` to disable. |
 | `CSP_CONNECT_SRC_EXTRA`                                              | Optional space- or comma-separated extra `connect-src` tokens for the **web** container CSP (e.g. another API origin). Used when generating `serve.json` at container start. |
 | `PUBLIC_API_BASE_URL`                                                | Public origin of the **API** (no trailing slash), e.g. `https://api.example.com` or `https://cms.example.com` when `/api/*` is proxied to the API. Used so the admin UI can generate GitHub **build completion** callback URLs (`POST /api/hooks/site-build/:siteId/...`). |
+| `MAIL_ENABLED`                                                       | Set `true` on the **API** service to send password reset and invite emails |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`    | SMTP relay for outbound mail |
+| `MAIL_FROM`                                                          | From address for transactional email |
+| `PUBLIC_URL` (on API)                                                | Same public admin origin as the web container — used to build reset/invite links in email |
 
 The web image runs [`serve`](https://github.com/vercel/serve) with a generated **`serve.json`** that sets **Content-Security-Policy** and related headers. Tighten `connect-src` by setting `NOTECMS_GRAPHQL_URL` and/or `PUBLIC_URL` so the API origin is explicit; with only `NOTECMS_GRAPHQL_PORT`, the CSP allows `http:` and `https:` for API calls (different port than the SPA).
+
+## Transactional email
+
+Password reset and user invite emails are sent by the **API** when mail is configured:
+
+1. Set on the API container (via `.env` / `deploy/docker-compose.yml`):
+   - `MAIL_ENABLED=true`
+   - `SMTP_HOST`, `SMTP_PORT`, and usually `SMTP_USER` / `SMTP_PASS`
+   - `MAIL_FROM` (e.g. `NoteCMS <noreply@example.com>`)
+   - `PUBLIC_URL` — the browser-reachable admin UI origin **without** a trailing slash (e.g. `https://cms.example.com`). Required so reset and invite links point to your site.
+2. Open **Admin settings** in the UI to confirm email shows as configured.
+3. Users can use **Forgot your password?** on the sign-in page. Admins can create users without a password to send an invite email (or set a password and send a welcome email).
+
+**Local testing:** run [Mailpit](https://github.com/axllent/mailpit) or Mailhog and point SMTP at it, for example `SMTP_HOST=host.docker.internal`, `SMTP_PORT=1025`, `SMTP_SECURE=false`, with no auth.
 
 
 ## Local smoke test (build images without GHCR)
