@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react';
 import { gqlRequest, GraphqlUserInputError } from '@/api/graphql';
+import { fetchAllGraphqlPages } from '@/lib/fetch-all-pages';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { useUnsavedChangesPrompt } from '@/hooks/use-unsaved-changes-prompt';
 import { stableJsonStringify } from '@/lib/stable-json';
@@ -1135,12 +1136,20 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
 
   async function loadAssets() {
     if (!workspaceSiteId) return;
-    const response = await gqlRequest<{ listAssets: Asset[] }>(
+    const assets = await fetchAllGraphqlPages<Asset>(
       token,
-      'query($siteId:ID!){ listAssets(siteId:$siteId,limit:200){ id siteId uploadedBy filename mimeType sizeBytes width height alt title focalPoint { x y } variants { original web thumbnail small medium large xlarge } createdAt updatedAt } }',
+      `query($siteId:ID!,$limit:Int,$offset:Int){
+        listAssets(siteId:$siteId,limit:$limit,offset:$offset){
+          id siteId uploadedBy filename mimeType sizeBytes width height alt title
+          focalPoint { x y }
+          variants { original web thumbnail small medium large xlarge }
+          createdAt updatedAt
+        }
+      }`,
       { siteId: workspaceSiteId },
+      (data) => (data.listAssets as Asset[]) ?? [],
     );
-    setAssets(response.listAssets);
+    setAssets(assets);
   }
 
   async function loadContentTypes() {
@@ -1179,12 +1188,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     setIsLoadingEntries(true);
     setError('');
     try {
-      const response = await gqlRequest<{ entries: Entry[] }>(
+      const entries = await fetchAllGraphqlPages<Entry>(
         token,
-        `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean){ entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted){ ${ENTRY_ADMIN_GQL} } }`,
+        `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean,$limit:Int,$offset:Int){
+          entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted,limit:$limit,offset:$offset){
+            ${ENTRY_ADMIN_GQL}
+          }
+        }`,
         { siteId: workspaceSiteId, contentTypeId, includeDeleted: showDeleted },
+        (data) => (data.entries as Entry[]) ?? [],
       );
-      setEntries(response.entries);
+      setEntries(entries);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load entries');
     } finally {
@@ -1201,12 +1215,17 @@ export function EntriesPage({ token, workspaceSiteId, sites, forcedContentTypeSl
     const pairs = await Promise.all(
       types.map(async (contentType) => {
         try {
-          const response = await gqlRequest<{ entries: Entry[] }>(
+          const list = await fetchAllGraphqlPages<Entry>(
             token,
-            `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean){ entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted){ ${ENTRY_ADMIN_GQL} } }`,
+            `query($siteId:ID!,$contentTypeId:ID!,$includeDeleted:Boolean,$limit:Int,$offset:Int){
+              entries(siteId:$siteId,contentTypeId:$contentTypeId,includeDeleted:$includeDeleted,limit:$limit,offset:$offset){
+                ${ENTRY_ADMIN_GQL}
+              }
+            }`,
             { siteId: workspaceSiteId, contentTypeId: contentType.id, includeDeleted: showDeleted },
+            (data) => (data.entries as Entry[]) ?? [],
           );
-          return [contentType.id, response.entries] as const;
+          return [contentType.id, list] as const;
         } catch {
           return [contentType.id, []] as const;
         }

@@ -71,7 +71,8 @@ async function fetchAllEntriesForType(
     const batch = await client.entries(contentTypeId, { limit: pageSize, offset, ...listOpts });
     out.push(...batch);
     if (batch.length < pageSize) break;
-    offset += pageSize;
+    // Advance by actual count so a server-side clamp below `pageSize` cannot skip rows.
+    offset += batch.length;
   }
   return out;
 }
@@ -83,7 +84,7 @@ async function fetchAllAssets(client: NoteCmsClient, pageSize: number): Promise<
     const batch = await client.listAssets({ limit: pageSize, offset });
     out.push(...batch);
     if (batch.length < pageSize) break;
-    offset += pageSize;
+    offset += batch.length;
   }
   return out;
 }

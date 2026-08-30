@@ -3,6 +3,7 @@ import { Globe, ImageIcon, Loader2, Pencil, Plus, Save, Trash2, X } from 'lucide
 import { Link } from 'react-router-dom';
 import { gqlRequest } from '@/api/graphql';
 import { LoadErrorAlert } from '@/components/load-error-alert';
+import { fetchAllGraphqlPages } from '@/lib/fetch-all-pages';
 import {
   fetchSiteBuilds,
   type SiteBuildGql,
@@ -358,12 +359,15 @@ export function SiteSettingsPage({
 
       await Promise.all(
         cts.map(async (ct) => {
-          const entryRes = await gqlRequest<{ entries: Entry[] }>(
+          const entries = await fetchAllGraphqlPages<Entry>(
             token,
-            'query($siteId:ID!,$contentTypeId:ID!){ entries(siteId:$siteId,contentTypeId:$contentTypeId,limit:500){ id name contentTypeId } }',
+            `query($siteId:ID!,$contentTypeId:ID!,$limit:Int,$offset:Int){
+              entries(siteId:$siteId,contentTypeId:$contentTypeId,limit:$limit,offset:$offset){ id name contentTypeId }
+            }`,
             { siteId: workspaceSiteId, contentTypeId: ct.id },
+            (data) => (data.entries as Entry[]) ?? [],
           );
-          const opts = entryRes.entries.map((e) => ({
+          const opts = entries.map((e) => ({
             value: e.id,
             label: e.name,
           }));

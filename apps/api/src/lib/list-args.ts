@@ -1,5 +1,5 @@
-/** Upper bound for GraphQL list queries that accept limit/offset (DoS / memory). */
-export const MAX_GRAPHQL_LIST_LIMIT = 100;
+/** Upper bound for GraphQL list queries that accept limit/offset (DoS / memory). Matches SDK/MCP docs. */
+export const MAX_GRAPHQL_LIST_LIMIT = 200;
 export const MAX_GRAPHQL_LIST_OFFSET = 50_000;
 
 export function clampListArgs(

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ChangeEvent, DragEvent, PointerEvent } from 'react';
 import { Crosshair, Ellipsis, ExternalLink, Plus, Trash2 } from 'lucide-react';
 import { gqlRequest } from '@/api/graphql';
+import { fetchAllGraphqlPages } from '@/lib/fetch-all-pages';
 import { LoadErrorAlert } from '@/components/load-error-alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -69,12 +70,15 @@ export function AssetsPage({ token, workspaceSiteId, sites }: AssetsPageProps) {
     setIsLoading(true);
     setError('');
     try {
-      const response = await gqlRequest<{ listAssets: Asset[] }>(
+      const assets = await fetchAllGraphqlPages<Asset>(
         token,
-        `query($siteId:ID!,$query:String){ listAssets(siteId:$siteId,query:$query){ ${ASSET_LIST_GQL} } }`,
+        `query($siteId:ID!,$query:String,$limit:Int,$offset:Int){
+          listAssets(siteId:$siteId,query:$query,limit:$limit,offset:$offset){ ${ASSET_LIST_GQL} }
+        }`,
         { siteId: workspaceSiteId, query: debouncedSearch || undefined },
+        (data) => (data.listAssets as Asset[]) ?? [],
       );
-      setAssets(response.listAssets);
+      setAssets(assets);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : 'Failed to load assets');
     } finally {
