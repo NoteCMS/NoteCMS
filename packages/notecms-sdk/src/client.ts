@@ -185,7 +185,7 @@ export function createNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient 
 }
 
 /**
- * Same as {@link createNoteCmsClient} with `fetchInit: { cache: 'no-store', ...fetchInit }` so each
+ * Same as {@link createDevNoteCmsClient} with `fetchInit: { cache: 'no-store', ...fetchInit }` so each
  * `load`/navigation refetches from NoteCMS during local development.
  */
 export function createDevNoteCmsClient(
@@ -196,6 +196,17 @@ export function createDevNoteCmsClient(
     ...rest,
     fetchInit: { cache: 'no-store', ...userInit },
   });
+}
+
+/**
+ * Read-only client for **live** server-rendered sites (SSR / ISR).
+ * Unlike {@link createDevNoteCmsClient}, does not force `cache: 'no-store'` — pair with your framework cache
+ * (e.g. Next.js `revalidate`) and NoteCMS `contentRevision` / live webhooks for invalidation.
+ *
+ * See [docs/LIVE_SITES.md](./docs/LIVE_SITES.md).
+ */
+export function createLiveNoteCmsClient(config: NoteCmsClientConfig): NoteCmsClient {
+  return createNoteCmsClient(config);
 }
 
 /**

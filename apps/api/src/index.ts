@@ -25,6 +25,7 @@ import { createNoteCmsMcpServer } from './mcp/note-cms-mcp.js';
 import { assertMcpEndpointEnabledForContext } from './mcp/mcp-site-gate.js';
 import { siteBuildCallbackHandler } from './http/site-build-callback.js';
 import { SITE_BUILD_HOOK_BASE, SITE_BUILD_HOOK_LEGACY_BASE } from './http/site-build-hook-paths.js';
+import { localAssetHandler } from './http/local-asset-handler.js';
 import { startBackupScheduler } from './backups/scheduler.js';
 import { getPlatformMaintenanceMode } from './db/models/PlatformState.js';
 
@@ -102,6 +103,17 @@ const hooksLimiter = rateLimit({
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true });
+});
+
+app.get('/assets/*splat', async (req, res) => {
+  try {
+    await localAssetHandler(req, res);
+  } catch (err) {
+    if (!res.headersSent) {
+      console.error('[assets]', err);
+      res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Asset read failed' });
+    }
+  }
 });
 
 const siteBuildHookMethodNotAllowed = (_req: express.Request, res: express.Response) => {

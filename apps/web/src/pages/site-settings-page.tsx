@@ -90,13 +90,16 @@ type SiteSettingsGql = {
   logo: Asset | null;
   favicon: Asset | null;
   backupEnabled: boolean;
+  contentRevision: number;
+  liveWebhookUrl: string | null;
+  hasLiveWebhookSecret: boolean;
 };
 
 const SITE_SETTINGS_FIELDS = `
   id siteId logoAssetId faviconAssetId siteTitle menuEntries
   logo { ${ASSET_PREVIEW_GQL} }
   favicon { ${ASSET_PREVIEW_GQL} }
-  backupEnabled
+  backupEnabled contentRevision liveWebhookUrl hasLiveWebhookSecret
 `;
 
 type SiteSettingsPageProps = {
@@ -264,6 +267,11 @@ export function SiteSettingsPage({
   const [contentTypesForBundle, setContentTypesForBundle] = useState<Array<{ id: string; name: string; slug: string }>>([]);
 
   const [backupEnabled, setBackupEnabled] = useState(true);
+  const [contentRevision, setContentRevision] = useState(0);
+  const [liveWebhookUrl, setLiveWebhookUrl] = useState('');
+  const [liveWebhookSecretDraft, setLiveWebhookSecretDraft] = useState('');
+  const [clearLiveWebhookSecret, setClearLiveWebhookSecret] = useState(false);
+  const [hasLiveWebhookSecret, setHasLiveWebhookSecret] = useState(false);
 
   const logoFileRef = useRef<HTMLInputElement>(null);
   const faviconFileRef = useRef<HTMLInputElement>(null);
@@ -315,6 +323,11 @@ export function SiteSettingsPage({
       setLogoPreview(s.logo);
       setFaviconPreview(s.favicon);
       setBackupEnabled(s.backupEnabled !== false);
+      setContentRevision(typeof s.contentRevision === 'number' ? s.contentRevision : 0);
+      setLiveWebhookUrl(s.liveWebhookUrl ?? '');
+      setLiveWebhookSecretDraft('');
+      setClearLiveWebhookSecret(false);
+      setHasLiveWebhookSecret(Boolean(s.hasLiveWebhookSecret));
       await loadBuilds();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to load site settings';
@@ -387,7 +400,13 @@ export function SiteSettingsPage({
       faviconAssetId,
       siteTitle: siteTitle.trim(),
       menu: menuRowsSnapshot(menuRows),
-      ...(canManageSiteIdentity ? { siteName: siteNameDraft.trim(), siteUrl: siteUrlHostPart(siteUrlDraft) } : {}),
+      ...(canManageSiteIdentity
+        ? {
+            siteName: siteNameDraft.trim(),
+            siteUrl: siteUrlHostPart(siteUrlDraft),
+            liveWebhookUrl: liveWebhookUrl.trim(),
+          }
+        : {}),
     });
   }, [
     workspaceSiteId,
@@ -399,6 +418,7 @@ export function SiteSettingsPage({
     canManageSiteIdentity,
     siteNameDraft,
     siteUrlDraft,
+    liveWebhookUrl,
   ]);
 
   useEffect(() => {
@@ -413,7 +433,13 @@ export function SiteSettingsPage({
           faviconAssetId,
           siteTitle: siteTitle.trim(),
           menu: menuRowsSnapshot(menuRows),
-          ...(canManageSiteIdentity ? { siteName: siteNameDraft.trim(), siteUrl: siteUrlHostPart(siteUrlDraft) } : {}),
+          ...(canManageSiteIdentity
+            ? {
+                siteName: siteNameDraft.trim(),
+                siteUrl: siteUrlHostPart(siteUrlDraft),
+                liveWebhookUrl: liveWebhookUrl.trim(),
+              }
+            : {}),
         }),
       );
     }
@@ -429,6 +455,7 @@ export function SiteSettingsPage({
     canManageSiteIdentity,
     siteNameDraft,
     siteUrlDraft,
+    liveWebhookUrl,
   ]);
 
   const isDirty =
@@ -493,6 +520,22 @@ export function SiteSettingsPage({
 
       const menuEntriesPayload = buildMenuEntriesPayload(menuRows);
 
+      const settingsInput: Record<string, unknown> = {
+        logoAssetId: logoAssetId ?? null,
+        faviconAssetId: faviconAssetId ?? null,
+        siteTitle: siteTitle.trim() || null,
+        menuEntries: menuEntriesPayload,
+      };
+
+      if (canManageSiteIdentity) {
+        settingsInput.liveWebhookUrl = liveWebhookUrl.trim() || null;
+        if (clearLiveWebhookSecret) {
+          settingsInput.liveWebhookSecret = '';
+        } else if (liveWebhookSecretDraft.trim()) {
+          settingsInput.liveWebhookSecret = liveWebhookSecretDraft.trim();
+        }
+      }
+
       await gqlRequest(
         token,
         `mutation($siteId:ID!,$input:SiteSettingsInput!){
@@ -502,12 +545,7 @@ export function SiteSettingsPage({
         }`,
         {
           siteId: workspaceSiteId,
-          input: {
-            logoAssetId: logoAssetId ?? null,
-            faviconAssetId: faviconAssetId ?? null,
-            siteTitle: siteTitle.trim() || null,
-            menuEntries: menuEntriesPayload,
-          },
+          input: settingsInput,
         },
       );
       await loadSettings();
@@ -830,6 +868,86 @@ export function SiteSettingsPage({
                     </Item>
                   </div>
                 </ItemGroup>
+              </section>
+
+              <Separator />
+
+              <section className="space-y-3">
+                <div className="space-y-1">
+                  <h4 className="text-base font-semibold leading-none">Live site</h4>
+                  <p className="text-sm text-muted-foreground">
+                    For frontends that fetch content at request time (SSR). Static GitHub builds are unchanged.
+                  </p>
+                </div>
+                <Item variant="muted" className="w-full flex-col items-stretch">
+                  <ItemContent className="w-full space-y-1">
+                    <p className="text-sm">
+                      Content revision:{' '}
+                      <span className="font-mono tabular-nums">{contentRevision}</span>
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      Bumps when entries, types, settings, or assets change. Your frontend can use this to invalidate
+                      caches.
+                    </p>
+                  </ItemContent>
+                </Item>
+                {canManageSiteIdentity ? (
+                  <div className="space-y-4">
+                    <Field>
+                      <FieldLabel htmlFor="live-webhook-url">Revalidation webhook URL</FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="live-webhook-url"
+                          type="url"
+                          placeholder="https://yoursite.com/api/notecms/revalidate"
+                          value={liveWebhookUrl}
+                          onChange={(e) => setLiveWebhookUrl(e.target.value)}
+                        />
+                        <p className="mt-1.5 text-sm text-muted-foreground">
+                          NoteCMS POSTs here when content is published or changed. See the SDK live sites guide.
+                        </p>
+                      </FieldContent>
+                    </Field>
+                    <Field>
+                      <FieldLabel htmlFor="live-webhook-secret">Webhook secret</FieldLabel>
+                      <FieldContent>
+                        <Input
+                          id="live-webhook-secret"
+                          type="password"
+                          placeholder={hasLiveWebhookSecret ? '•••••••• (unchanged)' : 'Optional HMAC secret'}
+                          value={liveWebhookSecretDraft}
+                          onChange={(e) => {
+                            setLiveWebhookSecretDraft(e.target.value);
+                            setClearLiveWebhookSecret(false);
+                          }}
+                          autoComplete="new-password"
+                        />
+                        {hasLiveWebhookSecret ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="mt-2"
+                            onClick={() => {
+                              setClearLiveWebhookSecret(true);
+                              setLiveWebhookSecretDraft('');
+                            }}
+                          >
+                            Clear stored secret on save
+                          </Button>
+                        ) : null}
+                        <p className="mt-1.5 text-sm text-muted-foreground">
+                          Used for <code className="text-xs">X-NoteCMS-Signature</code>. Leave blank to keep the
+                          current secret.
+                        </p>
+                      </FieldContent>
+                    </Field>
+                  </div>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    Ask a site owner to configure the live revalidation webhook.
+                  </p>
+                )}
               </section>
 
               <Separator />

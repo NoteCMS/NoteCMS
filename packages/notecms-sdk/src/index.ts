@@ -3,6 +3,7 @@ export { NoteCmsError } from './errors.js';
 export {
   createNoteCmsClient,
   createDevNoteCmsClient,
+  createLiveNoteCmsClient,
   createCmsClient,
   type NoteCmsClient,
   type NoteCmsClientConfig,

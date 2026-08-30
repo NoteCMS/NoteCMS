@@ -107,6 +107,10 @@ Use `deploy/docker-compose.yml` with published images. Full guide:
 
 Consumers integrate via **`fetchBuildSnapshot`** in `@notecms/sdk` during CI/static builds (between publishes). Use **`createDevNoteCmsClient`** in dev when you want live CMS reads without waiting for a build.
 
+## Live sites (SSR / ISR)
+
+Frontends can fetch content at request time via **`createLiveNoteCmsClient`**. Configure CDN-backed assets (`ASSET_CDN_BASE_URL`) and optional per-site live webhooks in site settings. See [packages/notecms-sdk/docs/LIVE_SITES.md](packages/notecms-sdk/docs/LIVE_SITES.md).
+
 ## Deploy webhooks (GitHub Actions)
 
 Per-workspace **outbound** webhooks call GitHub’s [`repository_dispatch`](https://docs.github.com/en/rest/repos/repos#create-a-repository-dispatch-event) API when an editor (or owner) runs a build from **Site settings**. **Inbound** completion is optional: GitHub Actions can `POST` back to the API when a workflow finishes so the CMS records last status.

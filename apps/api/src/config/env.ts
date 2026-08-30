@@ -28,6 +28,17 @@ export const env = {
   assetStorageDriver: (process.env.ASSET_STORAGE_DRIVER ?? 'local') as 'local' | 's3',
   assetLocalRoot: process.env.ASSET_LOCAL_ROOT ?? path.resolve(process.cwd(), 'data/assets'),
   assetMaxUploadBytes: Number(process.env.ASSET_MAX_UPLOAD_BYTES ?? 10_000_000),
+  /** Public CDN origin for asset URLs (no trailing slash), e.g. https://assets.example.com. Required for s3 driver. */
+  assetCdnBaseUrl: process.env.ASSET_CDN_BASE_URL?.trim().replace(/\/$/, '') || undefined,
+  /** Optional public asset origin when using local storage without a separate CDN (no trailing slash). */
+  assetPublicBaseUrl: process.env.ASSET_PUBLIC_BASE_URL?.trim().replace(/\/$/, '') || undefined,
+  assetS3Bucket: process.env.ASSET_S3_BUCKET?.trim() || undefined,
+  assetS3Region: process.env.ASSET_S3_REGION?.trim() || 'auto',
+  /** S3-compatible endpoint, e.g. https://<account_id>.r2.cloudflarestorage.com for Cloudflare R2. */
+  assetS3Endpoint: process.env.ASSET_S3_ENDPOINT?.trim() || undefined,
+  assetS3AccessKeyId: process.env.ASSET_S3_ACCESS_KEY_ID?.trim() || undefined,
+  assetS3SecretAccessKey: process.env.ASSET_S3_SECRET_ACCESS_KEY?.trim() || undefined,
+  assetS3ForcePathStyle: (process.env.ASSET_S3_FORCE_PATH_STYLE ?? 'false').toLowerCase() === 'true',
   /** Max JSON body size for Express (GraphQL, MCP). Site bundle import may need more — override in deploy. */
   jsonBodyLimit: process.env.JSON_BODY_LIMIT?.trim() || '12mb',
   /** IP rate limit: max requests per window for POST /graphql (brute-force / DoS mitigation). */

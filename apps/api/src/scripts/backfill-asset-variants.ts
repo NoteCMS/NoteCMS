@@ -7,7 +7,7 @@
  *   npx tsx src/scripts/backfill-asset-variants.ts --siteId=64abc...
  *   npx tsx src/scripts/backfill-asset-variants.ts --limit=50
  *
- * Requires ASSET_STORAGE_DRIVER=local (S3 must implement getBuffer first).
+ * Requires getBuffer support (local or s3 driver).
  */
 import path from 'node:path';
 import { Types } from 'mongoose';
@@ -35,11 +35,6 @@ function parseArgs() {
 const { dryRun, siteId, limit } = parseArgs();
 
 await connectDb();
-
-if (env.assetStorageDriver !== 'local') {
-  console.error('backfill-asset-variants: only local storage is supported (S3 needs getBuffer + object read).');
-  process.exit(1);
-}
 
 const storage = getStorageAdapter();
 
@@ -91,15 +86,15 @@ for (const asset of assets) {
     const $set: Record<string, string> = {};
 
     if (needsSmall) {
-      if (!dryRun) await storage.put(smallKey, variants.small, derivativeMime);
+      if (!dryRun) await storage.put(smallKey, variants.small, { contentType: derivativeMime });
       $set.storageKeySmall = smallKey;
     }
     if (needsMedium) {
-      if (!dryRun) await storage.put(mediumKey, variants.medium, derivativeMime);
+      if (!dryRun) await storage.put(mediumKey, variants.medium, { contentType: derivativeMime });
       $set.storageKeyMedium = mediumKey;
     }
     if (needsXlarge) {
-      if (!dryRun) await storage.put(xlargeKey, variants.xlarge, derivativeMime);
+      if (!dryRun) await storage.put(xlargeKey, variants.xlarge, { contentType: derivativeMime });
       $set.storageKeyXlarge = xlargeKey;
     }
 

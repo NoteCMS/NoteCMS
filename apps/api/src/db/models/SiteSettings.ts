@@ -44,6 +44,10 @@ const siteSettingsSchema = new Schema(
     backupEnabled: { type: Boolean, default: true },
     /** Written when CI reports `success`; optional fields from workflow `detail` (contentRevision, bundleHash, builtAt, workflowRunId). */
     lastPublishedWatermark: { type: Schema.Types.Mixed, default: null },
+
+    /** Per-site webhook for live frontends (cache revalidation on content changes). */
+    liveWebhookUrl: { type: String, trim: true },
+    liveWebhookSecret: { type: String, trim: true },
   },
   { timestamps: true },
 );

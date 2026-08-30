@@ -62,7 +62,7 @@ import {
 } from '@notecms/routing';
 import { appendEntryRevision, applyPublishToEntry, getEntryRevision, listEntryRevisions, type EntryRevisionPayload } from '../site/entry-revision-service.js';
 import { assertPublishPreservesContent, sanitizeEntryUpdateInput } from '../site/entry-data-guard.js';
-import { getStorageAdapter } from '../assets/index.js';
+import { getStorageAdapter, assetDeliveryUsesPublicUrls } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
 import { persistImageUpload } from '../assets/persist-image-upload.js';
 import { normalizeFocal01 } from '../assets/focal.js';
@@ -287,10 +287,32 @@ function formatApiKeyDoc(doc: {
 async function buildAssetUrls(asset: any) {
   const storage = getStorageAdapter();
 
+  if (assetDeliveryUsesPublicUrls()) {
+    const publicUrl = (key: string | null | undefined) => (key ? storage.getPublicUrl(key) : null);
+    const original = publicUrl(asset.storageKeyOriginal);
+    const web = publicUrl(asset.storageKeyWeb);
+    const thumbnail = publicUrl(asset.storageKeyThumb);
+    const small = publicUrl(asset.storageKeySmall);
+    const medium = publicUrl(asset.storageKeyMedium);
+    const xlarge = publicUrl(asset.storageKeyXlarge);
+
+    if (!original || !web || !thumbnail) throw new Error('Asset missing required storage keys');
+
+    return {
+      original,
+      web,
+      thumbnail,
+      small,
+      medium,
+      large: web,
+      xlarge,
+    };
+  }
+
   const url = (key: string | null | undefined, mime?: string) =>
     key ? storage.getDataUrl(key, mime ?? mimeForDerivativeKey(key)) : Promise.resolve(null);
 
-   const [original, web, thumbnail, small, medium, xlarge] = await Promise.all([
+  const [original, web, thumbnail, small, medium, xlarge] = await Promise.all([
     url(asset.storageKeyOriginal, asset.mimeType),
     url(asset.storageKeyWeb),
     url(asset.storageKeyThumb),
@@ -476,6 +498,8 @@ function siteSettingsDocToGql(doc: {
   contentRevision?: number | null;
   lastPublishedWatermark?: unknown;
   backupEnabled?: boolean | null;
+  liveWebhookUrl?: string | null;
+  liveWebhookSecret?: string | null;
 }) {
   let publishWebhookPostUrl: string | null = null;
   try {
@@ -538,6 +562,11 @@ function siteSettingsDocToGql(doc: {
         ? doc.lastPublishedWatermark
         : null,
     backupEnabled: doc.backupEnabled !== false,
+    liveWebhookUrl:
+      typeof doc.liveWebhookUrl === 'string' && doc.liveWebhookUrl.trim() ? doc.liveWebhookUrl.trim() : null,
+    hasLiveWebhookSecret: Boolean(
+      typeof doc.liveWebhookSecret === 'string' && doc.liveWebhookSecret.trim(),
+    ),
   };
 }
 
@@ -1771,6 +1800,8 @@ export const resolvers = {
           siteTitle?: string | null;
           menuEntries?: unknown;
           mcpEnabled?: boolean | null;
+          liveWebhookUrl?: string | null;
+          liveWebhookSecret?: string | null;
         };
       },
       ctx: RequestContext,
@@ -1780,6 +1811,12 @@ export const resolvers = {
       if (!ctx.userId) throw new Error('Unauthorized');
       await requireRole(ctx.userId, sid, 'editor');
       if (Object.prototype.hasOwnProperty.call(input, 'mcpEnabled')) {
+        await requireRole(ctx.userId, sid, 'owner');
+      }
+      if (
+        Object.prototype.hasOwnProperty.call(input, 'liveWebhookUrl') ||
+        Object.prototype.hasOwnProperty.call(input, 'liveWebhookSecret')
+      ) {
         await requireRole(ctx.userId, sid, 'owner');
       }
 
@@ -1832,16 +1869,45 @@ export const resolvers = {
           ? null
           : String(nextTitle).trim() || null;
 
+      const $set: Record<string, unknown> = {
+        logoAssetId: logoId,
+        faviconAssetId: favId,
+        siteTitle: siteTitleNormalized,
+        menuEntries: nextMenu,
+        mcpEnabled: nextMcpEnabled,
+      };
+
+      if (Object.prototype.hasOwnProperty.call(input, 'liveWebhookUrl')) {
+        const raw = input.liveWebhookUrl;
+        if (raw == null || String(raw).trim() === '') {
+          $set.liveWebhookUrl = null;
+        } else {
+          const url = String(raw).trim();
+          try {
+            const parsed = new URL(url);
+            if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+              throw new Error('Live webhook URL must use http or https');
+            }
+          } catch {
+            throw new Error('Live webhook URL is not valid');
+          }
+          $set.liveWebhookUrl = url;
+        }
+      }
+
+      if (Object.prototype.hasOwnProperty.call(input, 'liveWebhookSecret')) {
+        const raw = input.liveWebhookSecret;
+        if (raw == null || String(raw).trim() === '') {
+          $set.liveWebhookSecret = null;
+        } else {
+          $set.liveWebhookSecret = String(raw).trim();
+        }
+      }
+
       const updated = await SiteSettingsModel.findOneAndUpdate(
         { siteId: sid },
         {
-          $set: {
-            logoAssetId: logoId,
-            faviconAssetId: favId,
-            siteTitle: siteTitleNormalized,
-            menuEntries: nextMenu,
-            mcpEnabled: nextMcpEnabled,
-          },
+          $set,
           $setOnInsert: { siteId: sid },
         },
         { upsert: true, new: true },

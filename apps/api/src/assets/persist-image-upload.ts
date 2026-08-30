@@ -2,22 +2,8 @@ import { env } from '../config/env.js';
 import { AssetModel } from '../db/models/Asset.js';
 import { normalizeFocal01 } from './focal.js';
 import { buildImageVariants, resolveUploadMimeType, sanitizeFilename } from './image.js';
-import { LocalStorageAdapter } from './local-storage.js';
-import { S3StorageAdapter } from './s3-storage.js';
-import type { StorageAdapter } from './storage.js';
+import { getStorageAdapter } from './index.js';
 import { normalizeStorageKey } from './storage.js';
-
-let adapter: StorageAdapter | null = null;
-
-function getAdapter(): StorageAdapter {
-  if (adapter) return adapter;
-  if (env.assetStorageDriver === 's3') {
-    adapter = new S3StorageAdapter();
-    return adapter;
-  }
-  adapter = new LocalStorageAdapter(env.assetLocalRoot);
-  return adapter;
-}
 
 const ALLOWED_MIMES = new Set([
   'image/jpeg',
@@ -61,7 +47,7 @@ export async function persistImageUpload(params: {
   if (!ALLOWED_MIMES.has(effectiveMime)) throw new Error('Unsupported mime type');
 
   const keyPrefix = normalizeStorageKey(`${siteId}/${Date.now()}-${safeFilename}`);
-  const storage = getAdapter();
+  const storage = getStorageAdapter();
   const variants = await buildImageVariants(original, effectiveMime);
   const ext = variants.derivativeExt;
   const derivativeMime = variants.derivativeMime;
@@ -73,12 +59,12 @@ export async function persistImageUpload(params: {
   const webKey = `${keyPrefix}/large.${ext}`;
   const xlargeKey = `${keyPrefix}/xlarge.${ext}`;
 
-  await storage.put(originalKey, original, effectiveMime);
-  await storage.put(thumbKey, variants.thumbnail, derivativeMime);
-  await storage.put(smallKey, variants.small, derivativeMime);
-  await storage.put(mediumKey, variants.medium, derivativeMime);
-  await storage.put(webKey, variants.large, derivativeMime);
-  await storage.put(xlargeKey, variants.xlarge, derivativeMime);
+  await storage.put(originalKey, original, { contentType: effectiveMime });
+  await storage.put(thumbKey, variants.thumbnail, { contentType: derivativeMime });
+  await storage.put(smallKey, variants.small, { contentType: derivativeMime });
+  await storage.put(mediumKey, variants.medium, { contentType: derivativeMime });
+  await storage.put(webKey, variants.large, { contentType: derivativeMime });
+  await storage.put(xlargeKey, variants.xlarge, { contentType: derivativeMime });
 
   const asset = await AssetModel.create({
     siteId,

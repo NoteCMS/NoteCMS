@@ -175,6 +175,9 @@ export const typeDefs = `#graphql
     lastPublishedWatermark: JSON
     """When false, scheduled automatic backups are skipped for this workspace."""
     backupEnabled: Boolean!
+    """Optional webhook URL for live frontends to revalidate caches when content changes."""
+    liveWebhookUrl: String
+    hasLiveWebhookSecret: Boolean!
   }
 
   input PublishWebhookInput {
@@ -271,6 +274,9 @@ export const typeDefs = `#graphql
     siteTitle: String
     menuEntries: JSON
     mcpEnabled: Boolean
+    liveWebhookUrl: String
+    """When set, replaces the live webhook HMAC secret. Send empty string to clear."""
+    liveWebhookSecret: String
   }
 
   input FieldInput {

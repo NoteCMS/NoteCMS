@@ -45,7 +45,33 @@ docker compose -f deploy/docker-compose.yml up -d
 - **Uploaded assets**: volume `api_assets`, mounted at `ASSET_LOCAL_ROOT` inside the API container (default `/data/assets`).
 - **Automatic backups**: volume `api_backups`, mounted at `BACKUP_LOCAL_ROOT` (default `/data/backups`). The API stores tiered site snapshots and platform `mongodump` archives here.
 
-Back up all three volumes for a full restore. S3-backed asset storage is not implemented yet; use local volume only until it is.
+Back up MongoDB and backups volumes for a full restore. With **local** asset storage, also back up the `api_assets` volume. With **S3/R2**, objects live in your bucket — back up the bucket separately.
+
+### Asset CDN (live sites)
+
+For live frontends (SSR/ISR), serve images from a CDN — not through GraphQL. NoteCMS returns HTTPS URLs; browsers load files directly from your CDN.
+
+**Recommended: Cloudflare R2 + custom domain (free tier)**
+
+1. Create an R2 bucket and API token (S3-compatible credentials).
+2. Connect a custom domain under **R2 → bucket → Settings → Public access → Custom domain** (e.g. `assets.cms.example.com`). Do not use `r2.dev` in production.
+3. Set on the API:
+
+| Variable | Example |
+|----------|---------|
+| `ASSET_STORAGE_DRIVER` | `s3` |
+| `ASSET_S3_BUCKET` | `notecms-assets` |
+| `ASSET_S3_REGION` | `auto` |
+| `ASSET_S3_ENDPOINT` | `https://<account_id>.r2.cloudflarestorage.com` |
+| `ASSET_S3_ACCESS_KEY_ID` | R2 token access key |
+| `ASSET_S3_SECRET_ACCESS_KEY` | R2 token secret |
+| `ASSET_CDN_BASE_URL` | `https://assets.cms.example.com` |
+
+4. Migrate existing local files: `npm run migrate:assets-to-s3 -w @note/api` (from repo root, with env set).
+
+**Local dev without R2:** keep `ASSET_STORAGE_DRIVER=local`. Optionally set `PUBLIC_API_BASE_URL` so asset URLs use `https://your-api/assets/...` (the API serves files at `GET /assets/*`).
+
+SDK guide for live frontends: [packages/notecms-sdk/docs/LIVE_SITES.md](../packages/notecms-sdk/docs/LIVE_SITES.md).
 
 ### Automatic backup schedule
 
@@ -74,7 +100,10 @@ Run only **one** API replica with `BACKUP_SCHEDULER_ENABLED=true` to avoid dupli
 | `BOOTSTRAP_SECRET`                                                   | Optional; if set, required when setting the initial admin password (extra friction vs email-only) |
 | `MONGO_URI`                                                          | Mongo connection string (default in compose: `mongodb://mongo:27017/notecms`)                     |
 | `API_PORT`                                                           | Internal API listen port (default `4000`)                                                         |
-| `ASSET_LOCAL_ROOT`, `ASSET_STORAGE_DRIVER`, `ASSET_MAX_UPLOAD_BYTES` | Asset storage (local driver)                                                                      |
+| `ASSET_LOCAL_ROOT`, `ASSET_STORAGE_DRIVER`, `ASSET_MAX_UPLOAD_BYTES` | Asset storage |
+| `ASSET_CDN_BASE_URL` | Public CDN origin for asset URLs (required with `s3` driver) |
+| `ASSET_S3_*` | S3-compatible bucket credentials (R2, AWS S3, MinIO) |
+| `ASSET_PUBLIC_BASE_URL` | Optional public asset origin for local storage without CDN |
 | `NOTECMS_API_IMAGE`, `NOTECMS_WEB_IMAGE`                             | Full image names for deploy compose                                                               |
 | `PUBLIC_URL`                                                         | Public browser origin for same-origin GraphQL URL                                                 |
 | `GRAPHQL_PATH`                                                       | Path segment for GraphQL (default `/graphql`)                                                     |

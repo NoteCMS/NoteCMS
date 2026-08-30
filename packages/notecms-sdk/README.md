@@ -31,6 +31,8 @@ export const load = async () => {
 
 `createDevNoteCmsClient` sets `fetchInit: { cache: 'no-store' }` so **navigating or reloading** picks up CMS edits without a full static rebuild.
 
+**Live production sites (SSR / ISR):** see **[docs/LIVE_SITES.md](./docs/LIVE_SITES.md)** — `createLiveNoteCmsClient`, cache invalidation webhooks, and CDN asset URLs.
+
 Use `await cms.ensureSiteId()` if you need the workspace id before any other call. The synchronous `cms.siteId` getter works after the id has been resolved.
 
 **Path helpers in dev:** `defaultPathForEntry` and `contentTypeHasSlug` need a `ContentType` (for `options.hasSlug`). Either:
