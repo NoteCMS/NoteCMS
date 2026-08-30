@@ -105,12 +105,12 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/assets/*splat', async (req, res) => {
+app.get('/api/assets/*splat', async (req, res) => {
   try {
     await localAssetHandler(req, res);
   } catch (err) {
     if (!res.headersSent) {
-      console.error('[assets]', err);
+      console.error('[api/assets]', err);
       res.status(500).json({ message: env.nodeEnv === 'production' ? 'Internal server error' : 'Asset read failed' });
     }
   }

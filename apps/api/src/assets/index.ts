@@ -1,4 +1,5 @@
 import { env } from '../config/env.js';
+import { LOCAL_ASSET_HTTP_PREFIX } from './http-path.js';
 import { LocalStorageAdapter } from './local-storage.js';
 import { S3StorageAdapter } from './s3-storage.js';
 import { usePublicAssetUrls } from './public-url.js';
@@ -14,7 +15,9 @@ function resolveLocalPublicBaseUrl(): string | undefined {
   if (explicit) return explicit.replace(/\/$/, '');
 
   const apiBase = env.publicApiBaseUrl?.trim();
-  if (apiBase) return `${apiBase.replace(/\/$/, '')}/assets`;
+  // Under `/api/assets` so same-origin Caddy configs that already proxy `/api/*` work,
+  // and so we do not collide with the SPA's Vite build files at `/assets/*`.
+  if (apiBase) return `${apiBase.replace(/\/$/, '')}${LOCAL_ASSET_HTTP_PREFIX}`;
 
   return undefined;
 }

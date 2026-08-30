@@ -69,7 +69,7 @@ For live frontends (SSR/ISR), serve images from a CDN — not through GraphQL. N
 
 4. Migrate existing local files: `npm run migrate:assets-to-s3 -w @note/api` (from repo root, with env set).
 
-**Local dev without R2:** keep `ASSET_STORAGE_DRIVER=local`. Optionally set `PUBLIC_API_BASE_URL` so asset URLs use `https://your-api/assets/...` (the API serves files at `GET /assets/*`).
+**Local dev without R2:** keep `ASSET_STORAGE_DRIVER=local`. Optionally set `PUBLIC_API_BASE_URL` so asset URLs use `https://your-host/api/assets/...` (the API serves files at `GET /api/assets/*`). Do **not** proxy the SPA’s `/assets/*` (Vite JS/CSS) to the API — that path belongs to the web app.
 
 SDK guide for live frontends: [packages/notecms-sdk/docs/LIVE_SITES.md](../packages/notecms-sdk/docs/LIVE_SITES.md).
 
@@ -153,7 +153,22 @@ You can point `NOTECMS_API_IMAGE=notecms-api:local` and `NOTECMS_WEB_IMAGE=notec
 
 ## Reverse proxy (Caddy) — external
 
-Run Caddy (or similar) on the host or in another stack. Example: terminate TLS for `cms.example.com`, proxy `/` to `127.0.0.1:5173`, `/graphql` to `127.0.0.1:4000/graphql`, and `/api/*` to `127.0.0.1:4000` (covers MCP and build completion callbacks at `/api/hooks/site-build/...`). Legacy callbacks at `/hooks/site-build/...` still work if you proxy that path to the API too. Or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
+Run Caddy (or similar) on the host or in another stack. Example: terminate TLS for `cms.example.com`, proxy `/` to `127.0.0.1:5173`, `/graphql` to `127.0.0.1:4000/graphql`, and `/api/*` to `127.0.0.1:4000` (covers MCP, build completion callbacks at `/api/hooks/site-build/...`, and **local media** at `/api/assets/...`).
+
+**Do not** reverse-proxy `/assets/*` to the API — that path is the admin SPA’s built JS/CSS (`/assets/index-….js`). Local media uses `/api/assets/*` instead.
+
+Legacy callbacks at `/hooks/site-build/...` still work if you proxy that path to the API too. Or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
+
+Example:
+
+```caddy
+cms.example.com {
+  reverse_proxy /graphql* 127.0.0.1:4000
+  reverse_proxy /api/* 127.0.0.1:4000
+  reverse_proxy /hooks/* 127.0.0.1:4000
+  reverse_proxy 127.0.0.1:5173
+}
+```
 
 ## Logs
 

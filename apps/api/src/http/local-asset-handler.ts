@@ -1,6 +1,7 @@
 import type express from 'express';
 import { getStorageAdapter } from '../assets/index.js';
 import { mimeForDerivativeKey } from '../assets/image.js';
+import { LOCAL_ASSET_HTTP_PREFIX } from '../assets/http-path.js';
 import { env } from '../config/env.js';
 import { IMMUTABLE_ASSET_CACHE_CONTROL } from '../assets/storage.js';
 
@@ -11,7 +12,7 @@ export async function localAssetHandler(req: express.Request, res: express.Respo
     return;
   }
 
-  const prefix = '/assets/';
+  const prefix = `${LOCAL_ASSET_HTTP_PREFIX}/`;
   const rawPath = req.path.startsWith(prefix) ? req.path.slice(prefix.length) : '';
   if (!rawPath || rawPath.includes('..')) {
     res.status(400).json({ message: 'Invalid asset path' });
