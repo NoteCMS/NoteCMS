@@ -1,5 +1,5 @@
 /**
- * Successful `POST /hooks/site-build/:siteId` bodies may include `detail` with optional fields:
+ * Successful `POST /api/hooks/site-build/:siteId` bodies may include `detail` with optional fields:
  * `contentRevision` (number), `bundleHash` (string), `builtAt` (ISO string), `workflowRunId` (string).
  * These are persisted on `SiteSettings.lastPublishedWatermark` when `status` is `success`.
  */

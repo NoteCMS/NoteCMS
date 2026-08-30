@@ -71,7 +71,7 @@ export function buildPublishWebhookPostUrl(siteId: string): string {
   if (!base) {
     throw new Error('PUBLIC_API_BASE_URL is not set; cannot build callback URL for workflows.');
   }
-  return `${base}/hooks/site-build/${encodeURIComponent(siteId)}`;
+  return `${base}${buildSiteBuildHookPath(siteId)}`;
 }
 
 /**

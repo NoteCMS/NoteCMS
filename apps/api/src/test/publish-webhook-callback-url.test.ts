@@ -6,7 +6,10 @@ vi.mock('../config/env.js', () => ({
   },
 }));
 
-import { buildPublishCompletionCallbackUrl } from '../site/publish-webhook-service.js';
+import {
+  buildPublishCompletionCallbackUrl,
+  buildPublishWebhookPostUrl,
+} from '../site/publish-webhook-service.js';
 
 describe('buildPublishCompletionCallbackUrl', () => {
   it('embeds token as query param', () => {
@@ -17,5 +20,13 @@ describe('buildPublishCompletionCallbackUrl', () => {
   it('encodes token for query string', () => {
     const url = buildPublishCompletionCallbackUrl('site', 'a b');
     expect(url).toContain('token=a+b');
+  });
+});
+
+describe('buildPublishWebhookPostUrl', () => {
+  it('uses /api/hooks path (not legacy /hooks)', () => {
+    expect(buildPublishWebhookPostUrl('507f1f77bcf86cd799439011')).toBe(
+      'https://api.example.com/api/hooks/site-build/507f1f77bcf86cd799439011',
+    );
   });
 });

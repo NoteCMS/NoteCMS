@@ -88,7 +88,7 @@ Root [`portless.json`](portless.json) registers workspace apps so names stay ali
 Local URLs:
 
 - `https://web.notecms.localhost` — admin (Vite + proxy)
-- `https://api.notecms.localhost` — API (`/graphql`, `/api/mcp`, `/hooks/…`)
+- `https://api.notecms.localhost` — API (`/graphql`, `/api/mcp`, `/api/hooks/…`, `/api/assets/…`)
 
 ## Self-hosting / production
 

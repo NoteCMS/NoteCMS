@@ -153,22 +153,26 @@ You can point `NOTECMS_API_IMAGE=notecms-api:local` and `NOTECMS_WEB_IMAGE=notec
 
 ## Reverse proxy (Caddy) — external
 
-Run Caddy (or similar) on the host or in another stack. Example: terminate TLS for `cms.example.com`, proxy `/` to `127.0.0.1:5173`, `/graphql` to `127.0.0.1:4000/graphql`, and `/api/*` to `127.0.0.1:4000` (covers MCP, build completion callbacks at `/api/hooks/site-build/...`, and **local media** at `/api/assets/...`).
+Run Caddy (or similar) on the host or in another stack. Same-origin setup only needs three upstream paths:
 
-**Do not** reverse-proxy `/assets/*` to the API — that path is the admin SPA’s built JS/CSS (`/assets/index-….js`). Local media uses `/api/assets/*` instead.
+| Path | Upstream |
+|------|----------|
+| `/graphql*` | API (`:4000`) |
+| `/api/*` | API — MCP, build callbacks (`/api/hooks/...`), local media (`/api/assets/...`) |
+| `/` (everything else) | Web SPA (`:5173`) — includes Vite’s `/assets/*` JS/CSS |
 
-Legacy callbacks at `/hooks/site-build/...` still work if you proxy that path to the API too. Or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
-
-Example:
+**Do not** reverse-proxy `/assets/*` to the API — that path is the admin SPA’s built JS/CSS.  
+**Do not** require a separate `/hooks/*` proxy — new completion URLs are under `/api/hooks/...`. (The API still accepts legacy `/hooks/site-build/...` if an old GitHub secret still points there and you choose to proxy it.)
 
 ```caddy
 cms.example.com {
   reverse_proxy /graphql* 127.0.0.1:4000
   reverse_proxy /api/* 127.0.0.1:4000
-  reverse_proxy /hooks/* 127.0.0.1:4000
   reverse_proxy 127.0.0.1:5173
 }
 ```
+
+Or use two hostnames and set `PUBLIC_URL` / `NOTECMS_GRAPHQL_URL` accordingly so the browser reaches the API without CORS issues (same-origin is simplest).
 
 ## Logs
 

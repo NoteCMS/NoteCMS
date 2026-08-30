@@ -25,7 +25,7 @@ const siteSettingsSchema = new Schema(
     publishEventType: { type: String, trim: true },
     publishGithubPatEnc: { type: String },
 
-    /** SHA-256 hex digest of bearer token for `POST /hooks/site-build/:siteId`. */
+    /** SHA-256 hex digest of bearer token for `POST /api/hooks/site-build/:siteId`. */
     publishReturnTokenHash: { type: String },
 
     publishLastTriggerAt: { type: Date },
